@@ -55,12 +55,11 @@ captive Wi-Fi, etc.) — your only outbound connection is SSH.
 
 ### Caveats of the bridge
 
-- **The Mac and iOS apps use the SSH bridge unconditionally — there is no way
-  to turn it off.** They will not connect to a relay directly. If you want a
-  direct connection, use the Rust terminal client. A contribution that lets
-  the Mac and iOS apps dial the relay directly (no SSH bridge) would be very
-  welcome — and I'll likely get around to it myself before long if there's
-  demand for it.
+- **The Mac, iOS, and Android apps use the SSH bridge unconditionally — there is
+  no way to turn it off.** They will not connect to a relay directly. If you want
+  a direct connection, use the Rust terminal client. A contribution that lets
+  these apps dial the relay directly (no SSH bridge) would be very welcome — and
+  I'll likely get around to it myself before long if there's demand for it.
 - **The bridge only works on the controller (master) side**, not the host
   (slave) side. There is no way to make the *machine being controlled* run
   through this bridge — that machine still needs ordinary NVDA Remote.
@@ -170,9 +169,28 @@ bridge.
 - **While forwarding is on, the app captures all hardware-keyboard input** —
   system combos included — and sends it to the remote machine.
 
+## The Android app (`android/`)
+
+A native Kotlin / Jetpack Compose app that bridges an Android device with a
+hardware (Bluetooth/USB) keyboard to a remote NVDA through the SSH bridge.
+Speech from the slave is spoken on the phone via Android Text-to-Speech.
+
+- **`NVDA+F11` (e.g. `CapsLock+F11`) toggles forwarding** on and off, same as
+  the Mac and iOS apps.
+- **Capture is focused-only by default** — like the iOS app, it intercepts keys
+  while nvdr is in the foreground, and releases any held keys on the slave when
+  the app is backgrounded.
+- **Optionally, a system-wide capture path** via an `AccessibilityService` grabs
+  combos Android would otherwise intercept first (Alt+Tab, the Meta/Windows
+  key). It's the Android analog of the Mac app's system-wide hook — opt-in, and
+  without it the app still does focused-only capture.
+- Needs Android 8.0 (API 26) or newer.
+
+Full setup and configuration: [`android/README.md`](android/README.md).
+
 ## Building the apps
 
-Both Swift apps use xcodegen-generated Xcode projects:
+The two Swift apps use xcodegen-generated Xcode projects:
 
 ```sh
 cd mac        # or: cd ios
@@ -180,9 +198,18 @@ xcodegen generate
 xcodebuild
 ```
 
-**These apps will not be published on the App Store** (the Mac one can't be
-sandboxed; the iOS one isn't headed there either). Build them yourself from
-source.
+The Android app is a Gradle project — needs **JDK 17** and the Android SDK
+(`compileSdk 36`):
+
+```sh
+cd android
+./gradlew assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew installDebug       # build + install on a connected device (needs adb)
+```
+
+**None of these apps will be published on the App Store / Play Store** (the Mac
+one can't be sandboxed; the others aren't headed there either). Build them
+yourself from source.
 
 ## Contributing
 
