@@ -146,14 +146,14 @@ final class SSHSession {
     /// The SSH client remains owned by this session so future callers can add
     /// multiple concurrent channels or long-lived session management without
     /// exposing Citadel/NIO implementation types.
-    func withExec<T>(
+    func withExec(
         _ command: String,
-        operation: (SSHExecTransport) async throws -> T
-    ) async throws -> T {
+        operation: (SSHExecTransport) async throws -> Void
+    ) async throws {
         guard let client else { throw SSHSessionError.notConnected }
-        return try await client.withExec(command) { inbound, outbound in
+        try await client.withExec(command) { inbound, outbound in
             let transport = Self.makeTransport(inbound: inbound, outbound: outbound)
-            return try await operation(transport)
+            try await operation(transport)
         }
     }
 
