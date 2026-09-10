@@ -18,19 +18,15 @@ struct SSHSessionConfiguration: Sendable {
     /// endpoint. Insecure acceptance exists only as an explicit override.
     var hostKeyPolicy: SSHHostKeyPolicy = .trustOnFirstUse
 
-    /// Reconnect is intentionally disabled to preserve the existing behavior.
-    /// A future policy can add bounded retry/backoff without changing callers.
-    var reconnectPolicy: SSHReconnectPolicy = .never
+    /// Long-lived application operations use bounded, automatic reconnect by
+    /// default. The supervisor recreates the entire operation on each new SSH
+    /// connection; Citadel's internal reconnect mode remains disabled.
+    var reconnectPolicy: SSHReconnectPolicy = .automatic()
 }
 
 enum SSHAuthenticationConfiguration: Sendable, Equatable {
     case password(String)
     case privateKey(pem: String, passphrase: String)
-}
-
-enum SSHReconnectPolicy: Sendable, Equatable {
-    case never
-    // TODO: Add keepalive and reconnect/backoff policies here.
 }
 
 struct SSHAuthenticationSummary: Sendable, Equatable {
@@ -88,10 +84,10 @@ struct SSHExecTransport: Sendable {
 
 /// Reusable SSH connection/session layer used by app-specific protocols.
 ///
-/// A session is owned and used by one task at a time. NIO channels are
+/// A session serializes access to its Citadel client. NIO channels are
 /// event-loop-safe but are not formally Sendable, so the only unchecked
-/// boundary is kept here, next to the code that establishes that invariant.
-final class SSHSession {
+/// boundary is kept next to the byte transport that wraps them.
+actor SSHSession: SSHConnection {
     let configuration: SSHSessionConfiguration
 
     private var client: SSHClient?
@@ -139,17 +135,14 @@ final class SSHSession {
             hostKeyValidator = .acceptAnything()
         }
 
-        switch configuration.reconnectPolicy {
-        case .never:
-            client = try await SSHClient.connect(
-                host: configuration.host,
-                port: configuration.port,
-                authenticationMethod: authentication,
-                hostKeyValidator: hostKeyValidator,
-                reconnect: .never,
-                algorithms: algorithms
-            )
-        }
+        client = try await SSHClient.connect(
+            host: configuration.host,
+            port: configuration.port,
+            authenticationMethod: authentication,
+            hostKeyValidator: hostKeyValidator,
+            reconnect: .never,
+            algorithms: algorithms
+        )
     }
 
     /// Open one exec channel on the connected SSH client.
@@ -318,10 +311,12 @@ final class SSHSession {
 
 enum SSHSessionError: LocalizedError {
     case notConnected
+    case connectedOperationEnded
 
     var errorDescription: String? {
         switch self {
         case .notConnected: return "SSH session is not connected."
+        case .connectedOperationEnded: return "The connected SSH operation ended unexpectedly."
         }
     }
 }

@@ -58,6 +58,7 @@ private struct StatusHeader: View {
         case .idle: return "Idle"
         case .connecting: return "Connecting"
         case .authenticating: return "Authenticating"
+        case .reconnecting(let attempt): return "Reconnecting (attempt \(attempt))"
         case .ready: return "Ready"
         case .nvdaNotConnected: return "Connected, no NVDA on channel"
         case .disconnected(let r): return "Disconnected (\(r))"
@@ -69,7 +70,7 @@ private struct StatusHeader: View {
         switch bridge.status {
         case .ready: return .green
         case .nvdaNotConnected: return .yellow
-        case .connecting, .authenticating: return .orange
+        case .connecting, .authenticating, .reconnecting: return .orange
         case .failed: return .red
         case .disconnected, .idle: return .secondary
         }
@@ -98,7 +99,7 @@ private struct ConnectionControls: View {
 
     private var connected: Bool {
         switch bridge.status {
-        case .ready, .connecting, .authenticating, .nvdaNotConnected: return true
+        case .ready, .connecting, .authenticating, .reconnecting, .nvdaNotConnected: return true
         default: return false
         }
     }

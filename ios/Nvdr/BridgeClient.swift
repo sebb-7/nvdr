@@ -15,6 +15,7 @@ final class BridgeClient {
         case idle
         case connecting
         case authenticating
+        case reconnecting(attempt: Int)
         case ready
         case nvdaNotConnected
         case disconnected(reason: String)
@@ -35,12 +36,17 @@ final class BridgeClient {
         didSet {
             if !forwardingEnabled, oldValue {
                 send(.releaseAll)
+                inputState.reset()
             }
         }
     }
 
     private var driver: Task<Void, Never>?
+    private var connectionSupervisor: SSHConnectionSupervisor<SSHSession>?
     private var commandContinuation: AsyncStream<IPCCommand>.Continuation?
+    private var commandChannelID: UUID?
+    private var inputReady = false
+    private var inputState = SSHInputState()
     private let speech: SpeechOutput
 
     init(speech: SpeechOutput) {
@@ -87,8 +93,6 @@ final class BridgeClient {
             return
         }
 
-        let (stream, cont) = AsyncStream<IPCCommand>.makeStream()
-        commandContinuation = cont
         status = .connecting
         appendLog("connecting to \(user)@\(host):\(port) using \(summary.kind)")
         if let fp = summary.fingerprint {
@@ -99,19 +103,26 @@ final class BridgeClient {
         driver = Task { [weak self] in
             await self?.runDriver(
                 configuration: sessionConfiguration,
-                remote: remote, commandStream: stream
+                remote: remote
             )
         }
     }
 
     func stop() {
+        let activeSupervisor = connectionSupervisor
+        connectionSupervisor = nil
+        forwardingEnabled = false
         send(.quit)
         commandContinuation?.finish()
         commandContinuation = nil
+        commandChannelID = nil
+        inputReady = false
+        inputState.reset()
         driver?.cancel()
         driver = nil
-        forwardingEnabled = false
-        if case .ready = status { status = .disconnected(reason: "stopped") }
+        Task { await activeSupervisor?.stop() }
+        if case .idle = status { return }
+        status = .disconnected(reason: "stopped")
     }
 
     /// Send an IPC command to the bridge. Silently dropped if not connected —
@@ -121,7 +132,98 @@ final class BridgeClient {
     }
 
     func sendKey(vk: UInt16, pressed: Bool) {
-        send(.key(vk: vk, pressed: pressed))
+        guard inputReady, let commandContinuation else { return }
+        guard let command = inputState.command(forKey: vk, pressed: pressed) else { return }
+        commandContinuation.yield(command)
+    }
+
+    private func register(supervisor: SSHConnectionSupervisor<SSHSession>) {
+        connectionSupervisor = supervisor
+    }
+
+    private func unregister(supervisor: SSHConnectionSupervisor<SSHSession>) {
+        guard connectionSupervisor === supervisor else { return }
+        connectionSupervisor = nil
+    }
+
+    private func openCommandChannel() -> (UUID, AsyncStream<IPCCommand>) {
+        commandContinuation?.finish()
+        let (stream, continuation) = AsyncStream<IPCCommand>.makeStream()
+        let id = UUID()
+        commandChannelID = id
+        commandContinuation = continuation
+        inputReady = false
+        inputState.reset()
+        return (id, stream)
+    }
+
+    private func activateCommandChannel(id: UUID) {
+        guard commandChannelID == id else { return }
+        inputState.reset()
+        inputReady = true
+    }
+
+    private func invalidateCommandChannel(id: UUID) {
+        guard commandChannelID == id else { return }
+        inputReady = false
+        inputState.reset()
+        commandContinuation?.finish()
+        commandContinuation = nil
+        commandChannelID = nil
+    }
+
+    private func disconnectInputChannel() {
+        inputReady = false
+        inputState.reset()
+        commandContinuation?.finish()
+        commandContinuation = nil
+        commandChannelID = nil
+    }
+
+    private func handleLifecycle(
+        _ event: SSHConnectionLifecycleEvent,
+        from supervisor: SSHConnectionSupervisor<SSHSession>,
+        configuration: SSHSessionConfiguration
+    ) {
+        guard connectionSupervisor === supervisor else { return }
+        switch event {
+        case .connecting:
+            status = .authenticating
+
+        case .connected:
+            appendLog("ssh authenticated; spawning the remote IPC operation")
+
+        case .disconnected(let failure):
+            disconnectInputChannel()
+            appendLog("ssh disconnected: \(failure.message)")
+            status = .disconnected(reason: failure.message)
+
+        case .reconnecting(let attempt, let delay, let failure):
+            disconnectInputChannel()
+            appendLog(
+                "reconnecting after \(delay) " +
+                "(attempt \(attempt)): \(failure.message)"
+            )
+            status = .reconnecting(attempt: attempt)
+
+        case .permanentlyFailed(let failure):
+            disconnectInputChannel()
+            appendLog("ssh session failed: \(failure.message)")
+            if case .privateKey = configuration.authentication,
+               failure.message.contains("allAuthenticationOptionsFailed") || failure.message.contains("authentication") {
+                appendLog(
+                    "hint: if your key is RSA, modern sshd (8.7+) rejects ssh-rsa SHA-1. " +
+                    "Generate ed25519: `ssh-keygen -t ed25519` and add the .pub to authorized_keys. " +
+                    "Or add `PubkeyAcceptedAlgorithms +ssh-rsa` to sshd_config."
+                )
+            }
+            status = .failed(message: failure.message)
+
+        case .stopped:
+            disconnectInputChannel()
+            if case .failed = status { return }
+            status = .disconnected(reason: "stopped")
+        }
     }
 
     // -- Speech forwarding ---------------------------------------------------
@@ -149,82 +251,92 @@ final class BridgeClient {
 
     nonisolated private func runDriver(
         configuration: SSHSessionConfiguration,
-        remote: String, commandStream: AsyncStream<IPCCommand>
+        remote: String
     ) async {
-        let session = SSHSession(configuration: configuration)
-        do {
-            await setStatus(.authenticating)
-            try await session.connect()
-            await appendLogAsync("ssh authenticated; spawning: \(remote)")
-
-            try await session.withExec(remote) { transport in
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        for await cmd in commandStream {
-                            let line = Data((cmd.line + "\n").utf8)
-                            do {
-                                try await transport.write(line)
-                            } catch {
-                                await self.appendLogAsync("stdin write failed: \(error)")
-                                return
-                            }
-                        }
-                    }
-                    group.addTask {
-                        // stdout chunks arrive at arbitrary boundaries — split
-                        // by newline and feed each line to the IPC parser.
-                        var pending = ""
-                        for try await event in transport.events() {
-                            switch event {
-                            case .stdout(let data):
-                                let s = String(decoding: data, as: UTF8.self)
-                                pending += s
-                                while let nl = pending.firstIndex(of: "\n") {
-                                    let line = String(pending[..<nl])
-                                    pending.removeSubrange(...nl)
-                                    await self.handle(IPCParser.parse(line))
-                                }
-                            case .stderr(let data):
-                                let s = String(decoding: data, as: UTF8.self)
-                                for chunk in s.split(separator: "\n", omittingEmptySubsequences: false) {
-                                    let line = String(chunk)
-                                    if !line.isEmpty {
-                                        await self.appendLogAsync("nvdr: \(line)")
-                                    }
-                                }
-                            }
-                        }
-                        if !pending.isEmpty {
-                            await self.handle(IPCParser.parse(pending))
-                        }
-                    }
-                    try await group.waitForAll()
-                }
-            }
-            try? await session.close()
-            await setStatus(.disconnected(reason: "remote process exited"))
-        } catch is CancellationError {
-            try? await session.close()
-            await setStatus(.disconnected(reason: "stopped"))
-        } catch {
-            try? await session.close()
-            let msg = "\(error)"
-            await appendLogAsync("driver error: \(msg)")
-            // The bundled SSH library (Citadel + swift-nio-ssh) only signs
-            // RSA with SHA-1 (`ssh-rsa`). OpenSSH 8.7+ disables that by
-            // default — `authorized_keys` will be a perfect match and the
-            // server still rejects you. Surface the actionable fix instead
-            // of the opaque "allAuthenticationOptionsFailed".
-            if case .privateKey = configuration.authentication,
-               msg.contains("allAuthenticationOptionsFailed") || msg.contains("authentication") {
-                await appendLogAsync(
-                    "hint: if your key is RSA, modern sshd (8.7+) rejects ssh-rsa SHA-1. " +
-                    "Generate ed25519: `ssh-keygen -t ed25519` and add the .pub to authorized_keys. " +
-                    "Or add `PubkeyAcceptedAlgorithms +ssh-rsa` to sshd_config."
-                )
-            }
-            await setStatus(.failed(message: msg))
+        let supervisor = SSHConnectionSupervisor<SSHSession>(
+            reconnectPolicy: configuration.reconnectPolicy
+        ) {
+            SSHSession(configuration: configuration)
         }
+        await register(supervisor: supervisor)
+        let lifecycleTask = Task { [weak self] in
+            for await event in supervisor.lifecycleEvents {
+                await self?.handleLifecycle(event, from: supervisor, configuration: configuration)
+            }
+        }
+
+        await supervisor.run { [weak self] session in
+            guard let self else { throw CancellationError() }
+            try await self.runConnectedOperation(session: session, remote: remote)
+        }
+
+        lifecycleTask.cancel()
+        await unregister(supervisor: supervisor)
+    }
+
+    nonisolated private func runConnectedOperation(
+        session: SSHSession,
+        remote: String
+    ) async throws {
+        try await session.withExec(remote) { [weak self] transport in
+            guard let self else { throw CancellationError() }
+            try await self.consumeBridgeTransport(transport)
+        }
+    }
+
+    nonisolated private func consumeBridgeTransport(
+        _ transport: SSHExecTransport
+    ) async throws {
+        let (channelID, commandStream) = await openCommandChannel()
+        do {
+            // New sessions always begin from a known remote input state. The
+            // channel is not made writable to keyboard input until this has
+            // been sent successfully.
+            try await transport.write(Data((IPCCommand.releaseAll.line + "\n").utf8))
+            await activateCommandChannel(id: channelID)
+
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await command in commandStream {
+                        try await transport.write(Data((command.line + "\n").utf8))
+                    }
+                }
+                group.addTask {
+                    // stdout chunks arrive at arbitrary boundaries — split
+                    // by newline and feed each line to the IPC parser.
+                    var pending = ""
+                    for try await event in transport.events() {
+                        switch event {
+                        case .stdout(let data):
+                            pending += String(decoding: data, as: UTF8.self)
+                            while let newline = pending.firstIndex(of: "\n") {
+                                let line = String(pending[..<newline])
+                                pending.removeSubrange(...newline)
+                                await self.handle(IPCParser.parse(line))
+                            }
+                        case .stderr(let data):
+                            for chunk in String(decoding: data, as: UTF8.self)
+                                .split(separator: "\n", omittingEmptySubsequences: false) {
+                                let line = String(chunk)
+                                if !line.isEmpty {
+                                    await self.appendLogAsync("nvdr: \(line)")
+                                }
+                            }
+                        }
+                    }
+                    if !pending.isEmpty {
+                        await self.handle(IPCParser.parse(pending))
+                    }
+                }
+                _ = try await group.next()
+                await self.invalidateCommandChannel(id: channelID)
+                group.cancelAll()
+            }
+        } catch {
+            await invalidateCommandChannel(id: channelID)
+            throw error
+        }
+        await invalidateCommandChannel(id: channelID)
     }
 
     nonisolated private func handle(_ event: IPCEvent) async {
