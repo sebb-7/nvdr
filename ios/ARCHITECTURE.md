@@ -35,3 +35,9 @@ validation seam for authentication selection and key parsing. The repository
 does not currently contain an iOS unit-test target; adding one would require
 XcodeGen/Xcode project changes and test-only key fixtures, so this extraction
 keeps the seam isolated without introducing an unverified test target.
+Validation boundary
+-------------------
+
+The extracted SSH transport has CI compilation coverage, and its pure
+authentication selection/parsing behavior has network-free unit tests. CI
+does not connect to an SSH server or exercise network-level integration.
