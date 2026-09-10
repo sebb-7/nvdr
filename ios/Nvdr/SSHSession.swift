@@ -148,7 +148,7 @@ final class SSHSession {
     /// exposing Citadel/NIO implementation types.
     func withExec(
         _ command: String,
-        operation: (SSHExecTransport) async throws -> Void
+        operation: @escaping @Sendable (SSHExecTransport) async throws -> Void
     ) async throws {
         guard let client else { throw SSHSessionError.notConnected }
         try await client.withExec(command) { inbound, outbound in
