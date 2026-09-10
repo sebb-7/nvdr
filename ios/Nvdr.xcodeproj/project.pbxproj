@@ -21,6 +21,7 @@
 		D06586A1F5068E6F9BA55775 /* SpeechOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E98975F1450069126AA211EE /* SpeechOutput.swift */; };
 		E2175EF2A7E8BE1F597E4619 /* BridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF2B92A6E0A59C8812EA75D9 /* BridgeClient.swift */; };
 		E449BA4DC9FC7809D9FFDD43 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BDD203DB7C2F60867D2109 /* SettingsView.swift */; };
+		F2C6C0FBD0F547B6A4F90B2E /* SSHSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A8DB7E7D4E94A30A1F1E5E6 /* SSHSession.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		D3696C4F335913649744AAA2 /* NvdrApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NvdrApp.swift; sourceTree = "<group>"; };
 		DF2B92A6E0A59C8812EA75D9 /* BridgeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeClient.swift; sourceTree = "<group>"; };
 		E98975F1450069126AA211EE /* SpeechOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechOutput.swift; sourceTree = "<group>"; };
+		2A8DB7E7D4E94A30A1F1E5E6 /* SSHSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -83,6 +85,7 @@
 				A4F7BC34E52BD484B214B6D9 /* RSASHA2AuthDelegate.swift */,
 				6F9503834F8163EFF639CEA2 /* Settings.swift */,
 				73BDD203DB7C2F60867D2109 /* SettingsView.swift */,
+				2A8DB7E7D4E94A30A1F1E5E6 /* SSHSession.swift */,
 				E98975F1450069126AA211EE /* SpeechOutput.swift */,
 				23595A3876276C8400E77045 /* VK.swift */,
 			);
@@ -165,6 +168,7 @@
 				B57B37151BE4394ACA069C88 /* Settings.swift in Sources */,
 				E449BA4DC9FC7809D9FFDD43 /* SettingsView.swift in Sources */,
 				D06586A1F5068E6F9BA55775 /* SpeechOutput.swift in Sources */,
+				F2C6C0FBD0F547B6A4F90B2E /* SSHSession.swift in Sources */,
 				CC2ED9E4471BA0E75DD7EB93 /* VK.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
