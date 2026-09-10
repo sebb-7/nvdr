@@ -151,10 +151,10 @@ final class SSHSession {
         operation: @escaping @Sendable (SSHExecTransport) async throws -> Void
     ) async throws {
         guard let client else { throw SSHSessionError.notConnected }
-        try await client.withExec(command) { inbound, outbound in
+        try await client.withExec(command, perform: { @Sendable inbound, outbound in
             let transport = Self.makeTransport(inbound: inbound, outbound: outbound)
             try await operation(transport)
-        }
+        })
     }
 
     /// Close is intentionally idempotent. A caller may use it from both its
