@@ -22,6 +22,13 @@ final class SSHSessionTests: XCTestCase {
         XCTAssertNil(summary.fingerprint)
     }
 
+    func testHostKeyPolicyDefaultsToTrustOnFirstUse() {
+        XCTAssertEqual(
+            configuration(authentication: .password("secret")).hostKeyPolicy,
+            .trustOnFirstUse
+        )
+    }
+
     func testEmptyPrivateKeyFailsWithMissingKey() {
         XCTAssertThrowsError(
             try SSHSession.authenticationSummary(

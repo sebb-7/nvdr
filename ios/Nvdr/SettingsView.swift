@@ -32,6 +32,11 @@ struct SettingsView: View {
                     LabeledTextField("Remote nvdr command", text: $settings.remoteNvdrCommand)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    if let error = settings.credentialStorageError {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Section("NVDA Remote relay") {

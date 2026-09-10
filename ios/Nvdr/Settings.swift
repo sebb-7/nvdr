@@ -73,6 +73,7 @@ final class AppSettings {
     var sshPrivateKeyPEM: String
     var sshPrivateKeyPassphrase: String
     var remoteNvdrCommand: String
+    private(set) var credentialStorageError: String?
 
     // Relay (forwarded as nvdr --ipc args on the bridge)
     var relayHost: String
@@ -90,15 +91,22 @@ final class AppSettings {
     var speechRate: Float
     var voiceIdentifier: String?
 
-    init() {
-        let d = UserDefaults.standard
+    private let credentialPersistence: SSHCredentialPersistence
+
+    init(
+        defaults: UserDefaults = .standard,
+        credentialStore: any CredentialStore = KeychainCredentialStore()
+    ) {
+        let d = defaults
+        credentialPersistence = SSHCredentialPersistence(defaults: d, store: credentialStore)
+        let migrationDiagnostics = credentialPersistence.migrateLegacyValues()
         sshHost = d.string(forKey: Keys.sshHost) ?? ""
         sshPort = d.object(forKey: Keys.sshPort) as? Int ?? 22
         sshUser = d.string(forKey: Keys.sshUser) ?? ""
         sshAuthMode = SSHAuthMode(rawValue: d.string(forKey: Keys.sshAuthMode) ?? "") ?? .password
-        sshPassword = d.string(forKey: Keys.sshPassword) ?? ""
-        sshPrivateKeyPEM = d.string(forKey: Keys.sshPrivateKeyPEM) ?? ""
-        sshPrivateKeyPassphrase = d.string(forKey: Keys.sshPrivateKeyPassphrase) ?? ""
+        sshPassword = (try? credentialStore.string(for: SSHCredential.password.account)) ?? ""
+        sshPrivateKeyPEM = (try? credentialStore.string(for: SSHCredential.privateKey.account)) ?? ""
+        sshPrivateKeyPassphrase = (try? credentialStore.string(for: SSHCredential.privateKeyPassphrase.account)) ?? ""
         remoteNvdrCommand = d.string(forKey: Keys.remoteNvdrCommand) ?? "nvdr"
         relayHost = d.string(forKey: Keys.relayHost) ?? "nvdaremote.com"
         relayPort = d.object(forKey: Keys.relayPort) as? Int ?? 6837
@@ -111,6 +119,7 @@ final class AppSettings {
         let storedRate = d.object(forKey: Keys.speechRate) as? Double
         speechRate = Float(storedRate ?? 0.55)
         voiceIdentifier = d.string(forKey: Keys.voiceIdentifier)
+        credentialStorageError = migrationDiagnostics.first
     }
 
     func save() {
@@ -119,9 +128,18 @@ final class AppSettings {
         d.set(sshPort, forKey: Keys.sshPort)
         d.set(sshUser, forKey: Keys.sshUser)
         d.set(sshAuthMode.rawValue, forKey: Keys.sshAuthMode)
-        d.set(sshPassword, forKey: Keys.sshPassword)
-        d.set(sshPrivateKeyPEM, forKey: Keys.sshPrivateKeyPEM)
-        d.set(sshPrivateKeyPassphrase, forKey: Keys.sshPrivateKeyPassphrase)
+        let secretWrites: [(String, SSHCredential)] = [
+            (sshPassword, .password),
+            (sshPrivateKeyPEM, .privateKey),
+            (sshPrivateKeyPassphrase, .privateKeyPassphrase),
+        ]
+        credentialStorageError = nil
+        for (value, credential) in secretWrites {
+            if case .failure(let error) = credentialPersistence.save(value, for: credential) {
+                credentialStorageError = "Unable to save \(credential.account): \(error.localizedDescription)"
+                break
+            }
+        }
         d.set(remoteNvdrCommand, forKey: Keys.remoteNvdrCommand)
         d.set(relayHost, forKey: Keys.relayHost)
         d.set(relayPort, forKey: Keys.relayPort)
@@ -164,9 +182,6 @@ final class AppSettings {
         static let sshPort = "nvdr.sshPort"
         static let sshUser = "nvdr.sshUser"
         static let sshAuthMode = "nvdr.sshAuthMode"
-        static let sshPassword = "nvdr.sshPassword"
-        static let sshPrivateKeyPEM = "nvdr.sshPrivateKeyPEM"
-        static let sshPrivateKeyPassphrase = "nvdr.sshPrivateKeyPassphrase"
         static let remoteNvdrCommand = "nvdr.remoteNvdrCommand"
         static let relayHost = "nvdr.relayHost"
         static let relayPort = "nvdr.relayPort"

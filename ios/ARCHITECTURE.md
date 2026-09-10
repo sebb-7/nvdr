@@ -26,9 +26,11 @@ connection and exec lifecycle, and a byte-oriented `SSHExecTransport`. The
 transport exposes stdin writes and stdout/stderr events without exposing
 Citadel or NIO types to `BridgeClient`.
 
-The current host-key and reconnect behavior is intentionally preserved and
-made explicit as `.acceptAnything` and `.never`. They are extension points for
-future verification, pinning, keepalive, and reconnect policy work.
+`SSHSession` also owns credential retrieval and host-key validation. SSH
+secrets live in the device-local Keychain, while non-secret host identities
+are persisted separately by normalized host and port. The normal policy is
+trust on first use: a first key is stored, while any later key change fails
+closed. Insecure key acceptance remains available only as an explicit policy.
 
 `SSHSession.authenticationSummary(for:)` is the synchronous, network-free
 validation seam for authentication selection and key parsing. The repository

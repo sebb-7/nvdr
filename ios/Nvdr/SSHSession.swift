@@ -14,10 +14,9 @@ struct SSHSessionConfiguration: Sendable {
     let username: String
     let authentication: SSHAuthenticationConfiguration
 
-    /// The current app behavior accepts any server host key. Keep that
-    /// behavior explicit until TOFU or pinned-fingerprint verification is
-    /// implemented.
-    var hostKeyPolicy: SSHHostKeyPolicy = .acceptAnything
+    /// SSH host identities are trusted on first use and then pinned to the
+    /// endpoint. Insecure acceptance exists only as an explicit override.
+    var hostKeyPolicy: SSHHostKeyPolicy = .trustOnFirstUse
 
     /// Reconnect is intentionally disabled to preserve the existing behavior.
     /// A future policy can add bounded retry/backoff without changing callers.
@@ -27,12 +26,6 @@ struct SSHSessionConfiguration: Sendable {
 enum SSHAuthenticationConfiguration: Sendable, Equatable {
     case password(String)
     case privateKey(pem: String, passphrase: String)
-}
-
-enum SSHHostKeyPolicy: Sendable, Equatable {
-    case acceptAnything
-    // TODO: Add TOFU and pinned-fingerprint policies without changing the
-    // generic session API.
 }
 
 enum SSHReconnectPolicy: Sendable, Equatable {
@@ -102,9 +95,14 @@ final class SSHSession {
     let configuration: SSHSessionConfiguration
 
     private var client: SSHClient?
+    private let hostIdentityStore: SSHHostIdentityStore
 
-    init(configuration: SSHSessionConfiguration) {
+    init(
+        configuration: SSHSessionConfiguration,
+        hostIdentityStore: SSHHostIdentityStore = UserDefaultsSSHHostIdentityStore()
+    ) {
         self.configuration = configuration
+        self.hostIdentityStore = hostIdentityStore
     }
 
     /// Parse and summarize authentication without opening a network
@@ -128,13 +126,26 @@ final class SSHSession {
             (RSASHA256PublicKey.self, RSASHA256Signature.self),
         ])
 
-        switch (configuration.hostKeyPolicy, configuration.reconnectPolicy) {
-        case (.acceptAnything, .never):
+        let hostKeyValidator: SSHHostKeyValidator
+        switch configuration.hostKeyPolicy {
+        case .trustOnFirstUse:
+            hostKeyValidator = .custom(
+                SSHTOFUHostKeyValidator(
+                    endpoint: SSHHostEndpoint(host: configuration.host, port: configuration.port),
+                    store: hostIdentityStore
+                )
+            )
+        case .insecureAcceptAnything:
+            hostKeyValidator = .acceptAnything()
+        }
+
+        switch configuration.reconnectPolicy {
+        case .never:
             client = try await SSHClient.connect(
                 host: configuration.host,
                 port: configuration.port,
                 authenticationMethod: authentication,
-                hostKeyValidator: .acceptAnything(),
+                hostKeyValidator: hostKeyValidator,
                 reconnect: .never,
                 algorithms: algorithms
             )
