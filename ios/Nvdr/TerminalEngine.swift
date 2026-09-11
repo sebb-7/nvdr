@@ -21,13 +21,50 @@ public struct TerminalCursor: Equatable, Sendable {
     }
 }
 
+/// A shell-authored OSC 133 role already parsed by the terminal engine.
+public enum TerminalShellSemanticContent: Equatable, Hashable, Sendable {
+    case prompt(TerminalShellPromptKind)
+    case input
+    case output
+}
+
+/// The kind supplied by a shell for an OSC 133 prompt mark.
+public enum TerminalShellPromptKind: Equatable, Hashable, Sendable {
+    case initial
+    case right
+    case continuation
+    case secondary
+}
+
+/// A zero-width, shell-authored OSC 133 prompt mark in scrollback coordinates.
+public struct TerminalShellIntegrationMark: Equatable, Hashable, Sendable {
+    public let row: Int
+    public let column: Int
+    public let kind: TerminalShellPromptKind
+
+    public init(row: Int, column: Int, kind: TerminalShellPromptKind) {
+        self.row = row
+        self.column = column
+        self.kind = kind
+    }
+}
+
 public struct TerminalLineSnapshot: Equatable, Sendable {
     public let text: String
     public let isWrappedContinuation: Bool
+    public let scrollbackRow: Int
+    public let shellSemanticContent: [TerminalShellSemanticContent]
 
-    public init(text: String, isWrappedContinuation: Bool) {
+    public init(
+        text: String,
+        isWrappedContinuation: Bool,
+        scrollbackRow: Int = 0,
+        shellSemanticContent: [TerminalShellSemanticContent] = []
+    ) {
         self.text = text
         self.isWrappedContinuation = isWrappedContinuation
+        self.scrollbackRow = scrollbackRow
+        self.shellSemanticContent = shellSemanticContent
     }
 }
 
@@ -39,6 +76,7 @@ public struct TerminalSnapshot: Equatable, Sendable {
     public let scrollback: [TerminalLineSnapshot]
     public let isAlternateScreen: Bool
     public let semanticPromptRows: [Int]
+    public let shellIntegrationMarks: [TerminalShellIntegrationMark]
 }
 
 /// Owns SwiftTerm's mutable parser on the main actor and exposes engine-neutral values.
@@ -67,19 +105,40 @@ public final class TerminalEngine {
 
     public func snapshot() -> TerminalSnapshot {
         let scrollbackStart = terminal.buffer.totalLinesTrimmed
+        let viewportStart = scrollbackStart + terminal.buffer.yDisp
         var scrollback: [TerminalLineSnapshot] = []
         var semanticPromptRows: [Int] = []
+        var shellIntegrationMarks: [TerminalShellIntegrationMark] = []
         var row = scrollbackStart
 
         while let line = terminal.getScrollInvariantLine(row: row) {
-            scrollback.append(lineSnapshot(line))
-            if !terminal.semanticPromptMarks(at: row).isEmpty {
+            let bufferRow = row - scrollbackStart
+            if row < viewportStart {
+                scrollback.append(lineSnapshot(line, bufferRow: bufferRow, scrollbackRow: row))
+            }
+            let marks = terminal.semanticPromptMarks(at: bufferRow)
+            if !marks.isEmpty {
                 semanticPromptRows.append(row)
+                shellIntegrationMarks += marks.map {
+                    TerminalShellIntegrationMark(
+                        row: row,
+                        column: $0.position.col,
+                        kind: shellPromptKind(from: $0.kind)
+                    )
+                }
             }
             row += 1
         }
 
-        let viewport = (0..<terminal.rows).compactMap { terminal.getLine(row: $0) }.map(lineSnapshot)
+        let viewport = (0..<terminal.rows).compactMap { viewportRow -> TerminalLineSnapshot? in
+            guard let line = terminal.getLine(row: viewportRow) else { return nil }
+            let row = viewportStart + viewportRow
+            return lineSnapshot(
+                line,
+                bufferRow: row - scrollbackStart,
+                scrollbackRow: row
+            )
+        }
         return TerminalSnapshot(
             revision: revision,
             dimensions: TerminalDimensions(columns: terminal.cols, rows: terminal.rows),
@@ -87,15 +146,49 @@ public final class TerminalEngine {
             viewport: viewport,
             scrollback: scrollback,
             isAlternateScreen: terminal.isCurrentBufferAlternate,
-            semanticPromptRows: semanticPromptRows
+            semanticPromptRows: semanticPromptRows,
+            shellIntegrationMarks: shellIntegrationMarks
         )
     }
 
-    private func lineSnapshot(_ line: BufferLine) -> TerminalLineSnapshot {
+    private func lineSnapshot(
+        _ line: BufferLine,
+        bufferRow: Int,
+        scrollbackRow: Int
+    ) -> TerminalLineSnapshot {
+        var shellSemanticContent: [TerminalShellSemanticContent] = []
+        for column in 0..<terminal.cols {
+            guard let content = terminal.semanticContent(at: Position(col: column, row: bufferRow)),
+                  let appContent = shellSemanticContent(from: content),
+                  !shellSemanticContent.contains(appContent) else {
+                continue
+            }
+            shellSemanticContent.append(appContent)
+        }
         TerminalLineSnapshot(
             text: line.translateToString(trimRight: true),
-            isWrappedContinuation: line.isWrapped
+            isWrappedContinuation: line.isWrapped,
+            scrollbackRow: scrollbackRow,
+            shellSemanticContent: shellSemanticContent
         )
+    }
+
+    private func shellPromptKind(from kind: SemanticPromptKind) -> TerminalShellPromptKind {
+        switch kind {
+        case .initial: return .initial
+        case .right: return .right
+        case .continuation: return .continuation
+        case .secondary: return .secondary
+        }
+    }
+
+    private func shellSemanticContent(from content: SemanticContent) -> TerminalShellSemanticContent? {
+        switch content {
+        case .none: return nil
+        case .prompt(let kind): return .prompt(shellPromptKind(from: kind))
+        case .input: return .input
+        case .output: return .output
+        }
     }
 }
 

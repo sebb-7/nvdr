@@ -125,3 +125,21 @@ deterministic snapshot at the requested size while the remote request is in
 flight. A transport failure transitions the session to `failed`; a remote EOF
 transitions it to `ended`; and `close()` is idempotent, cancels the read task,
 and lets the surrounding `SSHSession.withPTY` operation end the channel scope.
+
+## Terminal accessibility interpretation
+
+`TerminalEngine` remains the sole owner of terminal parsing and mutable buffer
+state. `TerminalAccessibilityModel` consumes only its immutable
+`TerminalSnapshot` values and derives presentation-neutral logical lines,
+visible content, and bounded semantic change events. It has no SSH, Citadel,
+NIO, SwiftTerm, UI, VoiceOver, NVDA, or speech dependency.
+
+The model joins rows marked by the engine as soft-wrap continuations so future
+assistive presentation can read logical content without terminal-width-only
+breaks. It treats a size change or non-append rewrite as one `screenReplaced`
+event, rather than falsely announcing the reflowed screen as new output. Parsed
+OSC 133 prompt kinds and cell roles (`prompt`, `input`, and `output`) are
+carried forward as immutable data; the model does not invent command boundaries
+from them. Alternate-screen enter, exit, and repaint are represented explicitly
+and never become shell history appends. Future UI and screen-reader code decides
+how to navigate, coalesce, or speak these values.
