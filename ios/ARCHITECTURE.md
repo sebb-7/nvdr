@@ -143,3 +143,38 @@ carried forward as immutable data; the model does not invent command boundaries
 from them. Alternate-screen enter, exit, and repaint are represented explicitly
 and never become shell history appends. Future UI and screen-reader code decides
 how to navigate, coalesce, or speak these values.
+
+## Terminal presentation
+
+`TerminalPresentationModel` is the user-facing layer above
+`TerminalAccessibilityModel`. It owns live versus review mode, a selected
+review line, session-state labels, byte-exact text submission, and the small
+set of explicit terminal key actions exposed by the first SwiftUI terminal
+surface. It accepts only a narrow `TerminalPresentationSession` capability;
+it has no Citadel, NIO, SwiftTerm, or NVDA IPC dependency.
+
+The ownership boundary is intentionally strict:
+
+```text
+SSHTerminalSession
+    owns coordination with the SSH PTY
+TerminalEngine
+    owns parsing and terminal state
+TerminalAccessibilityModel
+    owns semantic accessibility interpretation
+TerminalPresentationModel / TerminalPresentationView
+    own user-facing navigation and presentation
+```
+
+Live mode follows the current logical terminal line as snapshots arrive. Review
+mode retains the user-selected logical line, so appended output never forces a
+VoiceOver user back to the cursor. Returning to live mode explicitly resumes
+following the current line. The SwiftUI surface exposes logical lines as native
+accessibility elements rather than terminal cells, identifies the current and
+reviewed line in its labels, and does not automatically announce or move focus
+for every incoming character.
+
+Alternate-screen snapshots replace the currently presented terminal content;
+they are never presented as appended shell history. Presentation does not infer
+geometry: a higher-level owner may explicitly request rows and columns through
+the existing local-engine-then-remote-PTY resize path.
