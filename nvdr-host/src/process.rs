@@ -20,7 +20,6 @@ pub struct ProcessInfo {
 #[derive(Debug)]
 pub enum ProcessError {
     NotFound,
-    Backend(String),
 }
 
 pub trait ProcessProvider {

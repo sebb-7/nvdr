@@ -135,9 +135,6 @@ where
                     "process_not_found",
                     format!("process {pid} was not found"),
                 )),
-                Err(ProcessError::Backend(e)) => {
-                    Response::error(ErrorResponse::new(request_id, "internal_error", e))
-                }
             },
             Err(e) => Response::error(ErrorResponse::new(request_id, "invalid_parameters", e)),
         },
@@ -248,29 +245,6 @@ mod tests {
             Capabilities::v1(),
         );
         assert_eq!(r.error.unwrap().code, "process_not_found");
-    }
-
-    #[test]
-    fn backend_process_error_is_structured() {
-        struct BackendFake;
-
-        impl ProcessProvider for BackendFake {
-            fn list_processes(&self) -> Result<Vec<ProcessInfo>, String> {
-                Ok(vec![])
-            }
-
-            fn process_info(&self, _: u32) -> Result<ProcessInfo, ProcessError> {
-                Err(ProcessError::Backend("fixture failure".into()))
-            }
-        }
-
-        let r = dispatch(
-            req(r#"{"version":1,"request_id":"x","operation":"process.info","params":{"pid":7}}"#),
-            &Fake,
-            &BackendFake,
-            Capabilities::v1(),
-        );
-        assert_eq!(r.error.unwrap().code, "internal_error");
     }
 
     #[allow(dead_code)]
