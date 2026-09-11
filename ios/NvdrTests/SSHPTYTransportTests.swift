@@ -21,17 +21,14 @@ final class SSHPTYTransportTests: XCTestCase {
 
     func testTransportPreservesExactInputOutputAndResizeBytes() async throws {
         let recorder = PTYRecorder()
-        let (stream, continuation) = AsyncThrowingStream<SSHPTYEvent, Error>.makeStream()
         let lifetime = SSHPTYTransportLifetime()
+        let output = Data([0x1B, 0x5B, 0x44, 0xC3, 0xA9])
         let transport = SSHPTYTransport(
-            eventSequence: SSHPTYEventSequence(testStream: stream),
+            eventSequence: SSHPTYEventSequence(testEvents: [.stdout(output)]),
             lifetime: lifetime,
             writeBytes: { data in await recorder.recordInput(data) },
             changeSize: { dimensions in await recorder.recordResize(dimensions) }
         )
-        let output = Data([0x1B, 0x5B, 0x44, 0xC3, 0xA9])
-        continuation.yield(.stdout(output))
-        continuation.finish()
 
         let input = Data([0x03, 0x1B, 0x5B, 0x41, 0xF0, 0x9F, 0x98, 0x80])
         let expectedResize = try SSHPTYDimensions(
@@ -44,8 +41,10 @@ final class SSHPTYTransportTests: XCTestCase {
         try await transport.resize(columns: 120, rows: 40, pixelWidth: 960, pixelHeight: 640)
 
         var iterator = transport.events().makeAsyncIterator()
-        XCTAssertEqual(try await iterator.next(), .stdout(output))
-        XCTAssertNil(try await iterator.next())
+        let firstEvent = try await iterator.next()
+        let secondEvent = try await iterator.next()
+        XCTAssertEqual(firstEvent, .stdout(output))
+        XCTAssertNil(secondEvent)
         let recordedInputs = await recorder.inputs()
         let recordedResizes = await recorder.resizes()
         XCTAssertEqual(recordedInputs, [input])
@@ -53,11 +52,9 @@ final class SSHPTYTransportTests: XCTestCase {
     }
 
     func testClosedTransportRejectsStaleWritesAndResizes() async throws {
-        let (stream, continuation) = AsyncThrowingStream<SSHPTYEvent, Error>.makeStream()
-        continuation.finish()
         let lifetime = SSHPTYTransportLifetime()
         let transport = SSHPTYTransport(
-            eventSequence: SSHPTYEventSequence(testStream: stream),
+            eventSequence: SSHPTYEventSequence(testEvents: []),
             lifetime: lifetime,
             writeBytes: { _ in },
             changeSize: { _ in }

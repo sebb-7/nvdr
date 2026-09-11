@@ -93,33 +93,32 @@ struct SSHPTYEventSequence: AsyncSequence, @unchecked Sendable {
     typealias Element = SSHPTYEvent
 
     private let output: PTYUncheckedSendable<TTYOutput>?
-    private let testStream: AsyncThrowingStream<SSHPTYEvent, Error>?
+    private let testEvents: [SSHPTYEvent]?
 
     init(output: TTYOutput) {
         self.output = PTYUncheckedSendable(output)
-        testStream = nil
+        testEvents = nil
     }
 
-    init(testStream: AsyncThrowingStream<SSHPTYEvent, Error>) {
+    init(testEvents: [SSHPTYEvent]) {
         output = nil
-        self.testStream = testStream
+        self.testEvents = testEvents
     }
 
     func makeAsyncIterator() -> Iterator {
         if let output {
             return Iterator(storage: .tty(output.value.makeAsyncIterator()))
         }
-        if let testStream {
-            return Iterator(storage: .stream(testStream.makeAsyncIterator()))
+        if let testEvents {
+            return Iterator(storage: .events(testEvents, index: 0))
         }
-        let emptyStream = AsyncThrowingStream<SSHPTYEvent, Error> { $0.finish() }
-        return Iterator(storage: .stream(emptyStream.makeAsyncIterator()))
+        return Iterator(storage: .events([], index: 0))
     }
 
     struct Iterator: AsyncIteratorProtocol {
         fileprivate enum Storage {
             case tty(TTYOutput.AsyncIterator)
-            case stream(AsyncThrowingStream<SSHPTYEvent, Error>.AsyncIterator)
+            case events([SSHPTYEvent], index: Int)
         }
 
         private var storage: Storage
@@ -130,9 +129,10 @@ struct SSHPTYEventSequence: AsyncSequence, @unchecked Sendable {
 
         mutating func next() async throws -> SSHPTYEvent? {
             switch storage {
-            case .stream(var iterator):
-                let event = try await iterator.next()
-                storage = .stream(iterator)
+            case let .events(events, index):
+                guard index < events.count else { return nil }
+                let event = events[index]
+                storage = .events(events, index: index + 1)
                 return event
             case .tty(var iterator):
                 guard let event = try await iterator.next() else { return nil }
