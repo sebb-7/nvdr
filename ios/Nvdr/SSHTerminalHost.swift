@@ -78,7 +78,7 @@ final class SSHTerminalHost {
         self.connectionFactory = connectionFactory
     }
 
-    deinit {
+    isolated deinit {
         terminalSession?.close()
         driver?.cancel()
         let connection = connection
