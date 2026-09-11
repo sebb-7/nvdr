@@ -1,3 +1,1 @@
-mod common;
-
-pub use common::SystemProvider;
+pub use super::common::SystemProvider;
