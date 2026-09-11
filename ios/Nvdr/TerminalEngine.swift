@@ -156,20 +156,20 @@ public final class TerminalEngine {
         bufferRow: Int,
         scrollbackRow: Int
     ) -> TerminalLineSnapshot {
-        var shellSemanticContent: [TerminalShellSemanticContent] = []
+        var semanticContent: [TerminalShellSemanticContent] = []
         for column in 0..<terminal.cols {
             guard let content = terminal.semanticContent(at: Position(col: column, row: bufferRow)),
                   let appContent = shellSemanticContent(from: content),
-                  !shellSemanticContent.contains(appContent) else {
+                  !semanticContent.contains(appContent) else {
                 continue
             }
-            shellSemanticContent.append(appContent)
+            semanticContent.append(appContent)
         }
-        TerminalLineSnapshot(
+        return TerminalLineSnapshot(
             text: line.translateToString(trimRight: true),
             isWrappedContinuation: line.isWrapped,
             scrollbackRow: scrollbackRow,
-            shellSemanticContent: shellSemanticContent
+            shellSemanticContent: semanticContent
         )
     }
 
