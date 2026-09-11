@@ -19,9 +19,6 @@ packages:
   Citadel:
     url: https://github.com/orlandos-nl/Citadel.git
     from: "0.7.0"
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm.git
-    exactVersion: "1.19.0"
   swift-crypto:
     url: https://github.com/apple/swift-crypto.git
     from: "3.0.0"
@@ -57,7 +54,6 @@ targets:
           - audio
     dependencies:
       - package: Citadel
-      - package: SwiftTerm
       - package: swift-crypto
         product: _CryptoExtras
     settings:
