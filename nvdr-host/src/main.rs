@@ -105,7 +105,8 @@ mod tests {
             serde_json::to_writer(&mut output, &response).unwrap();
             output.push(b'\n');
         }
-        let lines: Vec<_> = String::from_utf8(output).unwrap().lines().collect();
+        let output = String::from_utf8(output).unwrap();
+        let lines: Vec<_> = output.lines().collect();
         assert_eq!(lines.len(), 3);
         assert!(lines[0].contains("\"request_id\":\"a\""));
         assert!(lines[1].contains("malformed_json"));
