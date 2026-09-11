@@ -211,6 +211,21 @@ terminal session, cancels host work, and then releases the SSH connection;
 repeated closes are safe. NVDA IPC remains a parallel feature with independent
 state and lifetime.
 
+## FarRelay Host v1
+
+`FarRelayHostConnection` composes one connected `SSHSession` with exactly one
+long-lived `farrelay-host` exec channel. `FarRelayHostClient` sits above the
+generic byte-oriented `SSHExecTransport`: it owns version-1 NDJSON framing,
+request-ID correlation, typed Codable results, structured errors, and bounded
+stderr diagnostics. `SSHSession` remains unaware of the Host protocol and no
+Host client is connected to UI, terminal, NVDA, or remote-intent routing.
+
+```text
+FarRelay Host v1                 ✓
+Apple HostClient transport       ✓
+HostTarget                       NEXT
+```
+
 ## Remote intent routing
 
 Input adapters produce immutable, platform-neutral `RemoteIntent` values. A
