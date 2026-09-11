@@ -109,3 +109,19 @@ backoff, cancellation, retry classification, and disconnected-input behavior
 also have deterministic in-memory unit coverage. CI compiles and runs these
 tests on an iOS simulator, but does not connect to a real SSH host or inject a
 real network interruption.
+
+## SSH terminal coordination
+
+`SSHTerminalSession` is the only layer that composes `SSHPTYTransport` with
+`TerminalEngine`. It owns one cancellable PTY read task, hops every raw stdout
+or stderr byte chunk to the main actor, and exposes only immutable
+`TerminalSnapshot` values plus a small lifecycle state to future presentation
+code. It does not expose Citadel, NIO, or SwiftTerm internals.
+
+The coordinator passes input bytes through unchanged. On resize it validates
+the requested PTY dimensions, updates `TerminalEngine` first, then awaits the
+remote PTY resize. Updating locally first gives presentation an immediate,
+deterministic snapshot at the requested size while the remote request is in
+flight. A transport failure transitions the session to `failed`; a remote EOF
+transitions it to `ended`; and `close()` is idempotent, cancels the read task,
+and lets the surrounding `SSHSession.withPTY` operation end the channel scope.

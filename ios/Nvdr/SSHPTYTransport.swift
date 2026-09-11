@@ -73,6 +73,24 @@ enum SSHPTYEvent: Sendable, Equatable {
     case stderr(Data)
 }
 
+/// The narrow PTY surface required by an interactive terminal session.
+///
+/// Implementations deliver raw events in order and remain independent of
+/// terminal parsing or presentation. The callback is asynchronous so a
+/// consumer can safely hop each event to its own actor.
+protocol SSHPTYTransporting: Sendable {
+    func consumeEvents(
+        _ handler: @escaping @Sendable (SSHPTYEvent) async throws -> Void
+    ) async throws
+    func write(_ data: Data) async throws
+    func resize(
+        columns: Int,
+        rows: Int,
+        pixelWidth: Int,
+        pixelHeight: Int
+    ) async throws
+}
+
 actor SSHPTYTransportLifetime {
     private var active = true
 
@@ -193,6 +211,17 @@ struct SSHPTYTransport: Sendable {
                 pixelHeight: pixelHeight
             )
         )
+    }
+}
+
+extension SSHPTYTransport: SSHPTYTransporting {
+    func consumeEvents(
+        _ handler: @escaping @Sendable (SSHPTYEvent) async throws -> Void
+    ) async throws {
+        for try await event in events() {
+            try Task.checkCancellation()
+            try await handler(event)
+        }
     }
 }
 
