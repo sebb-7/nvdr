@@ -265,9 +265,7 @@ mod tests {
         }
 
         let r = dispatch(
-            req(
-                r#"{"version":1,"request_id":"x","operation":"process.info","params":{"pid":7}}"#,
-            ),
+            req(r#"{"version":1,"request_id":"x","operation":"process.info","params":{"pid":7}}"#),
             &Fake,
             &BackendFake,
             Capabilities::v1(),
