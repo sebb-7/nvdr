@@ -92,6 +92,7 @@ actor SSHSession: SSHConnection {
 
     private var client: SSHClient?
     private let hostIdentityStore: SSHHostIdentityStore
+    private let connectionAttemptGate = SSHConnectionAttemptGate()
 
     init(
         configuration: SSHSessionConfiguration,
@@ -123,19 +124,22 @@ actor SSHSession: SSHConnection {
         ])
 
         let hostKeyValidator: SSHHostKeyValidator
+        let tofuValidator: SSHTOFUHostKeyValidator?
         switch configuration.hostKeyPolicy {
         case .trustOnFirstUse:
-            hostKeyValidator = .custom(
-                SSHTOFUHostKeyValidator(
-                    endpoint: SSHHostEndpoint(host: configuration.host, port: configuration.port),
-                    store: hostIdentityStore
-                )
+            let validator = SSHTOFUHostKeyValidator(
+                endpoint: SSHHostEndpoint(host: configuration.host, port: configuration.port),
+                store: hostIdentityStore,
+                gate: connectionAttemptGate
             )
+            hostKeyValidator = .custom(validator)
+            tofuValidator = validator
         case .insecureAcceptAnything:
             hostKeyValidator = .acceptAnything()
+            tofuValidator = nil
         }
 
-        client = try await SSHClient.connect(
+        let connectedClient = try await SSHClient.connect(
             host: configuration.host,
             port: configuration.port,
             authenticationMethod: authentication,
@@ -143,6 +147,21 @@ actor SSHSession: SSHConnection {
             reconnect: .never,
             algorithms: algorithms
         )
+        guard connectionAttemptGate.isValid, !Task.isCancelled else {
+            try? await connectedClient.close()
+            throw CancellationError()
+        }
+        do {
+            try tofuValidator?.commitValidatedIdentity()
+        } catch {
+            try? await connectedClient.close()
+            throw error
+        }
+        guard connectionAttemptGate.isValid, !Task.isCancelled else {
+            try? await connectedClient.close()
+            throw CancellationError()
+        }
+        client = connectedClient
     }
 
     /// Open one exec channel on the connected SSH client.
@@ -164,6 +183,7 @@ actor SSHSession: SSHConnection {
     /// Close is intentionally idempotent. A caller may use it from both its
     /// normal and cancellation/error cleanup paths.
     func close() async throws {
+        connectionAttemptGate.invalidate()
         guard let client else { return }
         self.client = nil
         try await client.close()

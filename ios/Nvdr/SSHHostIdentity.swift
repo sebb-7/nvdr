@@ -79,7 +79,7 @@ struct SSHHostIdentityVerifier {
     let endpoint: SSHHostEndpoint
     let store: SSHHostIdentityStore
 
-    func verify(presentedFingerprint: String) throws {
+    func verification(for presentedFingerprint: String) throws -> SSHHostIdentityVerification {
         do {
             if let expected = try store.fingerprint(for: endpoint) {
                 guard expected == presentedFingerprint else {
@@ -92,14 +92,62 @@ struct SSHHostIdentityVerifier {
                         )
                     )
                 }
+                return .alreadyTrusted
             } else {
-                try store.store(fingerprint: presentedFingerprint, for: endpoint)
+                return .trustOnSuccessfulConnection(presentedFingerprint)
             }
         } catch let error as SSHHostIdentityError {
             throw error
         } catch {
             throw SSHHostIdentityError.identityStoreFailure(error.localizedDescription)
         }
+    }
+
+    func commit(_ verification: SSHHostIdentityVerification) throws {
+        guard case let .trustOnSuccessfulConnection(fingerprint) = verification else { return }
+        do {
+            try store.store(fingerprint: fingerprint, for: endpoint)
+        } catch {
+            throw SSHHostIdentityError.identityStoreFailure(error.localizedDescription)
+        }
+    }
+
+    func verify(presentedFingerprint: String) throws {
+        let verification = try verification(for: presentedFingerprint)
+        try commit(verification)
+    }
+}
+
+enum SSHHostIdentityVerification: Sendable, Equatable {
+    case alreadyTrusted
+    case trustOnSuccessfulConnection(String)
+}
+
+/// A synchronous gate used by NIO's host-key callback and the actor owning a
+/// connection attempt. Citadel does not expose a client before connect returns,
+/// so this gate prevents a stopped attempt from validating or persisting a
+/// first-use host identity while it is still negotiating.
+final class SSHConnectionAttemptGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var valid = true
+
+    func invalidate() {
+        lock.lock()
+        valid = false
+        lock.unlock()
+    }
+
+    func performIfValid(_ operation: () throws -> Void) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard valid else { throw CancellationError() }
+        try operation()
+    }
+
+    var isValid: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return valid
     }
 }
 
@@ -120,17 +168,45 @@ enum SSHHostKeyFingerprint {
 
 final class SSHTOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     private let verifier: SSHHostIdentityVerifier
+    private let gate: SSHConnectionAttemptGate
+    private let lock = NSLock()
+    private var pendingVerification: SSHHostIdentityVerification?
 
-    init(endpoint: SSHHostEndpoint, store: SSHHostIdentityStore) {
+    init(
+        endpoint: SSHHostEndpoint,
+        store: SSHHostIdentityStore,
+        gate: SSHConnectionAttemptGate = SSHConnectionAttemptGate()
+    ) {
         verifier = SSHHostIdentityVerifier(endpoint: endpoint, store: store)
+        self.gate = gate
     }
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         do {
-            try verifier.verify(presentedFingerprint: SSHHostKeyFingerprint.fingerprint(for: hostKey))
+            try gate.performIfValid {
+                let verification = try verifier.verification(
+                    for: SSHHostKeyFingerprint.fingerprint(for: hostKey)
+                )
+                lock.lock()
+                pendingVerification = verification
+                lock.unlock()
+            }
             validationCompletePromise.succeed(())
         } catch {
             validationCompletePromise.fail(error)
+        }
+    }
+
+    /// First-use identity storage is delayed until Citadel has completed the
+    /// connection and the owning attempt remains valid. Existing identities
+    /// are never removed or rewritten by cancellation.
+    func commitValidatedIdentity() throws {
+        lock.lock()
+        let verification = pendingVerification
+        lock.unlock()
+        guard let verification else { return }
+        try gate.performIfValid {
+            try verifier.commit(verification)
         }
     }
 }

@@ -58,6 +58,23 @@ final class SecurityStorageTests: XCTestCase {
         XCTAssertEqual(try store.fingerprint(for: endpoint), "SHA256:first")
     }
 
+    func testStoppedFirstUseAttemptCannotPersistHostIdentity() throws {
+        let store = InMemoryHostIdentityStore()
+        let endpoint = SSHHostEndpoint(host: "example.com", port: 22)
+        let verifier = SSHHostIdentityVerifier(endpoint: endpoint, store: store)
+        let verification = try verifier.verification(for: "SHA256:first")
+        let gate = SSHConnectionAttemptGate()
+
+        gate.invalidate()
+
+        XCTAssertThrowsError(
+            try gate.performIfValid {
+                try verifier.commit(verification)
+            }
+        )
+        XCTAssertNil(try store.fingerprint(for: endpoint))
+    }
+
     func testMatchingHostIdentitySucceeds() throws {
         let store = InMemoryHostIdentityStore()
         let endpoint = SSHHostEndpoint(host: "example.com", port: 22)

@@ -34,6 +34,15 @@ closes the old connection and recreates both the SSH connection and the
 connected operation; it never attempts to reuse a dead exec channel. This
 keeps the abstraction reusable for a future PTY or another SSH-backed helper.
 
+Each run and its active connection have a monotonically increasing generation.
+Stop invalidates that generation before it awaits cleanup. A connection attempt
+that returns after Stop is immediately closed and cannot emit `connected`, run
+an operation, replace a newer connection, or update the UI. Citadel 0.12.1
+does not make its socket client available before `SSHClient.connect` finishes,
+so the app cannot publicly abort DNS/TCP/SSH negotiation at that abstraction.
+The generation and session-attempt gates provide the safe fallback: late
+successful clients are closed and never exposed.
+
 The default reconnect policy uses unbounded retries while the user still wants
 the session running, with a one-second initial delay, a doubling multiplier,
 and a 30-second cap. Stop and task cancellation cancel pending retry sleep and
@@ -50,12 +59,31 @@ closed. Insecure key acceptance remains available only as an explicit policy.
 Every recreated SSH connection performs this normal host-key validation; a
 previous successful connection never bypasses TOFU.
 
+For first use, the host-key validator accepts the presented key only for the
+in-flight SSH handshake and defers durable trust storage until Citadel has
+returned a connected client and the attempt gate is still valid. If Stop wins
+while first-use validation is in flight, the gate rejects validation or the
+deferred commit and no new trust record is written. A fingerprint that already
+existed is never removed or changed by cancellation.
+
 `BridgeClient` creates a new `nvdr --ipc` exec channel for every connected
 operation. Its input stream is scoped to that channel and is finished whenever
 the channel disconnects, so keystrokes typed while disconnected are dropped
 rather than queued or replayed. The new channel receives `release_all` before
 keyboard forwarding is enabled, and local pressed-key state is cleared at each
 disconnect/reconnect boundary.
+
+Hardware key-down auto-repeat is intentionally preserved: every accepted
+key-down is forwarded, while a key-up is forwarded only when the current
+channel still knows that key as held. Resetting that knowledge on disconnect
+drops late releases from an obsolete channel without breaking normal repeated
+arrows, backspace, letters, or navigation keys.
+
+The `nvdr --ipc` protocol has a meaningful clean end: `state quit` follows a
+remote `quit` command or stdin closing. `BridgeClient` reports that as an
+intentional connected-operation completion, so the generic supervisor stops
+without reconnecting. A returned exec stream without that completion remains
+an unexpected operation end and follows the normal typed retry policy.
 
 Citadel 0.12.1 and the resolved Swift-NIO-SSH 0.3.6 do not expose a public
 client-side SSH global-request/keepalive sender. The transport therefore does

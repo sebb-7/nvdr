@@ -8,7 +8,10 @@ struct SSHInputState: Sendable, Equatable {
 
     mutating func command(forKey vk: UInt16, pressed: Bool) -> IPCCommand? {
         if pressed {
-            guard pressedKeys.insert(vk).inserted else { return nil }
+            // UIKit emits repeated key-down events while a hardware key is
+            // held. Preserve every one: the remote desktop relies on those
+            // transitions for normal text editing and navigation repeat.
+            pressedKeys.insert(vk)
         } else {
             guard pressedKeys.remove(vk) != nil else { return nil }
         }

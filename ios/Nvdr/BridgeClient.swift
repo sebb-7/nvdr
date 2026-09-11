@@ -1,6 +1,18 @@
 import Foundation
 import Observation
 
+private actor SSHOperationCompletionBox {
+    private var stored = SSHConnectedOperationCompletion.unexpectedlyEnded
+
+    func set(_ completion: SSHConnectedOperationCompletion) {
+        stored = completion
+    }
+
+    func value() -> SSHConnectedOperationCompletion {
+        stored
+    }
+}
+
 /// Drives the bridge end-to-end:
 ///   iOS BT keyboard → BridgeClient → SSH → `nvdr --ipc` → relay → slave NVDA
 ///                     ←——— stdout (speak/cancel/state) ←———————————————————
@@ -47,6 +59,7 @@ final class BridgeClient {
     private var commandChannelID: UUID?
     private var inputReady = false
     private var inputState = SSHInputState()
+    private var driverGeneration = 0
     private let speech: SpeechOutput
 
     init(speech: SpeechOutput) {
@@ -55,6 +68,8 @@ final class BridgeClient {
 
     func start(_ settings: AppSettings) {
         stop()
+        driverGeneration += 1
+        let generation = driverGeneration
         let host = settings.sshHost
         let port = settings.sshPort
         let user = settings.sshUser
@@ -103,12 +118,14 @@ final class BridgeClient {
         driver = Task { [weak self] in
             await self?.runDriver(
                 configuration: sessionConfiguration,
-                remote: remote
+                remote: remote,
+                generation: generation
             )
         }
     }
 
     func stop() {
+        driverGeneration += 1
         let activeSupervisor = connectionSupervisor
         connectionSupervisor = nil
         forwardingEnabled = false
@@ -132,17 +149,25 @@ final class BridgeClient {
     }
 
     func sendKey(vk: UInt16, pressed: Bool) {
-        guard inputReady, let commandContinuation else { return }
+        guard forwardingEnabled, inputReady, let commandContinuation else { return }
         guard let command = inputState.command(forKey: vk, pressed: pressed) else { return }
         commandContinuation.yield(command)
     }
 
-    private func register(supervisor: SSHConnectionSupervisor<SSHSession>) {
+    private func register(
+        supervisor: SSHConnectionSupervisor<SSHSession>,
+        generation: Int
+    ) -> Bool {
+        guard driverGeneration == generation else { return false }
         connectionSupervisor = supervisor
+        return true
     }
 
-    private func unregister(supervisor: SSHConnectionSupervisor<SSHSession>) {
-        guard connectionSupervisor === supervisor else { return }
+    private func unregister(
+        supervisor: SSHConnectionSupervisor<SSHSession>,
+        generation: Int
+    ) {
+        guard driverGeneration == generation, connectionSupervisor === supervisor else { return }
         connectionSupervisor = nil
     }
 
@@ -183,9 +208,10 @@ final class BridgeClient {
     private func handleLifecycle(
         _ event: SSHConnectionLifecycleEvent,
         from supervisor: SSHConnectionSupervisor<SSHSession>,
-        configuration: SSHSessionConfiguration
+        configuration: SSHSessionConfiguration,
+        generation: Int
     ) {
-        guard connectionSupervisor === supervisor else { return }
+        guard driverGeneration == generation, connectionSupervisor === supervisor else { return }
         switch event {
         case .connecting:
             status = .authenticating
@@ -251,42 +277,53 @@ final class BridgeClient {
 
     nonisolated private func runDriver(
         configuration: SSHSessionConfiguration,
-        remote: String
+        remote: String,
+        generation: Int
     ) async {
         let supervisor = SSHConnectionSupervisor<SSHSession>(
             reconnectPolicy: configuration.reconnectPolicy
         ) {
             SSHSession(configuration: configuration)
         }
-        await register(supervisor: supervisor)
+        guard await register(supervisor: supervisor, generation: generation) else {
+            await supervisor.stop()
+            return
+        }
         let lifecycleTask = Task { [weak self] in
             for await event in supervisor.lifecycleEvents {
-                await self?.handleLifecycle(event, from: supervisor, configuration: configuration)
+                await self?.handleLifecycle(
+                    event,
+                    from: supervisor,
+                    configuration: configuration,
+                    generation: generation
+                )
             }
         }
 
         await supervisor.run { [weak self] session in
             guard let self else { throw CancellationError() }
-            try await self.runConnectedOperation(session: session, remote: remote)
+            return try await self.runConnectedOperation(session: session, remote: remote)
         }
 
         lifecycleTask.cancel()
-        await unregister(supervisor: supervisor)
+        await unregister(supervisor: supervisor, generation: generation)
     }
 
     nonisolated private func runConnectedOperation(
         session: SSHSession,
         remote: String
-    ) async throws {
+    ) async throws -> SSHConnectedOperationCompletion {
+        let completion = SSHOperationCompletionBox()
         try await session.withExec(remote) { [weak self] transport in
             guard let self else { throw CancellationError() }
-            try await self.consumeBridgeTransport(transport)
+            await completion.set(try await self.consumeBridgeTransport(transport))
         }
+        return await completion.value()
     }
 
     nonisolated private func consumeBridgeTransport(
         _ transport: SSHExecTransport
-    ) async throws {
+    ) async throws -> SSHConnectedOperationCompletion {
         let (channelID, commandStream) = await openCommandChannel()
         do {
             // New sessions always begin from a known remote input state. The
@@ -295,11 +332,14 @@ final class BridgeClient {
             try await transport.write(Data((IPCCommand.releaseAll.line + "\n").utf8))
             await activateCommandChannel(id: channelID)
 
-            try await withThrowingTaskGroup(of: Void.self) { group in
+            let completion = try await withThrowingTaskGroup(
+                of: SSHConnectedOperationCompletion.self
+            ) { group in
                 group.addTask {
                     for await command in commandStream {
                         try await transport.write(Data((command.line + "\n").utf8))
                     }
+                    return SSHConnectedOperationCompletion.unexpectedlyEnded
                 }
                 group.addTask {
                     // stdout chunks arrive at arbitrary boundaries — split
@@ -312,7 +352,11 @@ final class BridgeClient {
                             while let newline = pending.firstIndex(of: "\n") {
                                 let line = String(pending[..<newline])
                                 pending.removeSubrange(...newline)
-                                await self.handle(IPCParser.parse(line))
+                                let parsed = IPCParser.parse(line)
+                                await self.handle(parsed, from: channelID)
+                                if case .state(.quit) = parsed {
+                                    return SSHConnectedOperationCompletion.completedIntentionally
+                                }
                             }
                         case .stderr(let data):
                             for chunk in String(decoding: data, as: UTF8.self)
@@ -325,21 +369,30 @@ final class BridgeClient {
                         }
                     }
                     if !pending.isEmpty {
-                        await self.handle(IPCParser.parse(pending))
+                        let parsed = IPCParser.parse(pending)
+                        await self.handle(parsed, from: channelID)
+                        if case .state(.quit) = parsed {
+                            return SSHConnectedOperationCompletion.completedIntentionally
+                        }
                     }
+                    return SSHConnectedOperationCompletion.unexpectedlyEnded
                 }
-                _ = try await group.next()
+                guard let completion = try await group.next() else {
+                    return SSHConnectedOperationCompletion.unexpectedlyEnded
+                }
                 await self.invalidateCommandChannel(id: channelID)
                 group.cancelAll()
+                return completion
             }
+            return completion
         } catch {
             await invalidateCommandChannel(id: channelID)
             throw error
         }
-        await invalidateCommandChannel(id: channelID)
     }
 
-    nonisolated private func handle(_ event: IPCEvent) async {
+    nonisolated private func handle(_ event: IPCEvent, from channelID: UUID) async {
+        guard await isCurrentCommandChannel(channelID) else { return }
         switch event {
         case .speak(let text):
             await setLastSpeech(text)
@@ -358,6 +411,10 @@ final class BridgeClient {
         case .unknown(let line):
             await appendLogAsync("unknown line: \(line)")
         }
+    }
+
+    private func isCurrentCommandChannel(_ id: UUID) -> Bool {
+        commandChannelID == id
     }
 
     private func setLastSpeech(_ text: String) {

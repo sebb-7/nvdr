@@ -126,6 +126,8 @@ private struct ForwardingPanel: View {
         switch bridge.status {
         case .ready, .nvdaNotConnected:
             return "Toggle on, then a Bluetooth keyboard press is sent to the remote NVDA. Toggle off to interact with the iPhone normally."
+        case .reconnecting:
+            return "Reconnecting. Keyboard forwarding is temporarily paused."
         default:
             return "Connect first."
         }

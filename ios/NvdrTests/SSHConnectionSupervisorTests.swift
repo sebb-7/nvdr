@@ -33,6 +33,7 @@ final class SSHConnectionSupervisorTests: XCTestCase {
         let run = Task {
             await supervisor.run { connection in
                 try await operation.run(on: connection)
+                return .unexpectedlyEnded
             }
         }
         await operation.waitForInvocation(2)
@@ -74,6 +75,7 @@ final class SSHConnectionSupervisorTests: XCTestCase {
         let run = Task {
             await supervisor.run { connection in
                 try await operation.run(on: connection)
+                return .unexpectedlyEnded
             }
         }
         await operation.waitForInvocation(3)
@@ -95,7 +97,7 @@ final class SSHConnectionSupervisorTests: XCTestCase {
             await factory.makeConnection()
         }
 
-        let run = Task { await supervisor.run { _ in } }
+        let run = Task { await supervisor.run { _ in .unexpectedlyEnded } }
         await sleeper.waitUntilSleeping()
         run.cancel()
         await run.value
@@ -117,7 +119,7 @@ final class SSHConnectionSupervisorTests: XCTestCase {
             await factory.makeConnection()
         }
 
-        let run = Task { await supervisor.run { _ in } }
+        let run = Task { await supervisor.run { _ in .unexpectedlyEnded } }
         await sleeper.waitUntilSleeping()
         await supervisor.stop()
         await run.value
@@ -155,6 +157,120 @@ final class SSHConnectionSupervisorTests: XCTestCase {
         XCTAssertEqual(input.command(forKey: 0x11, pressed: true)?.line, "key 17 1")
     }
 
+    func testInputStatePreservesRepeatedKeyDownEvents() {
+        var input = SSHInputState()
+
+        let commands = [
+            input.command(forKey: 0x25, pressed: true),
+            input.command(forKey: 0x25, pressed: true),
+            input.command(forKey: 0x25, pressed: true),
+            input.command(forKey: 0x25, pressed: false),
+        ]
+
+        XCTAssertEqual(commands.compactMap { $0?.line }, ["key 37 1", "key 37 1", "key 37 1", "key 37 0"])
+    }
+
+    func testInputStateEmitsOneNormalDownAndUp() {
+        var input = SSHInputState()
+
+        XCTAssertEqual(input.command(forKey: 0x08, pressed: true)?.line, "key 8 1")
+        XCTAssertEqual(input.command(forKey: 0x08, pressed: false)?.line, "key 8 0")
+    }
+
+    func testInputStateDropsStaleAndDuplicateKeyUpEvents() {
+        var input = SSHInputState()
+
+        XCTAssertEqual(input.command(forKey: 0x41, pressed: true)?.line, "key 65 1")
+        input.reset()
+        XCTAssertNil(input.command(forKey: 0x41, pressed: false))
+        XCTAssertEqual(input.command(forKey: 0x41, pressed: true)?.line, "key 65 1")
+        XCTAssertEqual(input.command(forKey: 0x41, pressed: false)?.line, "key 65 0")
+        XCTAssertNil(input.command(forKey: 0x41, pressed: false))
+    }
+
+    func testStopDuringConnectNeverInvokesConnectedOperationAndClosesLateConnection() async {
+        let connection = ControllableConnection(identifier: "pending", waitsForRelease: true)
+        let factory = ControllableConnectionFactory(connections: [connection])
+        let invocations = ConnectionInvocationRecorder()
+        let supervisor = SSHConnectionSupervisor<ControllableConnection>(reconnectPolicy: .automatic()) {
+            await factory.makeConnection()
+        }
+
+        let run = Task {
+            await supervisor.run { connection in
+                await invocations.record(connection.identifier)
+                return .unexpectedlyEnded
+            }
+        }
+        await connection.waitUntilConnectStarted()
+        await supervisor.stop()
+        await connection.completeConnect()
+        await connection.waitForCloseCount(2)
+        await run.value
+
+        let recordedIdentifiers = await invocations.identifiers()
+        let closeCount = await connection.closeCount()
+        let health = await supervisor.health()
+        XCTAssertEqual(recordedIdentifiers, [])
+        XCTAssertEqual(closeCount, 2)
+        XCTAssertEqual(health.desiredState, .stopped)
+    }
+
+    func testLateAttemptCannotOverwriteANewerRun() async {
+        let stale = ControllableConnection(identifier: "stale", waitsForRelease: true)
+        let current = ControllableConnection(identifier: "current")
+        let factory = ControllableConnectionFactory(connections: [stale, current])
+        let invocations = ConnectionInvocationRecorder()
+        let supervisor = SSHConnectionSupervisor<ControllableConnection>(reconnectPolicy: .automatic()) {
+            await factory.makeConnection()
+        }
+
+        let staleRun = Task {
+            await supervisor.run { connection in
+                await invocations.record(connection.identifier)
+                return .unexpectedlyEnded
+            }
+        }
+        await stale.waitUntilConnectStarted()
+        await supervisor.stop()
+
+        let currentRun = Task {
+            await supervisor.run { connection in
+                await invocations.record(connection.identifier)
+                try await Task.sleep(for: .seconds(60))
+                return .unexpectedlyEnded
+            }
+        }
+        await invocations.waitForInvocationCount(1)
+        await stale.completeConnect()
+        await stale.waitForCloseCount(2)
+
+        let recordedIdentifiers = await invocations.identifiers()
+        XCTAssertEqual(recordedIdentifiers, ["current"])
+        let health = await supervisor.health()
+        XCTAssertEqual(health.lifecycleState, .connected)
+        XCTAssertTrue(health.reportsActive)
+
+        await supervisor.stop()
+        await staleRun.value
+        await currentRun.value
+    }
+
+    func testIntentionalCompletionStopsWithoutReconnect() async {
+        let connection = FakeConnection(identifier: "first")
+        let factory = FakeConnectionFactory(connections: [connection])
+        let supervisor = SSHConnectionSupervisor<FakeConnection>(reconnectPolicy: .automatic()) {
+            await factory.makeConnection()
+        }
+
+        await supervisor.run { _ in .completedIntentionally }
+
+        let factoryRequests = await factory.requestCount()
+        let health = await supervisor.health()
+        XCTAssertEqual(factoryRequests, 1)
+        XCTAssertEqual(health.desiredState, .stopped)
+    }
+
     func testAutomaticPolicyCanBoundItsRetryCount() {
         let policy = SSHReconnectPolicy.automatic(maximumAttempts: 2)
 
@@ -185,6 +301,109 @@ private actor FakeConnection: SSHConnection {
     func close() async throws {}
 
     func connectCount() -> Int { connections }
+}
+
+private actor ControllableConnection: SSHConnection {
+    nonisolated let identifier: String
+    private let waitsForRelease: Bool
+    private var connectStarted = false
+    private var connectStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var connectContinuation: CheckedContinuation<Void, Never>?
+    private var connectCompletedEarly = false
+    private var closes = 0
+    private var closeWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+
+    init(identifier: String, waitsForRelease: Bool = false) {
+        self.identifier = identifier
+        self.waitsForRelease = waitsForRelease
+    }
+
+    func connect() async throws {
+        connectStarted = true
+        connectStartWaiters.forEach { $0.resume() }
+        connectStartWaiters = []
+        guard waitsForRelease else { return }
+        if connectCompletedEarly { return }
+        await withCheckedContinuation { continuation in
+            connectContinuation = continuation
+        }
+    }
+
+    func close() async throws {
+        closes += 1
+        resumeCloseWaiters()
+    }
+
+    func completeConnect() {
+        if let connectContinuation {
+            self.connectContinuation = nil
+            connectContinuation.resume()
+        } else {
+            connectCompletedEarly = true
+        }
+    }
+
+    func waitUntilConnectStarted() async {
+        if connectStarted { return }
+        await withCheckedContinuation { continuation in
+            connectStartWaiters.append(continuation)
+        }
+    }
+
+    func waitForCloseCount(_ target: Int) async {
+        if closes >= target { return }
+        await withCheckedContinuation { continuation in
+            closeWaiters[target, default: []].append(continuation)
+        }
+    }
+
+    func closeCount() -> Int { closes }
+
+    private func resumeCloseWaiters() {
+        let ready = closeWaiters.keys.filter { $0 <= closes }
+        for target in ready {
+            let waiters = closeWaiters.removeValue(forKey: target) ?? []
+            waiters.forEach { $0.resume() }
+        }
+    }
+}
+
+private actor ControllableConnectionFactory {
+    private var connections: [ControllableConnection]
+
+    init(connections: [ControllableConnection]) {
+        self.connections = connections
+    }
+
+    func makeConnection() -> ControllableConnection {
+        if connections.count > 1 {
+            return connections.removeFirst()
+        }
+        return connections[0]
+    }
+}
+
+private actor ConnectionInvocationRecorder {
+    private var recorded: [String] = []
+    private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+
+    func record(_ identifier: String) {
+        recorded.append(identifier)
+        let ready = waiters.keys.filter { $0 <= recorded.count }
+        for target in ready {
+            let continuations = waiters.removeValue(forKey: target) ?? []
+            continuations.forEach { $0.resume() }
+        }
+    }
+
+    func identifiers() -> [String] { recorded }
+
+    func waitForInvocationCount(_ target: Int) async {
+        if recorded.count >= target { return }
+        await withCheckedContinuation { continuation in
+            waiters[target, default: []].append(continuation)
+        }
+    }
 }
 
 private actor FakeConnectionFactory {

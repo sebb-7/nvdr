@@ -154,6 +154,14 @@ protocol SSHConnection: Sendable {
     func close() async throws
 }
 
+/// Describes why a connected operation returned. The supervisor owns SSH
+/// lifecycle only; application protocols choose whether their normal
+/// completion is intentional or indicates that a persistent operation died.
+enum SSHConnectedOperationCompletion: Sendable, Equatable {
+    case completedIntentionally
+    case unexpectedlyEnded
+}
+
 /// Runs a generic operation against a connected SSH session and recreates the
 /// entire connection and operation after a classified transient failure.
 ///
@@ -173,8 +181,10 @@ actor SSHConnectionSupervisor<Connection: SSHConnection> {
     private var nextRetryDelay: Duration?
     private var mostRecentDisconnect: SSHConnectionFailure?
     private var reportsActive = false
-    private var currentConnection: Connection?
-    private var activeSleep: Task<Void, Error>?
+    private var currentConnection: (generation: Int, connection: Connection)?
+    private var activeSleep: (generation: Int, task: Task<Void, Error>)?
+    private var generation = 0
+    private var activeGeneration: Int?
 
     init(
         reconnectPolicy: SSHReconnectPolicy,
@@ -203,92 +213,139 @@ actor SSHConnectionSupervisor<Connection: SSHConnection> {
     }
 
     /// Stop is idempotent. It cancels retry sleep and closes the active
-    /// connection so an operation waiting on a dead stream can unwind.
+    /// connection so an operation waiting on a dead stream can unwind. The
+    /// generation changes before awaiting close, so a late connect result can
+    /// never become active after a new run has begun.
     func stop() async {
         desiredState = .stopped
-        activeSleep?.cancel()
-        guard let currentConnection else { return }
-        try? await currentConnection.close()
+        generation += 1
+        activeGeneration = nil
+        activeSleep?.task.cancel()
+        activeSleep = nil
+        let connection = currentConnection?.connection
+        currentConnection = nil
+        reportsActive = false
+        nextRetryDelay = nil
+        transition(to: .stopped, event: .stopped)
+        try? await connection?.close()
     }
 
     func run(
-        operation: @escaping @Sendable (Connection) async throws -> Void
+        operation: @escaping @Sendable (Connection) async throws -> SSHConnectedOperationCompletion
     ) async {
         guard desiredState != .running else { return }
+        generation += 1
+        let runGeneration = generation
+        activeGeneration = runGeneration
         desiredState = .running
 
         defer {
-            activeSleep?.cancel()
-            activeSleep = nil
-            currentConnection = nil
-            reportsActive = false
-            nextRetryDelay = nil
-            desiredState = .stopped
-            if case .failed = lifecycleState {
-                eventContinuation.finish()
-            } else {
-                transition(to: .stopped, event: .stopped)
-                eventContinuation.finish()
+            if owns(runGeneration) {
+                if activeSleep?.generation == runGeneration {
+                    activeSleep?.task.cancel()
+                    activeSleep = nil
+                }
+                if currentConnection?.generation == runGeneration {
+                    currentConnection = nil
+                }
+                reportsActive = false
+                nextRetryDelay = nil
+                activeGeneration = nil
+                desiredState = .stopped
+                if case .failed = lifecycleState {
+                    // Preserve a terminal non-retryable failure for observers.
+                } else {
+                    transition(to: .stopped, event: .stopped)
+                }
             }
         }
 
-        while desiredState == .running, !Task.isCancelled {
-            transition(to: .connecting, event: .connecting)
+        while canProceed(runGeneration), !Task.isCancelled {
+            transition(to: .connecting, event: .connecting, for: runGeneration)
             let connection = await makeConnection()
-            currentConnection = connection
+            guard canProceed(runGeneration), !Task.isCancelled else {
+                try? await connection.close()
+                break
+            }
+            currentConnection = (runGeneration, connection)
 
             do {
                 try Task.checkCancellation()
                 try await connection.connect()
                 try Task.checkCancellation()
-                guard desiredState == .running else { break }
+                guard canProceed(runGeneration) else {
+                    try? await connection.close()
+                    clearCurrentConnection(for: runGeneration)
+                    break
+                }
 
                 reportsActive = true
                 reconnectAttempt = 0
                 nextRetryDelay = nil
-                transition(to: .connected, event: .connected)
-                try await operation(connection)
+                transition(to: .connected, event: .connected, for: runGeneration)
+                let completion = try await operation(connection)
 
-                // A persistent operation should only return after Stop. A
-                // remote exec/channel ending otherwise is treated as a lost
-                // operation and, when safe, rebuilt on a new SSH connection.
-                if desiredState == .running, !Task.isCancelled {
+                guard canProceed(runGeneration), !Task.isCancelled else {
+                    try? await connection.close()
+                    clearCurrentConnection(for: runGeneration)
+                    break
+                }
+                switch completion {
+                case .completedIntentionally:
+                    desiredState = .stopped
+                    try? await connection.close()
+                    clearCurrentConnection(for: runGeneration)
+                case .unexpectedlyEnded:
                     throw SSHSessionError.connectedOperationEnded
                 }
             } catch is CancellationError {
                 try? await connection.close()
-                currentConnection = nil
+                clearCurrentConnection(for: runGeneration)
                 reportsActive = false
                 break
             } catch {
-                if desiredState != .running || Task.isCancelled { break }
+                guard canProceed(runGeneration), !Task.isCancelled else {
+                    try? await connection.close()
+                    clearCurrentConnection(for: runGeneration)
+                    break
+                }
 
                 let failure = SSHConnectionFailure(error)
                 mostRecentDisconnect = failure
                 reportsActive = false
                 try? await connection.close()
-                currentConnection = nil
-                eventContinuation.yield(.disconnected(reason: failure))
+                clearCurrentConnection(for: runGeneration)
+                guard canProceed(runGeneration), !Task.isCancelled else { break }
+                emit(.disconnected(reason: failure), for: runGeneration)
 
                 guard SSHRetryClassifier.decision(for: error) == .retry else {
-                    transition(to: .failed(failure), event: .permanentlyFailed(reason: failure))
+                    transition(
+                        to: .failed(failure),
+                        event: .permanentlyFailed(reason: failure),
+                        for: runGeneration
+                    )
                     return
                 }
 
                 reconnectAttempt += 1
                 guard let delay = reconnectPolicy.delay(forRetryAttempt: reconnectAttempt) else {
-                    transition(to: .failed(failure), event: .permanentlyFailed(reason: failure))
+                    transition(
+                        to: .failed(failure),
+                        event: .permanentlyFailed(reason: failure),
+                        for: runGeneration
+                    )
                     return
                 }
 
                 nextRetryDelay = delay
                 transition(
                     to: .reconnecting(attempt: reconnectAttempt, delay: delay, reason: failure),
-                    event: .reconnecting(attempt: reconnectAttempt, delay: delay, reason: failure)
+                    event: .reconnecting(attempt: reconnectAttempt, delay: delay, reason: failure),
+                    for: runGeneration
                 )
 
                 do {
-                    try await waitForRetry(delay)
+                    try await waitForRetry(delay, generation: runGeneration)
                 } catch is CancellationError {
                     break
                 } catch {
@@ -298,12 +355,16 @@ actor SSHConnectionSupervisor<Connection: SSHConnection> {
         }
     }
 
-    private func waitForRetry(_ delay: Duration) async throws {
+    private func waitForRetry(_ delay: Duration, generation: Int) async throws {
         let sleep = Task { [sleeper] in
             try await sleeper.sleep(for: delay)
         }
-        activeSleep = sleep
-        defer { activeSleep = nil }
+        activeSleep = (generation, sleep)
+        defer {
+            if activeSleep?.generation == generation {
+                activeSleep = nil
+            }
+        }
         try await withTaskCancellationHandler {
             try await sleep.value
         } onCancel: {
@@ -311,11 +372,31 @@ actor SSHConnectionSupervisor<Connection: SSHConnection> {
         }
     }
 
+    private func owns(_ generation: Int) -> Bool {
+        activeGeneration == generation
+    }
+
+    private func canProceed(_ generation: Int) -> Bool {
+        owns(generation) && desiredState == .running
+    }
+
+    private func clearCurrentConnection(for generation: Int) {
+        guard currentConnection?.generation == generation else { return }
+        currentConnection = nil
+    }
+
     private func transition(
         to state: SSHConnectionLifecycleState,
-        event: SSHConnectionLifecycleEvent
+        event: SSHConnectionLifecycleEvent,
+        for generation: Int? = nil
     ) {
+        if let generation, !owns(generation) { return }
         lifecycleState = state
+        eventContinuation.yield(event)
+    }
+
+    private func emit(_ event: SSHConnectionLifecycleEvent, for generation: Int) {
+        guard owns(generation) else { return }
         eventContinuation.yield(event)
     }
 }
