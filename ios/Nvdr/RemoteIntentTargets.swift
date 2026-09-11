@@ -73,7 +73,7 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
 
     private func terminalAction(for key: RemoteKey) -> TerminalPresentationAction? {
         guard let namedKey = key.namedKey else { return nil }
-        switch namedKey {
+        return switch namedKey {
         case .tab: .tab
         case .returnKey: .returnKey
         case .escape: .escape
