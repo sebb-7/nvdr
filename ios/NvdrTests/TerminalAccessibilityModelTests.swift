@@ -179,7 +179,7 @@ final class TerminalAccessibilityModelTests: XCTestCase {
 
     private func completedTexts(in events: [TerminalAccessibilityEvent]) -> [String] {
         events.flatMap { event in
-            guard case let .completedLinesAppended(lines) = event else { return [] }
+            guard case let .completedLinesAppended(lines) = event else { return [String]() }
             return lines.map(\.text)
         }
     }
