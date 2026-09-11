@@ -32,6 +32,11 @@ The terminal client connects directly to the relay over TLS. The Mac app, iOS
 app, Android app, and NVDA add-on all go through the **SSH bridge** instead
 (see below).
 
+The independent [`nvdr-host`](docs/NVDR_HOST.md) executable is the foundation
+for a future structured SSH host path. It accepts typed NDJSON requests on
+stdin and returns protocol responses on stdout; it does not replace the
+existing relay/client bridge.
+
 ## The SSH bridge — read this first
 
 The Mac app, the iOS app, the Android app, and the NVDA add-on do **not** open a
