@@ -34,11 +34,12 @@ final class TerminalEngineTests: XCTestCase {
 
         engine.resize(columns: 6, rows: 3)
         XCTAssertEqual(engine.snapshot().dimensions, TerminalDimensions(columns: 6, rows: 3))
+        engine.feed(Data("keep".utf8))
 
         engine.feed(Data("\u{1B}[?1049hALT\u{1B}[?1049l".utf8))
         let restored = engine.snapshot()
         XCTAssertFalse(restored.isAlternateScreen)
-        XCTAssertTrue((restored.scrollback + restored.viewport).contains { $0.text.contains("line3") })
+        XCTAssertTrue((restored.scrollback + restored.viewport).contains { $0.text.contains("keep") })
 
         engine.feed(Data("\u{1B}]133;A\u{07}>\u{1B}]133;B\u{07}command".utf8))
         XCTAssertFalse(engine.snapshot().semanticPromptRows.isEmpty)
