@@ -180,6 +180,42 @@ actor SSHSession: SSHConnection {
         })
     }
 
+    /// Open one interactive pseudo-terminal using the server's normal login
+    /// shell. The channel is intentionally byte-oriented; terminal parsing and
+    /// presentation belong above this SSH layer.
+    func withPTY(
+        configuration: SSHPTYConfiguration,
+        operation: @escaping @Sendable (SSHPTYTransport) async throws -> Void
+    ) async throws {
+        guard let client else { throw SSHSessionError.notConnected }
+        let dimensions = configuration.dimensions
+        let request = SSHChannelRequestEvent.PseudoTerminalRequest(
+            wantReply: true,
+            term: configuration.terminalType,
+            terminalCharacterWidth: dimensions.columns,
+            terminalRowHeight: dimensions.rows,
+            terminalPixelWidth: dimensions.pixelWidth,
+            terminalPixelHeight: dimensions.pixelHeight,
+            terminalModes: .init([.ECHO: 1])
+        )
+
+        try await client.withPTY(request, perform: { @Sendable inbound, outbound in
+            let lifetime = SSHPTYTransportLifetime()
+            let transport = Self.makePTYTransport(
+                inbound: inbound,
+                outbound: outbound,
+                lifetime: lifetime
+            )
+            do {
+                try await operation(transport)
+                await lifetime.invalidate()
+            } catch {
+                await lifetime.invalidate()
+                throw error
+            }
+        })
+    }
+
     /// Close is intentionally idempotent. A caller may use it from both its
     /// normal and cancellation/error cleanup paths.
     func close() async throws {
@@ -277,6 +313,31 @@ actor SSHSession: SSHConnection {
             buffer.writeBytes(data)
             try await safeOut.value.write(buffer)
         }
+    }
+
+    private static func makePTYTransport(
+        inbound: TTYOutput,
+        outbound: TTYStdinWriter,
+        lifetime: SSHPTYTransportLifetime
+    ) -> SSHPTYTransport {
+        let safeOut = PTYUncheckedSendable(outbound)
+        return SSHPTYTransport(
+            eventSequence: SSHPTYEventSequence(output: inbound),
+            lifetime: lifetime,
+            writeBytes: { data in
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
+                try await safeOut.value.write(buffer)
+            },
+            changeSize: { dimensions in
+                try await safeOut.value.changeSize(
+                    cols: dimensions.columns,
+                    rows: dimensions.rows,
+                    pixelWidth: dimensions.pixelWidth,
+                    pixelHeight: dimensions.pixelHeight
+                )
+            }
+        )
     }
 
     private static func rsaFingerprint(n: Data, e: Data) -> String {

@@ -26,6 +26,17 @@ connection and exec lifecycle, and a byte-oriented `SSHExecTransport`. The
 transport exposes stdin writes and stdout/stderr events without exposing
 Citadel or NIO types to `BridgeClient`.
 
+`SSHSession` also offers a separate `withPTY` capability for interactive
+remote login shells. `SSHExecTransport` remains the appropriate channel for
+the structured `nvdr --ipc` protocol; `SSHPTYTransport` is for shells, tmux,
+and interactive tools. A PTY exposes raw stdout/stderr bytes, exact input-byte
+writes, and resize requests only—no UTF-8 decoding, ANSI/VT parsing, terminal
+rendering, or reconnect behavior. Many SSH servers merge stderr into terminal
+output once a PTY is allocated, so callers must treat the event distinction as
+best-effort transport information. The supervisor recreates a dead PTY's
+entire connected operation; it never resumes a PTY channel. Remote persistence
+is an application concern (for example, tmux), not an SSH transport feature.
+
 Long-lived work is run by `SSHConnectionSupervisor`, a generic lifecycle
 layer over a reconnectable SSH connection. It distinguishes the user's desired
 state (`running` or `stopped`) from the current transport state (`connecting`,
