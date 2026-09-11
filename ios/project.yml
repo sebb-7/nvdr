@@ -22,6 +22,9 @@ packages:
   swift-crypto:
     url: https://github.com/apple/swift-crypto.git
     from: "3.0.0"
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    revision: "964c44dc818780d7f13e3b605fdc1105ccf94cb2"
 
 targets:
   Nvdr:
@@ -56,6 +59,9 @@ targets:
       - package: Citadel
       - package: swift-crypto
         product: _CryptoExtras
+      # Compatibility-spike only: links the library so Xcode builds the
+      # exact package revision and its build-tool plugin on macOS CI.
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oriolgomez.nvdr
