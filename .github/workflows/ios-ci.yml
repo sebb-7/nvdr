@@ -1,6 +1,7 @@
 name: iOS CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feat/ssh-foundation
@@ -41,14 +42,14 @@ jobs:
 
       - name: Resolve Swift packages
         working-directory: ios
-        run: xcodebuild -resolvePackageDependencies -project Nvdr.xcodeproj -scheme Nvdr
+        run: xcodebuild -resolvePackageDependencies -project FarRelay.xcodeproj -scheme FarRelay
 
       - name: Build app for iOS Simulator
         working-directory: ios
         run: >-
           xcodebuild
-          -project Nvdr.xcodeproj
-          -scheme Nvdr
+          -project FarRelay.xcodeproj
+          -scheme FarRelay
           -sdk iphonesimulator
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
@@ -66,8 +67,8 @@ jobs:
         working-directory: ios
         run: >-
           xcodebuild test
-          -project Nvdr.xcodeproj
-          -scheme NvdrTests
+          -project FarRelay.xcodeproj
+          -scheme FarRelayTests
           -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
           CODE_SIGNING_ALLOWED=NO
           CODE_SIGNING_REQUIRED=NO

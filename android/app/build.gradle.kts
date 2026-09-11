@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.oriolgomez.nvdr"
+    namespace = "com.sebb7.farrelay"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.oriolgomez.nvdr"
+        applicationId = "com.sebb7.farrelay"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -82,7 +82,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
 
-    // SSH transport to the bridge host that runs `nvdr --ipc`.
+    // SSH transport to the bridge host that runs `farrelay --ipc`.
     implementation(libs.sshj)
     implementation(libs.eddsa)            // ed25519 key support for SSHJ
     implementation(libs.bouncycastle.prov)

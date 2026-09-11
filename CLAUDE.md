@@ -4,24 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`nvdr` is a terminal-based NVDA Remote **master** client in Rust (Tokio + rustls + crossterm). It connects to an NVDA Remote relay over TLS, prints the slave's speech as plain text, and forwards keystrokes back. Single binary crate, no subcrates, no test suite yet.
+`farrelay` is a terminal-based NVDA Remote **master** client in Rust (Tokio + rustls + crossterm). It connects to an NVDA Remote relay over TLS, prints the slave's speech as plain text, and forwards keystrokes back. Single binary crate, no subcrates, no test suite yet.
 
 ## Repository layout (monorepo)
 
 This repo holds several independently-built components in different languages that all implement the same wire protocol. `client_spec.md` is the shared contract.
 
-- **`src/` + `Cargo.toml`** — the Rust terminal client. Also exposes `nvdr --ipc`, a line-oriented IPC bridge (`src/ipc.rs`) consumed by the apps below. **This is what the root `Build / run` and `Architecture` sections document.**
-- **`addon/`** — the Python NVDA add-on (`globalPlugins/nvdrBridge`), the host/slave side that hooks the keyboard and speech.
-- **`ios/`** — the iOS SwiftUI app (xcodegen-generated Xcode project). Bridges an iOS device to a remote NVDA over SSH → `nvdr --ipc`.
-- **`mac/`** — the native macOS SwiftUI app. Same role as `ios/`, but with a system-wide low-level keyboard hook (`CGEventTap` + `IOHIDManager`, see `mac/Nvdr/KeyCapture.swift`). Developer ID / non-sandboxed.
-- **`android/`** — the native Android app (Kotlin + Jetpack Compose, Gradle). Same role as `ios/`: focused-only keyboard capture (`MainActivity.dispatchKeyEvent`) plus an **optional** system-wide capture path via an `AccessibilityService` with key-event filtering (`input/NvdrAccessibilityService.kt`, the mac-`CGEventTap` analog — needed to grab combos Android intercepts first, e.g. Alt+Tab / Meta). SSH via **SSHJ**, speech via Android `TextToSpeech`. Build with `./gradlew assembleDebug` inside `android/` (JDK 17 + Android SDK).
+- **`src/` + `Cargo.toml`** — the Rust terminal client. Also exposes `farrelay --ipc`, a line-oriented IPC bridge (`src/ipc.rs`) consumed by the apps below. **This is what the root `Build / run` and `Architecture` sections document.**
+- **`addon/`** — the Python NVDA add-on (`globalPlugins/farrelayBridge`), the host/slave side that hooks the keyboard and speech.
+- **`ios/`** — the iOS SwiftUI app (xcodegen-generated Xcode project). Bridges an iOS device to a remote NVDA over SSH → `farrelay --ipc`.
+- **`mac/`** — the native macOS SwiftUI app. Same role as `ios/`, but with a system-wide low-level keyboard hook (`CGEventTap` + `IOHIDManager`, see `mac/FarRelay/KeyCapture.swift`). Developer ID / non-sandboxed.
+- **`android/`** — the native Android app (Kotlin + Jetpack Compose, Gradle). Same role as `ios/`: focused-only keyboard capture (`MainActivity.dispatchKeyEvent`) plus an **optional** system-wide capture path via an `AccessibilityService` with key-event filtering (`input/FarRelayAccessibilityService.kt`, the mac-`CGEventTap` analog — needed to grab combos Android intercepts first, e.g. Alt+Tab / Meta). SSH via **SSHJ**, speech via Android `TextToSpeech`. Build with `./gradlew assembleDebug` inside `android/` (JDK 17 + Android SDK).
 
-`ios/` and `mac/` share ~10 near-identical Swift files (BridgeClient, IPC, RSA*, Settings, SpeechOutput) — kept as deliberate copies, not a shared package; edits to protocol-shaping logic must be mirrored. `mac/Nvdr/VK.swift` mirrors `src/vk.rs`; each Swift tree has its own `AGENTS.md`. Build the Swift apps with `xcodegen generate` then `xcodebuild` inside `ios/` or `mac/`. The `android/` tree re-implements the same contracts in Kotlin (`ipc/Ipc.kt`, `input/VK.kt`, `input/KeyMap.kt`) and has its own `AGENTS.md`; protocol-shaping changes must be mirrored there too.
+`ios/` and `mac/` share ~10 near-identical Swift files (BridgeClient, IPC, RSA*, Settings, SpeechOutput) — kept as deliberate copies, not a shared package; edits to protocol-shaping logic must be mirrored. `mac/FarRelay/VK.swift` mirrors `src/vk.rs`; each Swift tree has its own `AGENTS.md`. Build the Swift apps with `xcodegen generate` then `xcodebuild` inside `ios/` or `mac/`. The `android/` tree re-implements the same contracts in Kotlin (`ipc/Ipc.kt`, `input/VK.kt`, `input/KeyMap.kt`) and has its own `AGENTS.md`; protocol-shaping changes must be mirrored there too.
 
 ## Build / run
 
 ```sh
-cargo build --release         # binary at target/release/nvdr
+cargo build --release         # binary at target/release/farrelay
 cargo run -- --host <h> --port 6837 --channel <key>
 cargo run -- --show-keys      # dump the leader / command reference and exit
 cargo check                   # fast type-check during edits
@@ -42,7 +42,7 @@ Data flows through six modules. Read them in this order the first time:
 
 1. **`protocol.rs`** — `Outbound` (serialize) / `Inbound` (deserialize) enums for every JSON message. `Inbound` is deliberately permissive (`#[serde(other)] Unknown`, all fields `#[serde(default)]`) because the spec says unknown types and fields must be ignored. `speak_text` drops the `[ClassName, attrs]` command arrays inside a `speak.sequence` and keeps only the string entries.
 
-2. **`transport.rs`** — TLS connect with a custom `ServerCertVerifier` (`PinnedVerifier`) that does TOFU pinning against `~/.config/nvdr/known_hosts` (`host:port  <sha256-hex>` per line). Hostname verification is intentionally bypassed — NVDA Remote relays typically use self-signed certs. On mismatch it returns `rustls::Error::General("PIN_MISMATCH host=… stored=… got=… path=…")` — a **machine-readable string** that `main.rs::parse_pin_mismatch` parses to drive the interactive re-pin prompt. If you change that string, update both ends.
+2. **`transport.rs`** — TLS connect with a custom `ServerCertVerifier` (`PinnedVerifier`) that does TOFU pinning against `~/.config/farrelay/known_hosts` (`host:port  <sha256-hex>` per line). Hostname verification is intentionally bypassed — NVDA Remote relays typically use self-signed certs. On mismatch it returns `rustls::Error::General("PIN_MISMATCH host=… stored=… got=… path=…")` — a **machine-readable string** that `main.rs::parse_pin_mismatch` parses to drive the interactive re-pin prompt. If you change that string, update both ends.
 
 3. **`vk.rs`** — Windows VK constants + `scan_for_vk` (plausible US-layout PS/2 scan codes) + `extended_for_vk` (the extended-key flag that matters for NVDA bindings, §3.2). Every `key` message on the wire must carry `vk_code`, `scan_code`, and `extended` — `send_keys` in `main.rs` fills the latter two from here.
 
@@ -57,7 +57,7 @@ Data flows through six modules. Read them in this order the first time:
 
 7. **`script.rs`** — parser for the one-shot `-k` / `-s` sequence language. Line-oriented (`\n` *and* `;` separate lines); each line is `k <combo>` / `t <text>` / `sleep <ms>` / comment, or is **inferred** (try `parse_combo` first, fall back to literal text). Produces `Vec<script::Step>` where `Step::Type(String)` is executed as clipboard-paste in `main.rs::run_script` (layout-agnostic / Unicode-safe — do **not** re-introduce per-character VK synthesis for text). **Separators are timing:** every `;` / `\n` itself emits a `Step::Sleep(separator_ms)` (default 250 ms), so `a;;;;b` = 4 pauses between steps — this is load-bearing behavior documented in `scripting.md`, don't collapse adjacent separators without updating the doc. Leading/trailing whitespace and separators are trimmed from the source. To extend the grammar, add a new match arm in `parse_line` and a `Step` variant.
 
-8. **`main.rs`** — wires everything. Interactive vs. one-shot dispatch happens in `main()` based on whether `--script`/`--keys` is set. Interactive path: reconnect loop with exponential backoff (500 ms → 30 s cap, reset to 500 ms on a clean connect), session loop (`tokio::select!` over inbound messages and crossterm `EventStream`), held-key bookkeeping (`update_held` / `release_held`) so a mid-chord disconnect doesn't leave a modifier stuck on the slave. `RawGuard` restores terminal state on drop even on panic. One-shot path (`run_script`): single connect, `handshake` (shared with interactive), `wait_for_join` up to 5 s, fire each step — inter-step timing comes *entirely* from `Step::Sleep` emitted by the parser for separators + explicit `sleep`, not from any per-step delay in the runner — then drain inbound for `wait_ms` and print `Speak` text to **stdout** (all other nvdr chatter goes to **stderr** so the stdout channel is clean for piping).
+8. **`main.rs`** — wires everything. Interactive vs. one-shot dispatch happens in `main()` based on whether `--script`/`--keys` is set. Interactive path: reconnect loop with exponential backoff (500 ms → 30 s cap, reset to 500 ms on a clean connect), session loop (`tokio::select!` over inbound messages and crossterm `EventStream`), held-key bookkeeping (`update_held` / `release_held`) so a mid-chord disconnect doesn't leave a modifier stuck on the slave. `RawGuard` restores terminal state on drop even on panic. One-shot path (`run_script`): single connect, `handshake` (shared with interactive), `wait_for_join` up to 5 s, fire each step — inter-step timing comes *entirely* from `Step::Sleep` emitted by the parser for separators + explicit `sleep`, not from any per-step delay in the runner — then drain inbound for `wait_ms` and print `Speak` text to **stdout** (all other farrelay chatter goes to **stderr** so the stdout channel is clean for piping).
 
 ## Non-obvious invariants
 

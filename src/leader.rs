@@ -296,7 +296,7 @@ pub fn help() -> String {
         ));
     }
     format!(r#"
-nvdr key reference
+farrelay key reference
 ------------------
 
 LEADER (default Ctrl+G — configurable via --leader)
@@ -345,7 +345,7 @@ KEYS YOU CAN'T TYPE OVER A TERMINAL
 
 COMMANDS  (type <leader> then `:` to open the prompt)
   :help                show this reference
-  :quit                disconnect and exit nvdr
+  :quit                disconnect and exit farrelay
   :reconnect           drop the current connection and reconnect now
   :sas                 send Ctrl+Alt+Del (requires slave UI Access)
   :caps                swap Insert ↔ CapsLock as the NVDA modifier

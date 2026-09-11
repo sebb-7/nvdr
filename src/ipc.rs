@@ -1,4 +1,4 @@
-//! Long-running headless mode for driving nvdr from another process — built
+//! Long-running headless mode for driving farrelay from another process — built
 //! for the NVDA add-on but usable by any controller. The wire format is plain
 //! ASCII, line-oriented, so it's easy to drive from Python / a shell / netcat.
 //!
@@ -14,7 +14,7 @@
 //! - `type <text>` — paste literal text via the slave's clipboard. Escapes:
 //!   `\n`, `\r`, `\\`.
 //! - `sas` — send the secure-attention sequence (server-handled Ctrl+Alt+Del).
-//! - `release_all` — emit key-up for every VK nvdr still considers held in
+//! - `release_all` — emit key-up for every VK farrelay still considers held in
 //!   this session, in reverse order. The add-on sends this when the user
 //!   toggles passthrough off, so stray modifiers don't latch on the slave.
 //! - `quit` — clean shutdown.
@@ -82,7 +82,7 @@ pub async fn run(args: crate::Args) -> Result<()> {
     let mut backoff_ms: u64 = 500;
     loop {
         emit_state("connecting");
-        eprintln!("nvdr-ipc: connecting to {host}:{port}…");
+        eprintln!("farrelay-ipc: connecting to {host}:{port}…");
         let conn = match transport::connect(
             &host,
             port,
@@ -119,7 +119,7 @@ pub async fn run(args: crate::Args) -> Result<()> {
                 return Ok(());
             }
             SessionOutcome::Dropped(msg) => {
-                eprintln!("nvdr-ipc: dropped: {msg}");
+                eprintln!("farrelay-ipc: dropped: {msg}");
                 emit_state("disconnected");
                 crate::sleep_backoff(&mut backoff_ms, BACKOFF_MAX_MS).await;
             }
@@ -174,7 +174,7 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
                 };
                 match cmd {
                     Cmd::Key(vk, pressed) => {
-                        eprintln!("nvdr-ipc: relay key vk={vk} pressed={pressed}");
+                        eprintln!("farrelay-ipc: relay key vk={vk} pressed={pressed}");
                         let ts = [Transition { vk, pressed }];
                         crate::update_held(&mut held, &ts);
                         if let Err(e) = crate::send_keys(&writer, &ts).await {
@@ -248,7 +248,7 @@ async fn stdin_loop(tx: mpsc::UnboundedSender<Cmd>, nvda_vk: u16) {
                 if trimmed.is_empty() {
                     continue;
                 }
-                eprintln!("nvdr-ipc: stdin got: {trimmed}");
+                eprintln!("farrelay-ipc: stdin got: {trimmed}");
                 match parse_command(trimmed, nvda_vk) {
                     Ok(cmd) => {
                         let is_quit = matches!(cmd, Cmd::Quit);
@@ -265,7 +265,7 @@ async fn stdin_loop(tx: mpsc::UnboundedSender<Cmd>, nvda_vk: u16) {
                 }
             }
             Err(e) => {
-                eprintln!("nvdr-ipc: stdin read: {e}");
+                eprintln!("farrelay-ipc: stdin read: {e}");
                 return;
             }
         }

@@ -7,7 +7,7 @@ This repository contains an Xcode project written with Swift and SwiftUI. Please
 
 You are a **Senior macOS Engineer**, specializing in SwiftUI, SwiftData, and related frameworks. Your code must always adhere to Apple's Human Interface Guidelines.
 
-This is the native macOS build of nvdr (the iOS build lives in `../ios`). It is a Developer ID / direct-distribution app — **not sandboxed** — because its core feature is a system-wide low-level keyboard hook.
+This is the native macOS build of FarRelay (the iOS build lives in `../ios`). It is a Developer ID / direct-distribution app — **not sandboxed** — because its core feature is a system-wide low-level keyboard hook.
 
 
 ## Core instructions

@@ -4,7 +4,7 @@
 
 `BridgeClient` owned two different concerns:
 
-- NVDA behavior: `nvdr --ipc` command construction, line-oriented IPC parsing,
+- NVDA behavior: `farrelay --ipc` command construction, line-oriented IPC parsing,
   NVDA state mapping, speech forwarding, keyboard commands, forwarding state,
   and `releaseAll` on stop/disable.
 - SSH transport: endpoint values, password/Ed25519/RSA authentication setup,
@@ -17,7 +17,7 @@ which made the SSH path difficult to reuse for another remote host or protocol.
 ## After the SSH extraction
 
 `BridgeClient` remains the NVDA-specific consumer. It creates the remote
-`nvdr --ipc` command, maps settings into a plain `SSHSessionConfiguration`,
+`farrelay --ipc` command, maps settings into a plain `SSHSessionConfiguration`,
 consumes generic SSH events as IPC text, and retains all forwarding and speech
 semantics.
 
@@ -28,7 +28,7 @@ Citadel or NIO types to `BridgeClient`.
 
 `SSHSession` also offers a separate `withPTY` capability for interactive
 remote login shells. `SSHExecTransport` remains the appropriate channel for
-the structured `nvdr --ipc` protocol; `SSHPTYTransport` is for shells, tmux,
+the structured `farrelay --ipc` protocol; `SSHPTYTransport` is for shells, tmux,
 and interactive tools. A PTY exposes raw stdout/stderr bytes, exact input-byte
 writes, and resize requests only—no UTF-8 decoding, ANSI/VT parsing, terminal
 rendering, or reconnect behavior. Many SSH servers merge stderr into terminal
@@ -77,7 +77,7 @@ while first-use validation is in flight, the gate rejects validation or the
 deferred commit and no new trust record is written. A fingerprint that already
 existed is never removed or changed by cancellation.
 
-`BridgeClient` creates a new `nvdr --ipc` exec channel for every connected
+`BridgeClient` creates a new `farrelay --ipc` exec channel for every connected
 operation. Its input stream is scoped to that channel and is finished whenever
 the channel disconnects, so keystrokes typed while disconnected are dropped
 rather than queued or replayed. The new channel receives `release_all` before
@@ -90,7 +90,7 @@ channel still knows that key as held. Resetting that knowledge on disconnect
 drops late releases from an obsolete channel without breaking normal repeated
 arrows, backspace, letters, or navigation keys.
 
-The `nvdr --ipc` protocol has a meaningful clean end: `state quit` follows a
+The `farrelay --ipc` protocol has a meaningful clean end: `state quit` follows a
 remote `quit` command or stdin closing. `BridgeClient` reports that as an
 intentional connected-operation completion, so the generic supervisor stops
 without reconnecting. A returned exec stream without that completion remains
