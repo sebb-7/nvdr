@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(BridgeClient.self) private var bridge
+    @Environment(SSHTerminalHost.self) private var terminalHost
     @State private var showingSettings = false
 
     var body: some View {
@@ -11,6 +12,8 @@ struct RootView: View {
             VStack(spacing: 0) {
                 StatusHeader()
                 ConnectionControls(showingSettings: $showingSettings)
+                Divider()
+                TerminalEntryPoint(host: terminalHost)
                 Divider()
                 ForwardingPanel()
                 Divider()
@@ -32,6 +35,21 @@ struct RootView: View {
                 SettingsView()
             }
         }
+    }
+}
+
+private struct TerminalEntryPoint: View {
+    let host: SSHTerminalHost
+
+    var body: some View {
+        NavigationLink {
+            SSHTerminalFeatureView(host: host)
+        } label: {
+            Label("Open SSH terminal", systemImage: "terminal")
+        }
+        .accessibilityLabel("Open SSH terminal")
+        .accessibilityHint("Connect using the SSH settings and open an interactive terminal.")
+        .padding()
     }
 }
 

@@ -177,6 +177,27 @@ final class AppSettings {
         return argv.map(shellQuote).joined(separator: " ")
     }
 
+    /// Reuses the saved SSH endpoint and authentication for app features that
+    /// open a normal SSH session rather than the NVDA IPC exec channel.
+    func sshSessionConfiguration() -> SSHSessionConfiguration {
+        let authentication: SSHAuthenticationConfiguration
+        switch sshAuthMode {
+        case .password:
+            authentication = .password(sshPassword)
+        case .privateKey:
+            authentication = .privateKey(
+                pem: sshPrivateKeyPEM,
+                passphrase: sshPrivateKeyPassphrase
+            )
+        }
+        return SSHSessionConfiguration(
+            host: sshHost,
+            port: sshPort,
+            username: sshUser,
+            authentication: authentication
+        )
+    }
+
     private enum Keys {
         static let sshHost = "nvdr.sshHost"
         static let sshPort = "nvdr.sshPort"

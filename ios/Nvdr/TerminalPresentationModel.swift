@@ -9,6 +9,7 @@ public enum TerminalPresentationMode: Equatable, Sendable {
 
 /// User-facing lifecycle information for an interactive terminal.
 public enum TerminalPresentationSessionState: Equatable, Sendable {
+    case idle
     case connecting
     case connected
     case ended
@@ -17,6 +18,8 @@ public enum TerminalPresentationSessionState: Equatable, Sendable {
 
     public var accessibilityLabel: String {
         switch self {
+        case .idle:
+            "Terminal ready to connect."
         case .connecting:
             "Terminal connecting."
         case .connected:
@@ -103,7 +106,7 @@ public final class TerminalPresentationModel {
 
     public init(session: (any TerminalPresentationSession)? = nil) {
         self.session = session
-        sessionState = session?.terminalPresentationState ?? .connecting
+        sessionState = session?.terminalPresentationState ?? .idle
     }
 
     public var lines: [AccessibleTerminalLine] {
@@ -133,6 +136,12 @@ public final class TerminalPresentationModel {
         session = nil
         sessionState = .connecting
         resetPresentation()
+    }
+
+    /// Updates feature-level lifecycle state before a terminal session exists
+    /// or after its transport has been released.
+    public func setSessionState(_ state: TerminalPresentationSessionState) {
+        sessionState = state
     }
 
     /// Attaches a terminal session owned by a higher-level feature coordinator.

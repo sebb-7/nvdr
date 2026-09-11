@@ -178,3 +178,35 @@ Alternate-screen snapshots replace the currently presented terminal content;
 they are never presented as appended shell history. Presentation does not infer
 geometry: a higher-level owner may explicitly request rows and columns through
 the existing local-engine-then-remote-PTY resize path.
+
+## App-level SSH terminal host
+
+`SSHTerminalHost` is the narrow app-level composition owner for one interactive
+terminal. It reuses `AppSettings.sshSessionConfiguration()`—the same endpoint,
+authentication, credential, and host-key behavior used by the NVDA bridge—to
+create one `SSHSession`, open one production `SSHPTYTransport`, create one
+`SSHTerminalSession`, and attach that session to `TerminalPresentationModel`.
+It does not use the reconnecting NVDA supervisor, parse terminal bytes, or
+share the NVDA IPC channel.
+
+```text
+App / SSHTerminalHost
+    owns composition and feature lifetime
+SSHSession
+    owns SSH connection lifecycle
+SSHPTYTransport
+    owns byte-oriented PTY transport
+SSHTerminalSession
+    owns PTY reader coordination and TerminalEngine
+TerminalAccessibilityModel
+    owns semantic interpretation
+TerminalPresentationModel / TerminalPresentationView
+    own accessible interaction
+```
+
+Opening **Open SSH terminal** creates this independent terminal feature from
+the saved SSH settings. The host reports connecting, startup failure, end, and
+close through the presentation model. Closing the view first closes the
+terminal session, cancels host work, and then releases the SSH connection;
+repeated closes are safe. NVDA IPC remains a parallel feature with independent
+state and lifetime.

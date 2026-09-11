@@ -80,22 +80,7 @@ final class BridgeClient {
             return
         }
 
-        let authentication: SSHAuthenticationConfiguration
-        switch settings.sshAuthMode {
-        case .password:
-            authentication = .password(settings.sshPassword)
-        case .privateKey:
-            authentication = .privateKey(
-                pem: settings.sshPrivateKeyPEM,
-                passphrase: settings.sshPrivateKeyPassphrase
-            )
-        }
-        let sessionConfiguration = SSHSessionConfiguration(
-            host: host,
-            port: port,
-            username: user,
-            authentication: authentication
-        )
+        let sessionConfiguration = settings.sshSessionConfiguration()
 
         // Validate and summarize authentication up front so failures are
         // immediate and diagnostics still include the offered key fingerprint.
