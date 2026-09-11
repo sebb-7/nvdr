@@ -51,7 +51,6 @@ jobs:
           -scheme Nvdr
           -sdk iphonesimulator
           -destination 'generic/platform=iOS Simulator'
-          -skipPackagePluginValidation
           CODE_SIGNING_ALLOWED=NO
           CODE_SIGNING_REQUIRED=NO
           build
@@ -70,6 +69,5 @@ jobs:
           -project Nvdr.xcodeproj
           -scheme NvdrTests
           -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
-          -skipPackagePluginValidation
           CODE_SIGNING_ALLOWED=NO
           CODE_SIGNING_REQUIRED=NO

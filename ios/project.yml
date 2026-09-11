@@ -23,8 +23,8 @@ packages:
     url: https://github.com/apple/swift-crypto.git
     from: "3.0.0"
   SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm.git
-    revision: "964c44dc818780d7f13e3b605fdc1105ccf94cb2"
+    url: https://github.com/sebb-7/SwiftTerm.git
+    revision: "3a7f37e39d2c273f8fcba92c63c8a767a1e1e00d"
 
 targets:
   Nvdr:
