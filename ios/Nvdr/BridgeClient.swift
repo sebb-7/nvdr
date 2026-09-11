@@ -139,6 +139,12 @@ final class BridgeClient {
         commandContinuation.yield(command)
     }
 
+    /// Read-only input readiness for semantic adapters. This never changes
+    /// forwarding state or attempts to establish the NVDA input channel.
+    var isInputForwardingReady: Bool {
+        forwardingEnabled && inputReady
+    }
+
     private func register(
         supervisor: SSHConnectionSupervisor<SSHSession>,
         generation: Int

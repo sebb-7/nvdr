@@ -210,3 +210,34 @@ close through the presentation model. Closing the view first closes the
 terminal session, cancels host work, and then releases the SSH connection;
 repeated closes are safe. NVDA IPC remains a parallel feature with independent
 state and lifetime.
+
+## Remote intent routing
+
+Input adapters produce immutable, platform-neutral `RemoteIntent` values. A
+`RemoteIntentRouter` owns registered semantic targets and routes each intent
+only to the explicitly selected active target. It never automatically selects
+a target and never falls through to another target when the active target is
+unavailable or does not support an intent.
+
+```text
+Keyboard / controller / voice / local agent / ACP or OpenClaw adapter
+    produces RemoteIntent
+RemoteIntentRouter
+    selects one explicit target
+NVDARemoteIntentTarget                 TerminalRemoteIntentTarget
+    calls BridgeClient.sendKey              calls TerminalPresentationModel
+    owns no NVDA IPC                         owns no PTY or terminal parser
+```
+
+Targets advertise static capabilities separately from runtime readiness.
+`NVDARemoteIntentTarget` can therefore support application navigation while
+returning unavailable if BridgeClient forwarding is off or its input channel
+is not ready. The terminal target can support review/control while returning
+unavailable until a terminal session is connected. The router returns a
+structured performed, unsupported, unavailable, or failed result rather than
+falling back or relying on logs.
+
+Keyboard, controller, voice, local-agent, ACP, and OpenClaw adapters are
+future consumers of this semantic layer. They are not implemented here, and
+the existing keyboard capture, NVDA IPC, SSH lifecycle, terminal parsing, and
+terminal accessibility layers retain their current ownership.
