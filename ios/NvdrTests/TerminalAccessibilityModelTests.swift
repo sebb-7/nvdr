@@ -48,7 +48,14 @@ final class TerminalAccessibilityModelTests: XCTestCase {
             _ = chunkedModel.process(chunkedEngine.snapshot())
         }
 
-        XCTAssertEqual(chunkedModel.accessibleSnapshot, whole.snapshot)
+        let chunked = chunkedModel.accessibleSnapshot
+        XCTAssertNotEqual(chunked?.revision, whole.snapshot.revision)
+        XCTAssertEqual(chunked?.dimensions, whole.snapshot.dimensions)
+        XCTAssertEqual(chunked?.cursor, whole.snapshot.cursor)
+        XCTAssertEqual(chunked?.lines, whole.snapshot.lines)
+        XCTAssertEqual(chunked?.viewportLogicalLineIndices, whole.snapshot.viewportLogicalLineIndices)
+        XCTAssertEqual(chunked?.isAlternateScreen, whole.snapshot.isAlternateScreen)
+        XCTAssertEqual(chunked?.shellIntegrationMarks, whole.snapshot.shellIntegrationMarks)
         XCTAssertTrue(whole.snapshot.currentLine?.text.contains("🌍") == true)
     }
 

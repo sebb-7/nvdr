@@ -138,12 +138,15 @@ private actor FakePTYTransport: SSHPTYTransporting {
     func consumeEvents(
         _ handler: @escaping @Sendable (SSHPTYEvent) async throws -> Void
     ) async throws {
-        startedReading = true
         do {
             if blockBeforeEvents {
                 await withCheckedContinuation { continuation in
                     readLoopContinuation = continuation
+                    startedReading = true
                 }
+                try Task.checkCancellation()
+            } else {
+                startedReading = true
             }
             for event in events {
                 try await handler(event)
