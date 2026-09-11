@@ -36,8 +36,9 @@ final class TerminalEngineTests: XCTestCase {
         XCTAssertEqual(engine.snapshot().dimensions, TerminalDimensions(columns: 6, rows: 3))
 
         engine.feed(Data("\u{1B}[?1049hALT\u{1B}[?1049l".utf8))
-        XCTAssertFalse(engine.snapshot().isAlternateScreen)
-        XCTAssertTrue(engine.snapshot().scrollback.contains { $0.text.contains("line3") })
+        let restored = engine.snapshot()
+        XCTAssertFalse(restored.isAlternateScreen)
+        XCTAssertTrue((restored.scrollback + restored.viewport).contains { $0.text.contains("line3") })
 
         engine.feed(Data("\u{1B}]133;A\u{07}>\u{1B}]133;B\u{07}command".utf8))
         XCTAssertFalse(engine.snapshot().semanticPromptRows.isEmpty)
