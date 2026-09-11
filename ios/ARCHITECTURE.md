@@ -37,6 +37,15 @@ best-effort transport information. The supervisor recreates a dead PTY's
 entire connected operation; it never resumes a PTY channel. Remote persistence
 is an application concern (for example, tmux), not an SSH transport feature.
 
+`TerminalEngine` is deliberately a later, separate layer above the raw PTY.
+It owns SwiftTerm's parser on the main actor and turns arbitrary incoming bytes
+into immutable, Sendable snapshots of the active viewport, cursor, retained
+scrollback, and alternate-screen state. It creates no terminal view and has no
+SSH dependency: a future renderer can consume snapshots, while a future PTY
+consumer remains responsible for selecting stdout/stderr policy and feeding
+the raw bytes. SwiftTerm is the only terminal-engine package, added through
+`project.yml`; its parser remains isolated behind this small app-owned API.
+
 Long-lived work is run by `SSHConnectionSupervisor`, a generic lifecycle
 layer over a reconnectable SSH connection. It distinguishes the user's desired
 state (`running` or `stopped`) from the current transport state (`connecting`,
