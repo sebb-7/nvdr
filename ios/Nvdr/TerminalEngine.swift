@@ -99,4 +99,6 @@ public final class TerminalEngine {
     }
 }
 
-private final class TerminalEngineDelegate: TerminalDelegate {}
+private final class TerminalEngineDelegate: TerminalDelegate {
+    func send(source: Terminal, data: ArraySlice<UInt8>) {}
+}
