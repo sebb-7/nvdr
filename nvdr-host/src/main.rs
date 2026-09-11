@@ -65,18 +65,33 @@ mod tests {
     impl HostProvider for FakeProvider {
         fn host_info(&self) -> Result<HostInfo, String> {
             Ok(HostInfo {
-                os_family: "test".into(), os_version: Some("1".into()), architecture: "test".into(),
-                hostname: Some("fake".into()), implementation: "nvdr-host".into(), version: "0.1.0".into(),
+                os_family: "test".into(),
+                os_version: Some("1".into()),
+                architecture: "test".into(),
+                hostname: Some("fake".into()),
+                implementation: "nvdr-host".into(),
+                version: "0.1.0".into(),
             })
         }
     }
     impl ProcessProvider for FakeProvider {
         fn list_processes(&self) -> Result<Vec<ProcessInfo>, String> {
-            Ok(vec![ProcessInfo { pid: 7, name: "fixture".into(), status: Some(ProcessStatus::Running) }])
+            Ok(vec![ProcessInfo {
+                pid: 7,
+                name: "fixture".into(),
+                status: Some(ProcessStatus::Running),
+            }])
         }
         fn process_info(&self, pid: u32) -> Result<ProcessInfo, process::ProcessError> {
-            if pid == 7 { Ok(ProcessInfo { pid, name: "fixture".into(), status: Some(ProcessStatus::Running) }) }
-            else { Err(process::ProcessError::NotFound) }
+            if pid == 7 {
+                Ok(ProcessInfo {
+                    pid,
+                    name: "fixture".into(),
+                    status: Some(ProcessStatus::Running),
+                })
+            } else {
+                Err(process::ProcessError::NotFound)
+            }
         }
     }
 
@@ -95,6 +110,8 @@ mod tests {
         assert!(lines[0].contains("\"request_id\":\"a\""));
         assert!(lines[1].contains("malformed_json"));
         assert!(lines[2].contains("\"request_id\":\"b\""));
-        assert!(lines.iter().all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
+        assert!(lines
+            .iter()
+            .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
     }
 }
