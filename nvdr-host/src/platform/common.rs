@@ -47,7 +47,7 @@ impl ProcessProvider for SystemProvider {
 fn to_info(process: &sysinfo::Process) -> ProcessInfo {
     ProcessInfo {
         pid: process.pid().as_u32(),
-        name: process.name().to_string_lossy().into_owned(),
+        name: process.name().to_string(),
         status: Some(match process.status() {
             SysProcessStatus::Run => ProcessStatus::Running,
             SysProcessStatus::Sleep => ProcessStatus::Sleeping,
