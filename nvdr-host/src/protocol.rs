@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use crate::{
     capabilities::Capabilities,
     host::HostProvider,
     process::{ProcessError, ProcessProvider},
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 pub struct Request {
@@ -38,11 +38,7 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
-    pub fn new(
-        request_id: Option<String>,
-        code: &'static str,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(request_id: Option<String>, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             request_id,
             code,
@@ -143,11 +139,7 @@ where
                     Response::error(ErrorResponse::new(request_id, "internal_error", e))
                 }
             },
-            Err(e) => Response::error(ErrorResponse::new(
-                request_id,
-                "invalid_parameters",
-                e,
-            )),
+            Err(e) => Response::error(ErrorResponse::new(request_id, "invalid_parameters", e)),
         },
         _ => Response::error(ErrorResponse::new(
             request_id,
@@ -229,7 +221,9 @@ mod tests {
     #[test]
     fn rejects_bad_pid_and_missing_fields() {
         let r = dispatch(
-            req(r#"{"version":1,"request_id":"x","operation":"process.info","params":{"pid":"7"}}"#),
+            req(
+                r#"{"version":1,"request_id":"x","operation":"process.info","params":{"pid":"7"}}"#,
+            ),
             &Fake,
             &Fake,
             Capabilities::v1(),

@@ -1,8 +1,8 @@
-use sysinfo::{Pid, ProcessStatus as SysProcessStatus, System};
 use crate::{
     host::{HostInfo, HostProvider},
     process::{ProcessError, ProcessInfo, ProcessProvider, ProcessStatus},
 };
+use sysinfo::{Pid, ProcessStatus as SysProcessStatus, System};
 
 pub struct SystemProvider {
     system: System,
