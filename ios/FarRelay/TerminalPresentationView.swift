@@ -4,21 +4,60 @@ import SwiftUI
 struct TerminalPresentationView: View {
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
+    @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
+    @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
 
     var body: some View {
         @Bindable var presentation = presentation
         VStack(spacing: 0) {
-            TerminalConversationList(presentation: presentation, openSnapshot: openSnapshot)
+            TerminalConversationList(
+                presentation: presentation,
+                openSnapshot: openSnapshot,
+                voiceOverFocus: $voiceOverFocus
+            )
             TerminalPresentationStatusView(presentation: presentation)
-            TerminalInputControls(presentation: presentation, inputText: $presentation.inputText)
+            TerminalInputControls(
+                presentation: presentation,
+                inputText: $presentation.inputText,
+                voiceOverFocus: $voiceOverFocus
+            )
         }
         .navigationTitle("SSH Terminal")
+        .onAppear {
+            presentation.setLiveOutputVoiceOverEnabled(isVoiceOverEnabled)
+        }
+        .onChange(of: isVoiceOverEnabled) { _, isEnabled in
+            presentation.setLiveOutputVoiceOverEnabled(isEnabled)
+        }
+        .onChange(of: voiceOverFocus) { _, focus in
+            switch focus {
+            case .conversation(let entryID):
+                presentation.setLiveOutputFocusedConversationEntryID(entryID)
+                presentation.setLiveOutputInputFocused(false)
+            case .input:
+                presentation.setLiveOutputFocusedConversationEntryID(nil)
+                presentation.setLiveOutputInputFocused(true)
+            case nil:
+                presentation.setLiveOutputFocusedConversationEntryID(nil)
+                presentation.setLiveOutputInputFocused(false)
+            }
+        }
+        .onChange(of: presentation.liveOutputAnnouncement?.id) { _, _ in
+            guard isVoiceOverEnabled, let announcement = presentation.liveOutputAnnouncement else { return }
+            LiveOutputAnnouncementDelivery.deliver(announcement)
+        }
     }
+}
+
+private enum TerminalAccessibilityFocus: Hashable {
+    case conversation(UUID)
+    case input
 }
 
 private struct TerminalConversationList: View {
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
+    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
 
     var body: some View {
         List {
@@ -33,7 +72,8 @@ private struct TerminalConversationList: View {
                     TerminalConversationEntryView(
                         entry: entry,
                         presentation: presentation,
-                        openSnapshot: openSnapshot
+                        openSnapshot: openSnapshot,
+                        voiceOverFocus: voiceOverFocus
                     )
                 }
             }
@@ -46,6 +86,7 @@ private struct TerminalConversationEntryView: View {
     let entry: AccessibleConversationEntry
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
+    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
 
     var body: some View {
         if entry.isCommand {
@@ -53,6 +94,7 @@ private struct TerminalConversationEntryView: View {
                 .textSelection(.enabled)
                 .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                 .accessibilityHeading(.h3)
+                .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
                 .accessibilityAction(named: "Run Again") {
                     Task {
                         await presentation.runAgain(commandID: entry.id)
@@ -65,6 +107,7 @@ private struct TerminalConversationEntryView: View {
                 Text(entry.text)
                     .textSelection(.enabled)
                     .accessibilityLabel(presentation.accessibilityLabel(for: entry))
+                    .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if entry.role == .incomingContent {
@@ -107,6 +150,7 @@ private struct TerminalPresentationStatusView: View {
 private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
+    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -120,6 +164,7 @@ private struct TerminalInputControls: View {
                     }
                 }
                 .accessibilityIdentifier("terminal-input")
+                .accessibilityFocused(voiceOverFocus, equals: .input)
 
             HStack {
                 Button("Send", systemImage: "arrow.up.circle") {

@@ -188,7 +188,7 @@ not infer command completion, exit status, or grouped command output, and it
 does not capture arbitrary alternate-screen repaint state. Alternate-screen
 applications remain an inspectable replacement display rather than fabricated
 append-only conversation history. Automatic large-output thresholds, search,
-live-output announcements, rich link metadata, reliable command/output grouping,
+rich link metadata, reliable command/output grouping,
 Control Key/Chord improvements, Host Profiles, multiple terminals, onboarding,
 NVDA separation, agents, Assistant integration, and productivity features such
 as Starred Commands and a command palette remain future phases.
@@ -213,6 +213,22 @@ Normal transcript navigation replaces the old explicit Review Terminal Content,
 Previous Line, Next Line, and Return to Live controls. Presentation does not
 infer geometry: a higher-level owner may explicitly request rows and columns
 through the existing local-engine-then-remote-PTY resize path.
+
+Live output informs without hijacking. `LiveOutputAnnouncementPolicy` is a
+provider-neutral semantic policy: completed output is eligible immediately,
+while mutable current-line output uses a centralized 450 ms quiet window. Each
+new mutation replaces and cancels the prior pending token; completion cancels a
+matching token and records the final text so it is not announced twice. Initial
+terminal history is seeded into the conversation but never sent to this policy.
+
+SwiftUI is only the delivery and focus boundary. It observes VoiceOver focus
+with `AccessibilityFocusState` without programmatically setting focus, and
+uses the VoiceOver environment value to avoid delivery when VoiceOver is off.
+Focus on older conversation content, the terminal input, or an Output Snapshot
+suppresses live output and cancels pending work; suppressed output remains in
+the conversation without being replayed later. Cursor movement, reflow, screen
+replacement, and alternate-screen repaint do not become live announcements.
+Controller/action mappings remain Phase 1D work.
 
 ## App-level SSH terminal host
 

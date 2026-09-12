@@ -14,6 +14,12 @@ struct SSHTerminalFeatureView: View {
         .navigationDestination(item: $snapshot) { snapshot in
             OutputSnapshotView(snapshot: snapshot)
         }
+        .onAppear {
+            host.presentation.setLiveOutputSnapshotInspecting(snapshot != nil)
+        }
+        .onChange(of: snapshot?.id) { _, snapshotID in
+            host.presentation.setLiveOutputSnapshotInspecting(snapshotID != nil)
+        }
         .task {
             guard !hasStarted else { return }
             hasStarted = true

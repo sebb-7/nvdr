@@ -96,12 +96,17 @@ public final class TerminalPresentationModel {
     public private(set) var conversationEntries: [AccessibleConversationEntry] = []
     public private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     public private(set) var lastInputError: String?
+    public private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
     public var inputText = ""
 
     private var accessibilityModel = TerminalAccessibilityModel()
     private var session: (any TerminalPresentationSession)?
     private var streamingEntryID: UUID?
     private var observationGeneration = 0
+    private let liveOutputPolicy = LiveOutputAnnouncementPolicy()
+    private var liveOutputAnnouncementTask: Task<Void, Never>?
+    private var liveOutputContext = LiveOutputAnnouncementContext()
+    private var focusedConversationEntryID: UUID?
 
     public init(session: (any TerminalPresentationSession)? = nil) {
         self.session = session
@@ -158,6 +163,7 @@ public final class TerminalPresentationModel {
         if update.snapshot.isAlternateScreen {
             alternateScreenLines = usefulLines(in: update.snapshot)
             streamingEntryID = nil
+            applyLiveOutputEffects(liveOutputPolicy.cancelPending())
             return update
         }
 
@@ -222,6 +228,26 @@ public final class TerminalPresentationModel {
         entry.text
     }
 
+    public func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
+        liveOutputContext.isVoiceOverEnabled = isEnabled
+        refreshLiveOutputContext()
+    }
+
+    public func setLiveOutputFocusedConversationEntryID(_ entryID: UUID?) {
+        focusedConversationEntryID = entryID
+        refreshLiveOutputContext()
+    }
+
+    public func setLiveOutputInputFocused(_ isFocused: Bool) {
+        liveOutputContext.isInputFocused = isFocused
+        refreshLiveOutputContext()
+    }
+
+    public func setLiveOutputSnapshotInspecting(_ isInspecting: Bool) {
+        liveOutputContext.isSnapshotInspecting = isInspecting
+        refreshLiveOutputContext()
+    }
+
     /// Freezes one incoming conversation entry for stable, document-like
     /// inspection. This never changes the live terminal conversation.
     public func captureSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
@@ -274,48 +300,59 @@ public final class TerminalPresentationModel {
         for event in events {
             switch event {
             case .completedLinesAppended(let lines):
-                appendCompleted(lines)
+                applyLiveOutputEffects(liveOutputPolicy.completed(
+                    appendCompleted(lines), context: currentLiveOutputContext()
+                ))
             case .currentLineChanged(let line):
-                updateStreamingContent(with: line)
+                if let entry = updateStreamingContent(with: line) {
+                    applyLiveOutputEffects(liveOutputPolicy.streaming(entry, context: currentLiveOutputContext()))
+                } else {
+                    applyLiveOutputEffects(liveOutputPolicy.cancelPending())
+                }
             case .screenReplaced, .alternateScreenEntered, .alternateScreenExited:
                 // Repaints and alternate-screen transitions are display state,
                 // not append-only conversation history.
                 streamingEntryID = nil
+                applyLiveOutputEffects(liveOutputPolicy.cancelPending())
             case .cursorMoved, .shellIntegrationMarksAppeared:
                 break
             }
         }
     }
 
-    private func appendCompleted(_ lines: [AccessibleTerminalLine]) {
+    private func appendCompleted(_ lines: [AccessibleTerminalLine]) -> [AccessibleConversationEntry] {
+        var completedEntries: [AccessibleConversationEntry] = []
         for line in lines where isUseful(line) {
             if let streamingEntryID,
                let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }),
                conversationEntries[index].text == line.text {
                 self.streamingEntryID = nil
+                completedEntries.append(conversationEntries[index])
                 continue
             }
-            conversationEntries.append(
-                AccessibleConversationEntry(text: line.text, role: .incomingContent)
-            )
+            let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
+            conversationEntries.append(entry)
+            completedEntries.append(entry)
         }
+        return completedEntries
     }
 
-    private func updateStreamingContent(with line: AccessibleTerminalLine) {
+    private func updateStreamingContent(with line: AccessibleTerminalLine) -> AccessibleConversationEntry? {
         guard isUseful(line) else {
             streamingEntryID = nil
-            return
+            return nil
         }
 
         if let streamingEntryID,
            let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }) {
             conversationEntries[index].text = line.text
-            return
+            return conversationEntries[index]
         }
 
         let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
         conversationEntries.append(entry)
         streamingEntryID = entry.id
+        return entry
     }
 
     private func usefulLines(in snapshot: AccessibleTerminalSnapshot) -> [AccessibleTerminalLine] {
@@ -334,6 +371,47 @@ public final class TerminalPresentationModel {
         alternateScreenLines = []
         streamingEntryID = nil
         lastInputError = nil
+        focusedConversationEntryID = nil
+        liveOutputAnnouncement = nil
+        applyLiveOutputEffects(liveOutputPolicy.reset())
+    }
+
+    private func currentLiveOutputContext() -> LiveOutputAnnouncementContext {
+        var context = liveOutputContext
+        let latestIncomingID = conversationEntries.last(where: { $0.role == .incomingContent })?.id
+        context.isReadingHistory = focusedConversationEntryID != nil
+            && focusedConversationEntryID != latestIncomingID
+        return context
+    }
+
+    private func refreshLiveOutputContext() {
+        applyLiveOutputEffects(liveOutputPolicy.updateContext(currentLiveOutputContext()))
+    }
+
+    private func applyLiveOutputEffects(_ effects: [LiveOutputAnnouncementPolicyEffect]) {
+        for effect in effects {
+            switch effect {
+            case .announce(let announcement):
+                liveOutputAnnouncement = announcement
+            case .schedule(let schedule):
+                liveOutputAnnouncementTask?.cancel()
+                liveOutputAnnouncementTask = Task { [weak self] in
+                    do {
+                        try await Task.sleep(for: schedule.delay)
+                    } catch {
+                        return
+                    }
+                    guard let self, !Task.isCancelled else { return }
+                    self.applyLiveOutputEffects(self.liveOutputPolicy.settle(
+                        token: schedule.token,
+                        context: self.currentLiveOutputContext()
+                    ))
+                }
+            case .cancelScheduled:
+                liveOutputAnnouncementTask?.cancel()
+                liveOutputAnnouncementTask = nil
+            }
+        }
     }
 }
 

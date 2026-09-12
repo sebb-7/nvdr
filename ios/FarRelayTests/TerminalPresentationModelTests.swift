@@ -17,6 +17,40 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.conversationEntries.map(\.role), [.incomingContent])
     }
 
+    func testInitialHistoryDoesNotCreateLiveAnnouncementButNewCompletedOutputDoes() {
+        let model = TerminalPresentationModel()
+        model.setLiveOutputVoiceOverEnabled(true)
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: ["history", "", ""],
+            cursorRow: 2
+        ), sessionState: .connected)
+        XCTAssertNil(model.liveOutputAnnouncement)
+
+        _ = model.process(snapshot(
+            revision: 2,
+            viewport: ["history", "new output", ""],
+            cursorRow: 2
+        ), sessionState: .connected)
+        XCTAssertEqual(model.liveOutputAnnouncement?.text, "new output")
+    }
+
+    func testResizeAndAlternateScreenDoNotCreateLiveOutputAnnouncements() {
+        let model = TerminalPresentationModel()
+        model.setLiveOutputVoiceOverEnabled(true)
+        _ = model.process(snapshot(revision: 1, viewport: ["one", "", ""], cursorRow: 2), sessionState: .connected)
+
+        _ = model.process(snapshot(revision: 2, viewport: ["one", "", "", ""], cursorRow: 3), sessionState: .connected)
+        XCTAssertNil(model.liveOutputAnnouncement)
+        _ = model.process(snapshot(
+            revision: 3,
+            viewport: ["vim repaint", "", "", ""],
+            cursorRow: 0,
+            isAlternateScreen: true
+        ), sessionState: .connected)
+        XCTAssertNil(model.liveOutputAnnouncement)
+    }
+
     func testSoftWrappedOutputRemainsOneLogicalConversationEntry() {
         let model = TerminalPresentationModel()
         let terminalSnapshot = TerminalSnapshot(
