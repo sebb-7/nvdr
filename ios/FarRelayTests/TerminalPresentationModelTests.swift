@@ -149,7 +149,7 @@ final class TerminalPresentationModelTests: XCTestCase {
     func testAttachConsumesPublishedTerminalUpdatesWithoutPolling() {
         let session = FakeTerminalPresentationSession(
             state: .connected,
-            snapshot: snapshot(revision: 1, viewport: ["initial", ""], cursorRow: 1)
+            snapshot: snapshot(revision: 1, viewport: ["initial", "", ""], cursorRow: 2)
         )
         let model = TerminalPresentationModel()
 
