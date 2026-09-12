@@ -228,7 +228,7 @@ struct HostProfileCredentialPersistence {
                 guard try store.string(for: destination) == value else {
                     throw CredentialStoreError.invalidStoredValue
                 }
-                copied.append((credential, value))
+                copied.append((credential, source))
             }
             for (credential, source) in copied {
                 switch source {
