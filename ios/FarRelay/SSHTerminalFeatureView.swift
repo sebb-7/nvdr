@@ -4,16 +4,28 @@ import SwiftUI
 struct SSHTerminalFeatureView: View {
     @Environment(AppSettings.self) private var settings
     let host: SSHTerminalHost
+    @State private var snapshot: AccessibleConversationSnapshot?
+    @State private var hasStarted = false
 
     var body: some View {
-        TerminalPresentationView(presentation: host.presentation)
-            .task {
-                await host.start(settings: settings)
+        TerminalPresentationView(presentation: host.presentation) { snapshot in
+            self.snapshot = snapshot
+        }
+        .navigationDestination(item: $snapshot) { snapshot in
+            OutputSnapshotView(snapshot: snapshot)
+        }
+        .task {
+            guard !hasStarted else { return }
+            hasStarted = true
+            await host.start(settings: settings)
+        }
+        .onDisappear {
+            // Pushing a Snapshot hides this view while the terminal must stay
+            // alive. A real Back navigation has no active Snapshot.
+            guard snapshot == nil else { return }
+            Task {
+                await host.close()
             }
-            .onDisappear {
-                Task {
-                    await host.close()
-                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

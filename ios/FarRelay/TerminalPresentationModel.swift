@@ -222,6 +222,16 @@ public final class TerminalPresentationModel {
         entry.text
     }
 
+    /// Freezes one incoming conversation entry for stable, document-like
+    /// inspection. This never changes the live terminal conversation.
+    public func captureSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
+        guard let entry = conversationEntries.first(where: { $0.id == entryID }),
+              entry.role == .incomingContent else {
+            return nil
+        }
+        return AccessibleConversationSnapshot(sourceEntryID: entry.id, text: entry.text)
+    }
+
     private func sendCommand(_ text: String) async {
         guard let session else {
             lastInputError = "Terminal is not connected."

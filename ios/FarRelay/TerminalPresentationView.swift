@@ -3,11 +3,12 @@ import SwiftUI
 /// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
     let presentation: TerminalPresentationModel
+    let openSnapshot: (AccessibleConversationSnapshot) -> Void
 
     var body: some View {
         @Bindable var presentation = presentation
         VStack(spacing: 0) {
-            TerminalConversationList(presentation: presentation)
+            TerminalConversationList(presentation: presentation, openSnapshot: openSnapshot)
             TerminalPresentationStatusView(presentation: presentation)
             TerminalInputControls(presentation: presentation, inputText: $presentation.inputText)
         }
@@ -17,6 +18,7 @@ struct TerminalPresentationView: View {
 
 private struct TerminalConversationList: View {
     let presentation: TerminalPresentationModel
+    let openSnapshot: (AccessibleConversationSnapshot) -> Void
 
     var body: some View {
         List {
@@ -28,7 +30,11 @@ private struct TerminalConversationList: View {
                 }
             } else {
                 ForEach(presentation.conversationEntries) { entry in
-                    TerminalConversationEntryView(entry: entry, presentation: presentation)
+                    TerminalConversationEntryView(
+                        entry: entry,
+                        presentation: presentation,
+                        openSnapshot: openSnapshot
+                    )
                 }
             }
         }
@@ -39,6 +45,7 @@ private struct TerminalConversationList: View {
 private struct TerminalConversationEntryView: View {
     let entry: AccessibleConversationEntry
     let presentation: TerminalPresentationModel
+    let openSnapshot: (AccessibleConversationSnapshot) -> Void
 
     var body: some View {
         if entry.isCommand {
@@ -54,11 +61,21 @@ private struct TerminalConversationEntryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("terminal-command-\(entry.id)")
         } else {
-            Text(entry.text)
-                .textSelection(.enabled)
-                .accessibilityLabel(presentation.accessibilityLabel(for: entry))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("terminal-content-\(entry.id)")
+            VStack(alignment: .leading) {
+                Text(entry.text)
+                    .textSelection(.enabled)
+                    .accessibilityLabel(presentation.accessibilityLabel(for: entry))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if entry.role == .incomingContent {
+                    Button("Open Snapshot", systemImage: "doc.text") {
+                        guard let snapshot = presentation.captureSnapshot(for: entry.id) else { return }
+                        openSnapshot(snapshot)
+                    }
+                    .accessibilityIdentifier("terminal-open-snapshot-\(entry.id)")
+                }
+            }
+            .accessibilityIdentifier("terminal-content-\(entry.id)")
         }
     }
 }

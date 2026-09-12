@@ -173,14 +173,25 @@ VoiceOver's built-in heading, link, selection, or text-navigation features.
 `Run Again` is a custom accessibility action because replaying an exact terminal
 command is FarRelay-specific.
 
-Conversation means operate; a Snapshot means inspect. Large-output Snapshots
-are the next terminal accessibility slice and are not implemented here.
-Alternate-screen applications remain an inspectable replacement display rather
-than fabricated append-only conversation history. Automatic/coalesced live
-output announcements, Control Key/Chord improvements, Host Profiles, multiple
-terminals, onboarding, NVDA separation, agents, Assistant integration, and
-productivity features such as Starred Commands and a command palette remain
-future phases.
+Conversation means operate; a Snapshot means inspect. An incoming conversation
+entry can be explicitly captured as an immutable `AccessibleConversationSnapshot`:
+its exact accessible text and source-entry identifier are copied at capture time,
+then presented through normal SwiftUI navigation as native selectable text.
+The Snapshot never reads terminal bytes, refreshes from the terminal, or mutates
+the live conversation, so output can be read without subsequent streaming or a
+new terminal lifetime moving content under VoiceOver focus. The small Snapshot
+value is provider-neutral and may later serve other conversation providers
+without introducing those dependencies now.
+
+The first Snapshot scope is one incoming logical conversation entry. It does
+not infer command completion, exit status, or grouped command output, and it
+does not capture arbitrary alternate-screen repaint state. Alternate-screen
+applications remain an inspectable replacement display rather than fabricated
+append-only conversation history. Automatic large-output thresholds, search,
+live-output announcements, rich link metadata, reliable command/output grouping,
+Control Key/Chord improvements, Host Profiles, multiple terminals, onboarding,
+NVDA separation, agents, Assistant integration, and productivity features such
+as Starred Commands and a command palette remain future phases.
 
 The ownership boundary is intentionally strict:
 

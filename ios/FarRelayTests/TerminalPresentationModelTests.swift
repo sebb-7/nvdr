@@ -126,6 +126,88 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.conversationEntries.map(\.role), [.incomingContent])
     }
 
+    func testSnapshotCapturesIncomingConversationTextExactlyAndKeepsItsIdentity() throws {
+        let model = TerminalPresentationModel()
+        let text = "first line\nsecond line\n🌍"
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: [text, ""],
+            cursorRow: 1
+        ), sessionState: .connected)
+        let entry = try XCTUnwrap(model.conversationEntries.first)
+        let outputSnapshot = try XCTUnwrap(model.captureSnapshot(for: entry.id))
+
+        XCTAssertEqual(outputSnapshot.sourceEntryID, entry.id)
+        XCTAssertEqual(outputSnapshot.text, text)
+        XCTAssertEqual(model.conversationEntries, [entry])
+    }
+
+    func testStreamingMutationDoesNotChangeCapturedSnapshot() throws {
+        let model = TerminalPresentationModel()
+        _ = model.process(snapshot(revision: 0, viewport: ["", ""], cursorRow: 0), sessionState: .connected)
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: ["building", ""],
+            cursorRow: 0
+        ), sessionState: .connected)
+        let entry = try XCTUnwrap(model.conversationEntries.first)
+        let outputSnapshot = try XCTUnwrap(model.captureSnapshot(for: entry.id))
+        let snapshotID = outputSnapshot.id
+
+        _ = model.process(snapshot(
+            revision: 2,
+            viewport: ["building complete", ""],
+            cursorRow: 0
+        ), sessionState: .connected)
+
+        XCTAssertEqual(outputSnapshot.text, "building")
+        XCTAssertEqual(outputSnapshot.id, snapshotID)
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["building complete"])
+        XCTAssertEqual(model.conversationEntries.first?.id, entry.id)
+    }
+
+    func testNewOutputAndTerminalResetDoNotChangeCapturedSnapshot() throws {
+        let model = TerminalPresentationModel()
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: ["captured output", "", ""],
+            cursorRow: 2
+        ), sessionState: .connected)
+        let entry = try XCTUnwrap(model.conversationEntries.first)
+        let outputSnapshot = try XCTUnwrap(model.captureSnapshot(for: entry.id))
+
+        _ = model.process(snapshot(
+            revision: 2,
+            viewport: ["captured output", "later output", ""],
+            cursorRow: 2
+        ), sessionState: .connected)
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["captured output", "later output"])
+
+        model.beginConnecting()
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: ["new terminal output", ""],
+            cursorRow: 1
+        ), sessionState: .connected)
+
+        XCTAssertEqual(outputSnapshot.text, "captured output")
+        XCTAssertEqual(outputSnapshot.sourceEntryID, entry.id)
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["new terminal output"])
+    }
+
+    func testSnapshotsOnlyCaptureIncomingContent() async throws {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        await model.submitInput("echo FarRelay")
+        let command = try XCTUnwrap(model.conversationEntries.first)
+
+        XCTAssertNil(model.captureSnapshot(for: command.id))
+        XCTAssertEqual(model.conversationEntries, [command])
+    }
+
     func testAlternateScreenUsesSafeReplacementContentWithoutAppendingHistory() {
         let model = TerminalPresentationModel()
         _ = model.process(snapshot(
