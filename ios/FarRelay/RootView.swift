@@ -53,8 +53,10 @@ private struct HomeTabView: View {
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
                         }
-                        NavigationLink("Open Terminal", systemImage: "terminal") {
+                        NavigationLink {
                             SSHTerminalFeatureView(host: host, profile: profile)
+                        } label: {
+                            Label("Open Terminal", systemImage: "terminal")
                         }
                     }
                     .onDelete { indexes in
@@ -113,6 +115,7 @@ private struct NVDATabView: View {
 
     var body: some View {
         @Bindable var settings = settings
+        @Bindable var bridge = bridge
         Form {
             Section("Computer") {
                 if settings.hostProfiles.isEmpty {
