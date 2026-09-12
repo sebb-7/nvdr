@@ -29,10 +29,7 @@ final class TerminalRemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(
             session.sentBytes,
             [
-                TerminalPresentationAction.interrupt.inputBytes,
-                TerminalPresentationAction.endOfTransmission.inputBytes,
-                TerminalPresentationAction.returnKey.inputBytes,
-                TerminalPresentationAction.escape.inputBytes
+                Data([0x03]), Data([0x04]), Data([0x0D]), Data([0x1B])
             ]
         )
     }
@@ -46,7 +43,7 @@ final class TerminalRemoteIntentTargetTests: XCTestCase {
 
         XCTAssertEqual(tab, .performed)
         XCTAssertEqual(unsupported, .unsupported)
-        XCTAssertEqual(session.sentBytes, [TerminalPresentationAction.tab.inputBytes])
+        XCTAssertEqual(session.sentBytes, [Data([0x09])])
     }
 
     func testApplicationIntentIsUnsupportedByTerminalTarget() async {

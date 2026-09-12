@@ -85,7 +85,7 @@ final class TerminalPresentationModelTests: XCTestCase {
 
         XCTAssertEqual(
             session.sentBytes,
-            [Data(command.utf8), TerminalPresentationAction.returnKey.inputBytes]
+            [Data(command.utf8), Data([0x0D])]
         )
         XCTAssertEqual(model.conversationEntries.map(\.text), [command])
         XCTAssertEqual(model.conversationEntries.map(\.role), [.outboundCommand])
@@ -109,8 +109,8 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(
             session.sentBytes,
             [
-                Data(command.utf8), TerminalPresentationAction.returnKey.inputBytes,
-                Data(command.utf8), TerminalPresentationAction.returnKey.inputBytes
+                Data(command.utf8), Data([0x0D]),
+                Data(command.utf8), Data([0x0D])
             ]
         )
         XCTAssertEqual(model.conversationEntries.map(\.text), [command, command])
@@ -304,22 +304,52 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(endedModel.sessionState.accessibilityLabel, "Terminal session ended.")
     }
 
-    func testEssentialTerminalActionsUseExpectedBytes() async {
+    func testConfiguredControlKeysUseExpectedBytes() async {
         let session = FakeTerminalPresentationSession(
             state: .connected,
             snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
         )
         let model = TerminalPresentationModel(session: session)
-        let actions: [TerminalPresentationAction] = [
-            .escape, .tab, .backspace, .upArrow, .downArrow,
-            .rightArrow, .leftArrow, .interrupt, .endOfTransmission
+        let controls: [TerminalControlKey] = [
+            TerminalControlKey(chord: .escape),
+            TerminalControlKey(chord: .tab),
+            TerminalControlKey(chord: .backspace),
+            TerminalControlKey(chord: .upArrow),
+            TerminalControlKey(chord: .downArrow),
+            TerminalControlKey(chord: .rightArrow),
+            TerminalControlKey(chord: .leftArrow),
+            TerminalControlKey(chord: TerminalControlChord(baseKey: .letter, letter: "c", modifiers: [.control])),
+            TerminalControlKey(chord: TerminalControlChord(baseKey: .letter, letter: "d", modifiers: [.control])),
         ]
 
-        for action in actions {
-            await model.send(action)
+        for control in controls {
+            await model.send(control: control)
         }
 
-        XCTAssertEqual(session.sentBytes, actions.map(\.inputBytes))
+        XCTAssertEqual(session.sentBytes, [
+            Data([0x1B]), Data([0x09]), Data([0x7F]), Data("\u{1B}[A".utf8),
+            Data("\u{1B}[B".utf8), Data("\u{1B}[C".utf8), Data("\u{1B}[D".utf8),
+            Data([0x03]), Data([0x04]),
+        ])
+    }
+
+    func testInvalidConfiguredControlIsNotSent() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        let unsupported = TerminalControlKey(
+            chord: TerminalControlChord(baseKey: .letter, letter: "p", modifiers: [.control, .shift])
+        )
+
+        await model.send(control: unsupported)
+
+        XCTAssertTrue(session.sentBytes.isEmpty)
+        XCTAssertEqual(
+            model.lastInputError,
+            TerminalControlChordError.ambiguousControlShift.explanation
+        )
     }
 
     private func snapshot(

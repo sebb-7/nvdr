@@ -28,52 +28,6 @@ public enum TerminalPresentationSessionState: Equatable, Sendable {
     }
 }
 
-/// The small set of terminal control bytes exposed by the first presentation.
-public enum TerminalPresentationAction: CaseIterable, Identifiable, Sendable {
-    case returnKey
-    case escape
-    case tab
-    case backspace
-    case upArrow
-    case downArrow
-    case rightArrow
-    case leftArrow
-    case interrupt
-    case endOfTransmission
-
-    public var id: String { title }
-
-    public var title: String {
-        switch self {
-        case .returnKey: "Return"
-        case .escape: "Escape"
-        case .tab: "Tab"
-        case .backspace: "Backspace"
-        case .upArrow: "Up Arrow"
-        case .downArrow: "Down Arrow"
-        case .rightArrow: "Right Arrow"
-        case .leftArrow: "Left Arrow"
-        case .interrupt: "Control-C"
-        case .endOfTransmission: "Control-D"
-        }
-    }
-
-    public var inputBytes: Data {
-        switch self {
-        case .returnKey: Data([0x0D])
-        case .escape: Data([0x1B])
-        case .tab: Data([0x09])
-        case .backspace: Data([0x7F])
-        case .upArrow: Data("\u{1B}[A".utf8)
-        case .downArrow: Data("\u{1B}[B".utf8)
-        case .rightArrow: Data("\u{1B}[C".utf8)
-        case .leftArrow: Data("\u{1B}[D".utf8)
-        case .interrupt: Data([0x03])
-        case .endOfTransmission: Data([0x04])
-        }
-    }
-}
-
 /// The presentation-facing terminal capability. This deliberately excludes
 /// SSH transport, terminal-parser, and UI implementation details.
 @MainActor
@@ -193,15 +147,67 @@ public final class TerminalPresentationModel {
         await sendCommand(command.text)
     }
 
-    public func send(_ action: TerminalPresentationAction) async {
+    /// Invokes one configured control through the existing terminal session.
+    public func send(control: TerminalControlKey) async {
         guard let session else {
             lastInputError = "Terminal is not connected."
             return
         }
+        switch TerminalControlChordEncoder.encode(control.chord) {
+        case .failure(let error):
+            lastInputError = error.explanation
+            return
+        case .success(let bytes):
+            do {
+                try await session.sendTerminalInput(bytes)
+                lastInputError = nil
+            } catch {
+                lastInputError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Resolves a configured control by its stable action ID. List position and
+    /// display name are deliberately not part of invocation.
+    public func send(controlID: String, from controls: [TerminalControlKey]) async {
+        guard let control = controls.first(where: { $0.id == controlID }) else {
+            lastInputError = "This Control Key is no longer available."
+            return
+        }
+        await send(control: control)
+    }
+
+    private func sendCommand(_ text: String) async {
+        let returnBytes: Data
+        switch TerminalControlChordEncoder.encode(.returnKey) {
+        case .success(let bytes):
+            returnBytes = bytes
+        case .failure(let error):
+            lastInputError = error.explanation
+            return
+        }
+
+        guard let session else {
+            lastInputError = "Terminal is not connected."
+            return
+        }
+        let entry = text.isEmpty
+            ? nil
+            : AccessibleConversationEntry(text: text, role: .outboundCommand)
+        if let entry {
+            conversationEntries.append(entry)
+        }
         do {
-            try await session.sendTerminalInput(action.inputBytes)
+            if !text.isEmpty {
+                try await session.sendTerminalInput(Data(text.utf8))
+            }
+            try await session.sendTerminalInput(returnBytes)
+            inputText = ""
             lastInputError = nil
         } catch {
+            if let entry {
+                conversationEntries.removeAll { $0.id == entry.id }
+            }
             lastInputError = error.localizedDescription
         }
     }
@@ -256,34 +262,6 @@ public final class TerminalPresentationModel {
             return nil
         }
         return AccessibleConversationSnapshot(sourceEntryID: entry.id, text: entry.text)
-    }
-
-    private func sendCommand(_ text: String) async {
-        guard let session else {
-            lastInputError = "Terminal is not connected."
-            return
-        }
-
-        let entry = text.isEmpty
-            ? nil
-            : AccessibleConversationEntry(text: text, role: .outboundCommand)
-        if let entry {
-            conversationEntries.append(entry)
-        }
-
-        do {
-            if !text.isEmpty {
-                try await session.sendTerminalInput(Data(text.utf8))
-            }
-            try await session.sendTerminalInput(TerminalPresentationAction.returnKey.inputBytes)
-            inputText = ""
-            lastInputError = nil
-        } catch {
-            if let entry {
-                conversationEntries.removeAll { $0.id == entry.id }
-            }
-            lastInputError = error.localizedDescription
-        }
     }
 
     private func seedConversation(from snapshot: AccessibleTerminalSnapshot) {

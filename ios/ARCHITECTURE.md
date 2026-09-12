@@ -189,7 +189,7 @@ does not capture arbitrary alternate-screen repaint state. Alternate-screen
 applications remain an inspectable replacement display rather than fabricated
 append-only conversation history. Automatic large-output thresholds, search,
 rich link metadata, reliable command/output grouping,
-Control Key/Chord improvements, Host Profiles, multiple terminals, onboarding,
+Host Profiles, multiple terminals, onboarding,
 NVDA separation, agents, Assistant integration, and productivity features such
 as Starred Commands and a command palette remain future phases.
 
@@ -228,7 +228,23 @@ Focus on older conversation content, the terminal input, or an Output Snapshot
 suppresses live output and cancels pending work; suppressed output remains in
 the conversation without being replayed later. Cursor movement, reflow, screen
 replacement, and alternate-screen repaint do not become live announcements.
-Controller/action mappings remain Phase 1D work.
+Terminal Control Keys are a small, global data-driven collection rather than a
+hardcoded presentation enum. Each `TerminalControlKey` owns a stable
+terminal-scoped action ID, a user-editable label, and a semantic
+`TerminalControlChord`; ordering is only collection order. The pure encoder
+turns only supported chords into exact PTY bytes, and rejects ambiguous or
+unsupported combinations rather than approximating them. The collection is
+persisted as deterministic Codable data in `UserDefaults`: defaults are saved
+only for a previously uninitialized configuration, while an intentionally
+empty collection remains empty. Per-host Control Keys remain HostProfile work.
+
+Future controller bindings may reference stable Control Key IDs without
+depending on labels or order. Renaming or reordering therefore does not break a
+binding; deleting a target will require that future adapter to handle a missing
+ID gracefully. This phase does not include a controller adapter, GameController,
+NVDA mapping, or RemoteIntent expansion. OS- and NVDA-level chords will later
+flow through their appropriate semantic targets rather than being faked as PTY
+input.
 
 ## App-level SSH terminal host
 

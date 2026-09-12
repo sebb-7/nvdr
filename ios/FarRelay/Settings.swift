@@ -91,14 +91,22 @@ final class AppSettings {
     var speechRate: Float
     var voiceIdentifier: String?
 
+    // Global terminal controls. Per-host overrides are deferred to HostProfile.
+    private(set) var terminalControlKeys: [TerminalControlKey]
+
+    private let defaults: UserDefaults
     private let credentialPersistence: SSHCredentialPersistence
+    private let terminalControlKeyStore: TerminalControlKeyStore
 
     init(
         defaults: UserDefaults = .standard,
         credentialStore: any CredentialStore = KeychainCredentialStore()
     ) {
         let d = defaults
+        self.defaults = d
         credentialPersistence = SSHCredentialPersistence(defaults: d, store: credentialStore)
+        let controlKeyStore = TerminalControlKeyStore(defaults: d, key: Keys.terminalControlKeys)
+        terminalControlKeyStore = controlKeyStore
         let migrationDiagnostics = credentialPersistence.migrateLegacyValues()
         sshHost = d.string(forKey: Keys.sshHost) ?? ""
         sshPort = d.object(forKey: Keys.sshPort) as? Int ?? 22
@@ -119,11 +127,22 @@ final class AppSettings {
         let storedRate = d.object(forKey: Keys.speechRate) as? Double
         speechRate = Float(storedRate ?? 0.55)
         voiceIdentifier = d.string(forKey: Keys.voiceIdentifier)
+        switch controlKeyStore.load() {
+        case .uninitialized:
+            terminalControlKeys = TerminalControlKey.defaultControls
+            controlKeyStore.save(terminalControlKeys)
+        case .controls(let controls):
+            terminalControlKeys = controls
+        case .malformed:
+            // Preserve the user's choice not to restore defaults automatically.
+            terminalControlKeys = []
+            controlKeyStore.save([])
+        }
         credentialStorageError = migrationDiagnostics.first
     }
 
     func save() {
-        let d = UserDefaults.standard
+        let d = defaults
         d.set(sshHost, forKey: Keys.sshHost)
         d.set(sshPort, forKey: Keys.sshPort)
         d.set(sshUser, forKey: Keys.sshUser)
@@ -155,6 +174,22 @@ final class AppSettings {
         } else {
             d.removeObject(forKey: Keys.voiceIdentifier)
         }
+        terminalControlKeyStore.save(terminalControlKeys)
+    }
+
+    @discardableResult
+    func replaceTerminalControlKeys(_ controls: [TerminalControlKey]) -> Bool {
+        guard Set(controls.map(\.id)).count == controls.count,
+              controls.allSatisfy({ $0.validationError(among: controls) == nil }) else {
+            return false
+        }
+        terminalControlKeys = controls
+        terminalControlKeyStore.save(controls)
+        return true
+    }
+
+    func restoreDefaultTerminalControlKeys() {
+        _ = replaceTerminalControlKeys(TerminalControlKey.defaultControls)
     }
 
     /// Build the remote farrelay --ipc invocation for the SSH exec channel.
@@ -214,6 +249,7 @@ final class AppSettings {
         static let commandMapping = "farrelay.commandMapping"
         static let speechRate = "farrelay.speechRate"
         static let voiceIdentifier = "farrelay.voiceIdentifier"
+        static let terminalControlKeys = "farrelay.terminalControlKeys"
     }
 }
 

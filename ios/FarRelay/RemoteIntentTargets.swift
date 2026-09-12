@@ -37,16 +37,16 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
 
         switch intent {
         case .terminalInterrupt:
-            return await send(.interrupt)
+            return await send(defaultControlID: "terminal.interrupt")
         case .terminalEOF:
-            return await send(.endOfTransmission)
+            return await send(defaultControlID: "terminal.eof")
         case .activate:
-            return await send(.returnKey)
+            return await send(defaultControlID: "terminal.return")
         case .cancel:
-            return await send(.escape)
+            return await send(defaultControlID: "terminal.escape")
         case .sendKey(let key):
-            guard let action = terminalAction(for: key) else { return .unsupported }
-            return await send(action)
+            guard let controlID = terminalControlID(for: key) else { return .unsupported }
+            return await send(defaultControlID: controlID)
         case .reviewPrevious, .reviewNext, .returnToLive,
              .nextItem, .previousItem,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
@@ -55,24 +55,27 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         }
     }
 
-    private func send(_ action: TerminalPresentationAction) async -> RemoteIntentResult {
-        await presentation.send(action)
+    private func send(defaultControlID: String) async -> RemoteIntentResult {
+        guard let control = TerminalControlKey.defaultControl(id: defaultControlID) else {
+            return .failed("The terminal control is unavailable.")
+        }
+        await presentation.send(control: control)
         return presentation.lastInputError == nil
             ? .performed
             : .failed("The terminal command could not be sent.")
     }
 
-    private func terminalAction(for key: RemoteKey) -> TerminalPresentationAction? {
+    private func terminalControlID(for key: RemoteKey) -> String? {
         guard let namedKey = key.namedKey else { return nil }
         return switch namedKey {
-        case .tab: .tab
-        case .returnKey: .returnKey
-        case .escape: .escape
-        case .backspace: .backspace
-        case .leftArrow: .leftArrow
-        case .rightArrow: .rightArrow
-        case .upArrow: .upArrow
-        case .downArrow: .downArrow
+        case .tab: "terminal.tab"
+        case .returnKey: "terminal.return"
+        case .escape: "terminal.escape"
+        case .backspace: "terminal.backspace"
+        case .leftArrow: "terminal.left-arrow"
+        case .rightArrow: "terminal.right-arrow"
+        case .upArrow: "terminal.up-arrow"
+        case .downArrow: "terminal.down-arrow"
         }
     }
 }

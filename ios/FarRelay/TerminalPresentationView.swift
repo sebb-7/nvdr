@@ -2,10 +2,12 @@ import SwiftUI
 
 /// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
+    @Environment(AppSettings.self) private var settings
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
+    @State private var isManagingControlKeys = false
 
     var body: some View {
         @Bindable var presentation = presentation
@@ -19,10 +21,15 @@ struct TerminalPresentationView: View {
             TerminalInputControls(
                 presentation: presentation,
                 inputText: $presentation.inputText,
-                voiceOverFocus: $voiceOverFocus
+                voiceOverFocus: $voiceOverFocus,
+                controlKeys: settings.terminalControlKeys,
+                manageControlKeys: { isManagingControlKeys = true }
             )
         }
         .navigationTitle("SSH Terminal")
+        .navigationDestination(isPresented: $isManagingControlKeys) {
+            ControlKeysManagementView()
+        }
         .onAppear {
             presentation.setLiveOutputVoiceOverEnabled(isVoiceOverEnabled)
         }
@@ -151,6 +158,8 @@ private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
     let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
+    let controlKeys: [TerminalControlKey]
+    let manageControlKeys: () -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -175,16 +184,20 @@ private struct TerminalInputControls: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("terminal-send")
 
-                Menu("Terminal keys", systemImage: "keyboard") {
-                    ForEach(TerminalPresentationAction.allCases) { action in
-                        Button(action.title) {
+                Menu("Control Keys", systemImage: "keyboard") {
+                    ForEach(controlKeys) { control in
+                        Button(control.name) {
                             Task {
-                                await presentation.send(action)
+                                await presentation.send(controlID: control.id, from: controlKeys)
                             }
                         }
                     }
+                    Divider()
+                    Button("Manage Control Keys", systemImage: "slider.horizontal.3") {
+                        manageControlKeys()
+                    }
                 }
-                .accessibilityIdentifier("terminal-keys")
+                .accessibilityIdentifier("terminal-control-keys")
             }
         }
         .padding()
