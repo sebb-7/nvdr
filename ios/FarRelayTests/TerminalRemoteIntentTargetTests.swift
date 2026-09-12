@@ -4,23 +4,16 @@ import XCTest
 
 @MainActor
 final class TerminalRemoteIntentTargetTests: XCTestCase {
-    func testReviewIntentsReusePresentationNavigation() async {
+    func testReviewIntentsAreUnsupportedBecauseTranscriptNavigationIsNative() async {
         let session = FakeTerminalIntentSession()
         let model = connectedModel(session: session)
         let target = TerminalRemoteIntentTarget(presentation: model)
-        model.enterReview(at: 1)
 
         let previous = await target.perform(.reviewPrevious)
-        XCTAssertEqual(previous, .performed)
-        XCTAssertEqual(model.reviewedLogicalLineIndex, 0)
-
         let next = await target.perform(.reviewNext)
-        XCTAssertEqual(next, .performed)
-        XCTAssertEqual(model.reviewedLogicalLineIndex, 1)
-
         let live = await target.perform(.returnToLive)
-        XCTAssertEqual(live, .performed)
-        XCTAssertEqual(model.mode, .live)
+
+        XCTAssertEqual([previous, next, live], [.unsupported, .unsupported, .unsupported])
     }
 
     func testControlAndGenericTerminalIntentsReusePresentationActions() async {
@@ -107,6 +100,10 @@ private final class FakeTerminalIntentSession: TerminalPresentationSession {
     )
     let terminalPresentationState: TerminalPresentationSessionState = .connected
     private(set) var sentBytes: [Data] = []
+
+    func observeTerminalPresentationUpdates(
+        _ observer: @escaping @MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void
+    ) {}
 
     func sendTerminalInput(_ bytes: Data) async throws {
         sentBytes.append(bytes)

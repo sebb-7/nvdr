@@ -35,6 +35,7 @@ final class SSHTerminalSession {
     private let terminal: TerminalEngine
     private var readTask: Task<Void, Never>?
     private var completionWaiters: [CheckedContinuation<SSHTerminalSessionState, Never>] = []
+    private var presentationObserver: (@MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void)?
 
     private(set) var state: SSHTerminalSessionState = .idle
 
@@ -98,6 +99,15 @@ final class SSHTerminalSession {
         terminal.snapshot()
     }
 
+    /// Publishes immutable snapshots after terminal-state changes and incoming
+    /// PTY bytes. Presentation owns semantic interpretation of these values.
+    func observeTerminalPresentationUpdates(
+        _ observer: @escaping @MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void
+    ) {
+        presentationObserver = observer
+        publishPresentationUpdate()
+    }
+
     /// Sends unmodified bytes so control sequences, UTF-8, and paste data keep
     /// their original representation.
     func send(_ bytes: Data) async throws {
@@ -145,6 +155,7 @@ final class SSHTerminalSession {
         switch event {
         case .stdout(let bytes), .stderr(let bytes):
             terminal.feed(bytes)
+            publishPresentationUpdate()
         }
     }
 
@@ -167,11 +178,16 @@ final class SSHTerminalSession {
 
     private func transition(to newState: SSHTerminalSessionState) {
         state = newState
+        publishPresentationUpdate()
         guard !newState.isActive else { return }
         let waiters = completionWaiters
         completionWaiters.removeAll()
         for waiter in waiters {
             waiter.resume(returning: newState)
         }
+    }
+
+    private func publishPresentationUpdate() {
+        presentationObserver?(snapshot(), terminalPresentationState)
     }
 }

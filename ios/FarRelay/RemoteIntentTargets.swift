@@ -15,7 +15,6 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
     let remoteTargetName = "SSH terminal"
     let capabilities: Set<RemoteCapability> = [
         .genericNavigation,
-        .terminalReview,
         .terminalControl,
         .rawKeyInput
     ]
@@ -37,15 +36,6 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         }
 
         switch intent {
-        case .reviewPrevious:
-            presentation.moveReview(by: -1)
-            return .performed
-        case .reviewNext:
-            presentation.moveReview(by: 1)
-            return .performed
-        case .returnToLive:
-            presentation.returnToLive()
-            return .performed
         case .terminalInterrupt:
             return await send(.interrupt)
         case .terminalEOF:
@@ -57,7 +47,8 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         case .sendKey(let key):
             guard let action = terminalAction(for: key) else { return .unsupported }
             return await send(action)
-        case .nextItem, .previousItem,
+        case .reviewPrevious, .reviewNext, .returnToLive,
+             .nextItem, .previousItem,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
              .sendChord:
             return .unsupported

@@ -1,12 +1,6 @@
 import Foundation
 import Observation
 
-/// Whether presentation follows the terminal cursor or a user-selected line.
-public enum TerminalPresentationMode: Equatable, Sendable {
-    case live
-    case review
-}
-
 /// User-facing lifecycle information for an interactive terminal.
 public enum TerminalPresentationSessionState: Equatable, Sendable {
     case idle
@@ -86,48 +80,32 @@ public enum TerminalPresentationAction: CaseIterable, Identifiable, Sendable {
 public protocol TerminalPresentationSession: AnyObject {
     var terminalPresentationSnapshot: TerminalSnapshot { get }
     var terminalPresentationState: TerminalPresentationSessionState { get }
+    func observeTerminalPresentationUpdates(
+        _ observer: @escaping @MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void
+    )
     func sendTerminalInput(_ bytes: Data) async throws
     func resizeTerminal(columns: Int, rows: Int) async throws
 }
 
-/// UI-facing terminal state and navigation derived from accessibility snapshots.
+/// UI-facing accessible conversation state derived from terminal semantics.
 @Observable
 @MainActor
 public final class TerminalPresentationModel {
     public private(set) var sessionState: TerminalPresentationSessionState
-    public private(set) var mode: TerminalPresentationMode = .live
     public private(set) var accessibleSnapshot: AccessibleTerminalSnapshot?
-    public private(set) var reviewedLogicalLineIndex: Int?
+    public private(set) var conversationEntries: [AccessibleConversationEntry] = []
+    public private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     public private(set) var lastInputError: String?
     public var inputText = ""
 
     private var accessibilityModel = TerminalAccessibilityModel()
     private var session: (any TerminalPresentationSession)?
+    private var streamingEntryID: UUID?
+    private var observationGeneration = 0
 
     public init(session: (any TerminalPresentationSession)? = nil) {
         self.session = session
         sessionState = session?.terminalPresentationState ?? .idle
-    }
-
-    public var lines: [AccessibleTerminalLine] {
-        accessibleSnapshot?.lines ?? []
-    }
-
-    public var currentLine: AccessibleTerminalLine? {
-        accessibleSnapshot?.currentLine
-    }
-
-    public var activeLogicalLineIndex: Int? {
-        switch mode {
-        case .live:
-            currentLine?.logicalIndex ?? lines.last?.logicalIndex
-        case .review:
-            reviewedLogicalLineIndex
-        }
-    }
-
-    public var isReviewing: Bool {
-        mode == .review
     }
 
     /// Starts a new terminal lifetime. A coordinator calls this before it has
@@ -145,9 +123,16 @@ public final class TerminalPresentationModel {
     }
 
     /// Attaches a terminal session owned by a higher-level feature coordinator.
+    /// Snapshot updates arrive through the terminal's existing semantic boundary,
+    /// rather than by polling terminal text from the SwiftUI view.
     public func attach(_ session: any TerminalPresentationSession) {
         self.session = session
         resetPresentation()
+        let generation = observationGeneration
+        session.observeTerminalPresentationUpdates { [weak self] snapshot, state in
+            guard let self, self.observationGeneration == generation else { return }
+            _ = self.process(snapshot, sessionState: state)
+        }
         refresh()
     }
 
@@ -159,66 +144,47 @@ public final class TerminalPresentationModel {
         )
     }
 
-    /// Consumes a terminal snapshot without requiring a particular SSH client.
+    /// Consumes semantic terminal updates without reparsing terminal bytes.
     @discardableResult
     public func process(
         _ terminalSnapshot: TerminalSnapshot,
         sessionState: TerminalPresentationSessionState
     ) -> TerminalAccessibilityUpdate {
         self.sessionState = sessionState
+        let establishesBaseline = accessibilityModel.accessibleSnapshot == nil
         let update = accessibilityModel.process(terminalSnapshot)
         accessibleSnapshot = update.snapshot
-        reconcileActiveLine()
-        return update
-    }
 
-    /// Stops following live cursor movement while retaining the user's chosen
-    /// logical line. New output never changes this position automatically.
-    public func enterReview(at logicalLineIndex: Int? = nil) {
-        guard !lines.isEmpty else { return }
-        mode = .review
-        reviewedLogicalLineIndex = nearestExistingLine(
-            to: logicalLineIndex ?? activeLogicalLineIndex ?? lines[0].logicalIndex
-        )
-    }
-
-    public func moveReview(by offset: Int) {
-        guard !lines.isEmpty else { return }
-        enterReview()
-        guard let current = reviewedLogicalLineIndex,
-              let currentOffset = lines.firstIndex(where: { $0.logicalIndex == current }) else {
-            return
+        if update.snapshot.isAlternateScreen {
+            alternateScreenLines = usefulLines(in: update.snapshot)
+            streamingEntryID = nil
+            return update
         }
-        let targetOffset = min(max(currentOffset + offset, 0), lines.count - 1)
-        reviewedLogicalLineIndex = lines[targetOffset].logicalIndex
-    }
 
-    /// Returns focus-independent navigation to the terminal's current line.
-    public func returnToLive() {
-        mode = .live
-        reviewedLogicalLineIndex = activeLogicalLineIndex
+        alternateScreenLines = []
+        if establishesBaseline {
+            seedConversation(from: update.snapshot)
+        } else {
+            apply(update.events)
+        }
+        return update
     }
 
     /// Sends text unchanged as UTF-8, followed by the terminal Return byte.
     public func submitInput(_ text: String) async {
-        guard let session else {
-            lastInputError = "Terminal is not connected."
-            return
-        }
-        do {
-            if !text.isEmpty {
-                try await session.sendTerminalInput(Data(text.utf8))
-            }
-            try await session.sendTerminalInput(TerminalPresentationAction.returnKey.inputBytes)
-            inputText = ""
-            lastInputError = nil
-        } catch {
-            lastInputError = error.localizedDescription
-        }
+        await sendCommand(text)
     }
 
     public func submitInputText() async {
         await submitInput(inputText)
+    }
+
+    /// Repeats an outbound command through the same byte-exact terminal path.
+    public func runAgain(commandID: UUID) async {
+        guard let command = conversationEntries.first(where: { $0.id == commandID && $0.isCommand }) else {
+            return
+        }
+        await sendCommand(command.text)
     }
 
     public func send(_ action: TerminalPresentationAction) async {
@@ -250,40 +216,114 @@ public final class TerminalPresentationModel {
         }
     }
 
-    public func accessibilityLabel(for line: AccessibleTerminalLine) -> String {
-        var components = ["Terminal line \(line.logicalIndex + 1)"]
-        if line.logicalIndex == currentLine?.logicalIndex {
-            components.append("current line")
-        }
-        if mode == .review, line.logicalIndex == reviewedLogicalLineIndex {
-            components.append("review position")
-        }
-        components.append(line.text.isEmpty ? "blank" : line.text)
-        return components.joined(separator: ", ")
+    /// Keeps transcript labels content-first; heading semantics are applied by
+    /// the native SwiftUI command entry view.
+    public func accessibilityLabel(for entry: AccessibleConversationEntry) -> String {
+        entry.text
     }
 
-    private func resetPresentation() {
-        accessibilityModel = TerminalAccessibilityModel()
-        accessibleSnapshot = nil
-        mode = .live
-        reviewedLogicalLineIndex = nil
-        lastInputError = nil
+    private func sendCommand(_ text: String) async {
+        guard let session else {
+            lastInputError = "Terminal is not connected."
+            return
+        }
+
+        let entry = text.isEmpty
+            ? nil
+            : AccessibleConversationEntry(text: text, role: .outboundCommand)
+        if let entry {
+            conversationEntries.append(entry)
+        }
+
+        do {
+            if !text.isEmpty {
+                try await session.sendTerminalInput(Data(text.utf8))
+            }
+            try await session.sendTerminalInput(TerminalPresentationAction.returnKey.inputBytes)
+            inputText = ""
+            lastInputError = nil
+        } catch {
+            if let entry {
+                conversationEntries.removeAll { $0.id == entry.id }
+            }
+            lastInputError = error.localizedDescription
+        }
     }
 
-    private func reconcileActiveLine() {
-        switch mode {
-        case .live:
-            reviewedLogicalLineIndex = activeLogicalLineIndex
-        case .review:
-            if let reviewedLogicalLineIndex {
-                self.reviewedLogicalLineIndex = nearestExistingLine(to: reviewedLogicalLineIndex)
+    private func seedConversation(from snapshot: AccessibleTerminalSnapshot) {
+        for line in usefulLines(in: snapshot) {
+            let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
+            conversationEntries.append(entry)
+            if line.containsCursor {
+                streamingEntryID = entry.id
             }
         }
     }
 
-    private func nearestExistingLine(to logicalLineIndex: Int) -> Int? {
-        lines.min { abs($0.logicalIndex - logicalLineIndex) < abs($1.logicalIndex - logicalLineIndex) }?
-            .logicalIndex
+    private func apply(_ events: [TerminalAccessibilityEvent]) {
+        for event in events {
+            switch event {
+            case .completedLinesAppended(let lines):
+                appendCompleted(lines)
+            case .currentLineChanged(let line):
+                updateStreamingContent(with: line)
+            case .screenReplaced, .alternateScreenEntered, .alternateScreenExited:
+                // Repaints and alternate-screen transitions are display state,
+                // not append-only conversation history.
+                streamingEntryID = nil
+            case .cursorMoved, .shellIntegrationMarksAppeared:
+                break
+            }
+        }
+    }
+
+    private func appendCompleted(_ lines: [AccessibleTerminalLine]) {
+        for line in lines where isUseful(line) {
+            if let streamingEntryID,
+               let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }),
+               conversationEntries[index].text == line.text {
+                self.streamingEntryID = nil
+                continue
+            }
+            conversationEntries.append(
+                AccessibleConversationEntry(text: line.text, role: .incomingContent)
+            )
+        }
+    }
+
+    private func updateStreamingContent(with line: AccessibleTerminalLine) {
+        guard isUseful(line) else {
+            streamingEntryID = nil
+            return
+        }
+
+        if let streamingEntryID,
+           let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }) {
+            conversationEntries[index].text = line.text
+            return
+        }
+
+        let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
+        conversationEntries.append(entry)
+        streamingEntryID = entry.id
+    }
+
+    private func usefulLines(in snapshot: AccessibleTerminalSnapshot) -> [AccessibleTerminalLine] {
+        snapshot.lines.filter(isUseful)
+    }
+
+    private func isUseful(_ line: AccessibleTerminalLine) -> Bool {
+        !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func resetPresentation() {
+        observationGeneration &+= 1
+        accessibilityModel = TerminalAccessibilityModel()
+        accessibleSnapshot = nil
+        conversationEntries = []
+        alternateScreenLines = []
+        streamingEntryID = nil
+        lastInputError = nil
     }
 }
 

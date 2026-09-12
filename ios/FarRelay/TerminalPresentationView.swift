@@ -1,24 +1,65 @@
 import SwiftUI
 
-/// A VoiceOver-first terminal surface for a supplied presentation model.
+/// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
     let presentation: TerminalPresentationModel
 
     var body: some View {
         @Bindable var presentation = presentation
         VStack(spacing: 0) {
+            TerminalConversationList(presentation: presentation)
             TerminalPresentationStatusView(presentation: presentation)
-            TerminalReviewControls(presentation: presentation)
-            TerminalLineList(presentation: presentation)
             TerminalInputControls(presentation: presentation, inputText: $presentation.inputText)
         }
-        .task {
-            while !Task.isCancelled {
-                presentation.refresh()
-                try? await Task.sleep(for: .milliseconds(250))
+        .navigationTitle("SSH Terminal")
+    }
+}
+
+private struct TerminalConversationList: View {
+    let presentation: TerminalPresentationModel
+
+    var body: some View {
+        List {
+            if presentation.accessibleSnapshot?.isAlternateScreen == true {
+                ForEach(presentation.alternateScreenLines, id: \.logicalIndex) { line in
+                    Text(line.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                ForEach(presentation.conversationEntries) { entry in
+                    TerminalConversationEntryView(entry: entry, presentation: presentation)
+                }
             }
         }
-        .navigationTitle("SSH Terminal")
+        .accessibilityIdentifier("terminal-conversation")
+    }
+}
+
+private struct TerminalConversationEntryView: View {
+    let entry: AccessibleConversationEntry
+    let presentation: TerminalPresentationModel
+
+    var body: some View {
+        if entry.isCommand {
+            Text(entry.text)
+                .textSelection(.enabled)
+                .accessibilityLabel(presentation.accessibilityLabel(for: entry))
+                .accessibilityHeading(.h3)
+                .accessibilityAction(named: "Run Again") {
+                    Task {
+                        await presentation.runAgain(commandID: entry.id)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("terminal-command-\(entry.id)")
+        } else {
+            Text(entry.text)
+                .textSelection(.enabled)
+                .accessibilityLabel(presentation.accessibilityLabel(for: entry))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("terminal-content-\(entry.id)")
+        }
     }
 }
 
@@ -43,60 +84,6 @@ private struct TerminalPresentationStatusView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .accessibilityElement(children: .contain)
-    }
-}
-
-private struct TerminalReviewControls: View {
-    let presentation: TerminalPresentationModel
-
-    var body: some View {
-        HStack {
-            if presentation.isReviewing {
-                Button("Previous line", systemImage: "chevron.up") {
-                    presentation.moveReview(by: -1)
-                }
-                Button("Next line", systemImage: "chevron.down") {
-                    presentation.moveReview(by: 1)
-                }
-                Button("Return to live terminal", systemImage: "dot.radiowaves.left.and.right") {
-                    presentation.returnToLive()
-                }
-                .accessibilityIdentifier("terminal-return-live")
-            } else {
-                Button("Review terminal content", systemImage: "text.line.first.and.arrowtriangle.forward") {
-                    presentation.enterReview()
-                }
-                .accessibilityIdentifier("terminal-enter-review")
-            }
-            Spacer()
-        }
-        .buttonStyle(.bordered)
-        .padding(.horizontal)
-        .padding(.bottom)
-    }
-}
-
-private struct TerminalLineList: View {
-    let presentation: TerminalPresentationModel
-
-    var body: some View {
-        List {
-            Section("Terminal content") {
-                ForEach(presentation.lines, id: \.logicalIndex) { line in
-                    Button {
-                        presentation.enterReview(at: line.logicalIndex)
-                    } label: {
-                        Text(line.text.isEmpty ? "Blank line" : line.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(presentation.accessibilityLabel(for: line))
-                    .accessibilityHint("Double-tap to keep reviewing this terminal line.")
-                    .accessibilityIdentifier("terminal-line-\(line.logicalIndex)")
-                }
-            }
-        }
-        .accessibilityIdentifier("terminal-content")
     }
 }
 

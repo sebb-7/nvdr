@@ -144,14 +144,43 @@ from them. Alternate-screen enter, exit, and repaint are represented explicitly
 and never become shell history appends. Future UI and screen-reader code decides
 how to navigate, coalesce, or speak these values.
 
-## Terminal presentation
+## Accessible conversation and terminal presentation
 
-`TerminalPresentationModel` is the user-facing layer above
-`TerminalAccessibilityModel`. It owns live versus review mode, a selected
-review line, session-state labels, byte-exact text submission, and the small
-set of explicit terminal key actions exposed by the first SwiftUI terminal
-surface. It accepts only a narrow `TerminalPresentationSession` capability;
-it has no Citadel, NIO, SwiftTerm, or NVDA IPC dependency.
+Raw terminal geometry is an implementation detail. `TerminalPresentationModel`
+is the user-facing layer above `TerminalAccessibilityModel`; it converts
+semantic terminal updates into a small accessible conversation transcript. It
+accepts only a narrow `TerminalPresentationSession` capability and has no
+Citadel, NIO, SwiftTerm, or NVDA IPC dependency.
+
+This is the first provider of FarRelay's shared Accessible Conversation
+experience. SSH terminals, CLI agents, local models, OpenClaw, assistants, and
+future conversational providers should supply semantic conversation events,
+not separate accessibility implementations. This slice proves only the terminal
+representation and does not introduce agent or provider dependencies.
+
+Commands and responses have distinct semantic roles. A submitted command is
+retained exactly as an outbound command entry while the same UTF-8 bytes and
+Return byte continue through the existing terminal input path. Incoming output
+uses the accessibility model's completed-line and current-line events, so a
+streaming current line updates one entry instead of becoming byte-by-byte chat
+noise. Blank physical viewport rows never become transcript entries, and
+soft-wrapped logical output remains joined by the accessibility model.
+
+SwiftUI supplies the normal accessibility behavior: command entries use native
+heading semantics, output uses native selectable text, input remains a native
+text-entry control, and buttons remain buttons. FarRelay does not recreate
+VoiceOver's built-in heading, link, selection, or text-navigation features.
+`Run Again` is a custom accessibility action because replaying an exact terminal
+command is FarRelay-specific.
+
+Conversation means operate; a Snapshot means inspect. Large-output Snapshots
+are the next terminal accessibility slice and are not implemented here.
+Alternate-screen applications remain an inspectable replacement display rather
+than fabricated append-only conversation history. Automatic/coalesced live
+output announcements, Control Key/Chord improvements, Host Profiles, multiple
+terminals, onboarding, NVDA separation, agents, Assistant integration, and
+productivity features such as Starred Commands and a command palette remain
+future phases.
 
 The ownership boundary is intentionally strict:
 
@@ -163,21 +192,16 @@ TerminalEngine
 TerminalAccessibilityModel
     owns semantic accessibility interpretation
 TerminalPresentationModel / TerminalPresentationView
-    own user-facing navigation and presentation
+    own accessible conversation interaction and presentation
 ```
 
-Live mode follows the current logical terminal line as snapshots arrive. Review
-mode retains the user-selected logical line, so appended output never forces a
-VoiceOver user back to the cursor. Returning to live mode explicitly resumes
-following the current line. The SwiftUI surface exposes logical lines as native
-accessibility elements rather than terminal cells, identifies the current and
-reviewed line in its labels, and does not automatically announce or move focus
-for every incoming character.
-
-Alternate-screen snapshots replace the currently presented terminal content;
-they are never presented as appended shell history. Presentation does not infer
-geometry: a higher-level owner may explicitly request rows and columns through
-the existing local-engine-then-remote-PTY resize path.
+The SwiftUI surface does not poll terminal text, automatically move focus, or
+announce every incoming character. `SSHTerminalSession` publishes immutable
+snapshots and the presentation model consumes the existing semantic events.
+Normal transcript navigation replaces the old explicit Review Terminal Content,
+Previous Line, Next Line, and Return to Live controls. Presentation does not
+infer geometry: a higher-level owner may explicitly request rows and columns
+through the existing local-engine-then-remote-PTY resize path.
 
 ## App-level SSH terminal host
 
@@ -247,10 +271,11 @@ NVDARemoteIntentTarget                 TerminalRemoteIntentTarget
 Targets advertise static capabilities separately from runtime readiness.
 `NVDARemoteIntentTarget` can therefore support application navigation while
 returning unavailable if BridgeClient forwarding is off or its input channel
-is not ready. The terminal target can support review/control while returning
-unavailable until a terminal session is connected. The router returns a
-structured performed, unsupported, unavailable, or failed result rather than
-falling back or relying on logs.
+is not ready. The terminal target can support terminal control while returning
+unavailable until a terminal session is connected. Transcript navigation is
+native SwiftUI and VoiceOver behavior rather than a RemoteIntent review mode.
+The router returns a structured performed, unsupported, unavailable, or failed
+result rather than falling back or relying on logs.
 
 Keyboard, controller, voice, local-agent, ACP, and OpenClaw adapters are
 future consumers of this semantic layer. They are not implemented here, and
