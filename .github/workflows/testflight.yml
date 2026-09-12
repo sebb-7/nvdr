@@ -2,6 +2,9 @@ name: TestFlight
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - chore/farrelay-testflight
 
 permissions:
   contents: read
