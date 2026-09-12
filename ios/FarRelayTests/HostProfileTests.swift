@@ -8,11 +8,19 @@ final class HostProfileTests: XCTestCase {
         XCTAssertEqual(profile.farRelayHostCommand, "farrelay-host")
         XCTAssertEqual(profile.nvdaBridgeCommand, "farrelay")
         XCTAssertTrue(profile.credentialReference.hasPrefix("keychain.profile."))
+        let credentials = HostProfileCredentials(
+            password: "SECRET_PASSWORD_VALUE",
+            privateKeyPEM: "SECRET_PRIVATE_KEY_VALUE",
+            privateKeyPassphrase: "SECRET_PASSPHRASE_VALUE"
+        )
 
         let encoded = try JSONEncoder().encode(profile)
         let text = try XCTUnwrap(String(data: encoded, encoding: .utf8))
-        XCTAssertFalse(text.contains("password"))
-        XCTAssertFalse(text.contains("privateKeyPEM"))
+        XCTAssertTrue(text.contains("\"authenticationMode\":\"password\""))
+        XCTAssertTrue(text.contains("\"credentialReference\""))
+        XCTAssertFalse(text.contains(credentials.password))
+        XCTAssertFalse(text.contains(credentials.privateKeyPEM))
+        XCTAssertFalse(text.contains(credentials.privateKeyPassphrase))
     }
 
     func testProfileCredentialAccountsAreDistinctAndScoped() {
