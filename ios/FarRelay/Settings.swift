@@ -42,7 +42,7 @@ final class AppSettings {
     var speechRate: Float
     var voiceIdentifier: String?
     private(set) var terminalControlKeys: [TerminalControlKey]
-    private(set) var hostProfiles: [HostProfile]
+    private(set) var hostProfiles: [HostProfile] = []
     var selectedNVDAProfileID: UUID? { didSet { saveSelectedNVDAProfileID() } }
     private(set) var credentialStorageError: String? = nil
 
