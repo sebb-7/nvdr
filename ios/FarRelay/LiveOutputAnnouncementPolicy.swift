@@ -51,7 +51,7 @@ public final class LiveOutputAnnouncementPolicy {
 
     private let quietInterval: Duration
     private var pendingStreaming: PendingStreaming?
-    private var lastAnnouncedTextByEntryID: [UUID: String] = [:]
+    private var lastHandledTextByEntryID: [UUID: String] = [:]
 
     public init(quietInterval: Duration = LiveOutputAnnouncementPolicy.defaultQuietInterval) {
         self.quietInterval = quietInterval
@@ -67,14 +67,17 @@ public final class LiveOutputAnnouncementPolicy {
             self.pendingStreaming = nil
             effects.append(.cancelScheduled)
         }
-        guard context.permitsAnnouncements else { return effects }
+        guard context.permitsAnnouncements else {
+            recordSuppressed(entries)
+            return effects
+        }
         let newEntries = entries.filter { entry in
             !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && lastAnnouncedTextByEntryID[entry.id] != entry.text
+                && lastHandledTextByEntryID[entry.id] != entry.text
         }
         guard !newEntries.isEmpty else { return effects }
         for entry in newEntries {
-            lastAnnouncedTextByEntryID[entry.id] = entry.text
+            lastHandledTextByEntryID[entry.id] = entry.text
         }
         effects.append(.announce(LiveOutputAnnouncement(text: newEntries.map(\.text).joined(separator: "\n"))))
         return effects
@@ -85,9 +88,12 @@ public final class LiveOutputAnnouncementPolicy {
         context: LiveOutputAnnouncementContext
     ) -> [LiveOutputAnnouncementPolicyEffect] {
         var effects = cancelPendingIfNeeded()
-        guard context.permitsAnnouncements,
-              !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              lastAnnouncedTextByEntryID[entry.id] != entry.text else { return effects }
+        guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return effects }
+        guard context.permitsAnnouncements else {
+            lastHandledTextByEntryID[entry.id] = entry.text
+            return effects
+        }
+        guard lastHandledTextByEntryID[entry.id] != entry.text else { return effects }
         let pending = PendingStreaming(token: UUID(), entryID: entry.id, text: entry.text)
         pendingStreaming = pending
         effects.append(.schedule(LiveOutputAnnouncementSchedule(token: pending.token, delay: quietInterval)))
@@ -101,8 +107,8 @@ public final class LiveOutputAnnouncementPolicy {
         guard let pendingStreaming, pendingStreaming.token == token else { return [] }
         self.pendingStreaming = nil
         guard context.permitsAnnouncements,
-              lastAnnouncedTextByEntryID[pendingStreaming.entryID] != pendingStreaming.text else { return [] }
-        lastAnnouncedTextByEntryID[pendingStreaming.entryID] = pendingStreaming.text
+              lastHandledTextByEntryID[pendingStreaming.entryID] != pendingStreaming.text else { return [] }
+        lastHandledTextByEntryID[pendingStreaming.entryID] = pendingStreaming.text
         return [.announce(LiveOutputAnnouncement(text: pendingStreaming.text))]
     }
 
@@ -115,7 +121,7 @@ public final class LiveOutputAnnouncementPolicy {
     }
 
     public func reset() -> [LiveOutputAnnouncementPolicyEffect] {
-        lastAnnouncedTextByEntryID = [:]
+        lastHandledTextByEntryID = [:]
         return cancelPendingIfNeeded()
     }
 
@@ -123,5 +129,11 @@ public final class LiveOutputAnnouncementPolicy {
         guard pendingStreaming != nil else { return [] }
         pendingStreaming = nil
         return [.cancelScheduled]
+    }
+
+    private func recordSuppressed(_ entries: [AccessibleConversationEntry]) {
+        for entry in entries where !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lastHandledTextByEntryID[entry.id] = entry.text
+        }
     }
 }

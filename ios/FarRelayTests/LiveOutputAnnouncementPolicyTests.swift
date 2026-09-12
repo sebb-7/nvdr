@@ -46,6 +46,10 @@ final class LiveOutputAnnouncementPolicyTests: XCTestCase {
         XCTAssertTrue(policy.completed([output], context: suppressed).isEmpty)
         suppressed.isReadingHistory = false
         XCTAssertTrue(policy.completed([output], context: enabled).isEmpty)
+
+        var changed = output
+        changed.text = "later still"
+        XCTAssertEqual(announcements(in: policy.completed([changed], context: enabled)), ["later still"])
     }
 
     func testInputSnapshotAndVoiceOverGatingSuppressOutput() {
@@ -57,6 +61,18 @@ final class LiveOutputAnnouncementPolicyTests: XCTestCase {
         context.isSnapshotInspecting = true
         XCTAssertTrue(policy.completed([entry("snapshot")], context: context).isEmpty)
         XCTAssertTrue(policy.streaming(entry("off"), context: .init()).isEmpty)
+    }
+
+    func testSuppressedStreamingValueBecomesTheBaseline() {
+        let policy = LiveOutputAnnouncementPolicy()
+        let output = entry("building")
+
+        XCTAssertTrue(policy.streaming(output, context: .init()).isEmpty)
+        XCTAssertTrue(policy.streaming(output, context: enabled).isEmpty)
+
+        var changed = output
+        changed.text = "build complete"
+        _ = schedule(from: policy.streaming(changed, context: enabled))
     }
 
     func testResetCancelsPendingStreaming() {
