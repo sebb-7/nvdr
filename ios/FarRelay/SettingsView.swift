@@ -10,35 +10,6 @@ struct SettingsView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
-                Section("SSH bridge") {
-                    LabeledTextField("Host", text: $settings.sshHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    LabeledIntField("Port", value: $settings.sshPort)
-                    LabeledTextField("User", text: $settings.sshUser)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Picker("Auth", selection: $settings.sshAuthMode) {
-                        ForEach(SSHAuthMode.allCases) { m in
-                            Text(m.label).tag(m)
-                        }
-                    }
-                    if settings.sshAuthMode == .password {
-                        LabeledSecureField("Password", text: $settings.sshPassword)
-                    } else {
-                        PrivateKeyEditor(pem: $settings.sshPrivateKeyPEM)
-                        LabeledSecureField("Key passphrase (blank if none)", text: $settings.sshPrivateKeyPassphrase)
-                    }
-                    LabeledTextField("Remote FarRelay command", text: $settings.remoteFarRelayCommand)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if let error = settings.credentialStorageError {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                }
-
                 Section("NVDA Remote relay") {
                     LabeledTextField("Relay host", text: $settings.relayHost)
                         .textInputAutocapitalization(.never)

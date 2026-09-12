@@ -4,6 +4,7 @@ import SwiftUI
 struct SSHTerminalFeatureView: View {
     @Environment(AppSettings.self) private var settings
     let host: SSHTerminalHost
+    let profile: HostProfile
     @State private var snapshot: AccessibleConversationSnapshot?
     @State private var hasStarted = false
 
@@ -23,7 +24,7 @@ struct SSHTerminalFeatureView: View {
         .task {
             guard !hasStarted else { return }
             hasStarted = true
-            await host.start(settings: settings)
+            await host.start(settings: settings, profile: profile)
         }
         .onDisappear {
             // Pushing a Snapshot hides this view while the terminal must stay

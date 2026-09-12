@@ -1,244 +1,212 @@
 import Foundation
 import Observation
 
-/// Which physical key on the BT keyboard acts as the NVDA modifier on the wire.
-///
-/// CapsLock is the closest analog to NVDA's default Insert and is reachable on
-/// every Bluetooth keyboard. iOS does deliver press/release `UIPress` events
-/// for it as long as the app has focus and VoiceOver isn't intercepting them
-/// — when it does intercept, switch to ``voKeys`` (Ctrl+Option, the standard
-/// VoiceOver convention) which is also commonly used as a screen-reader
-/// modifier and is harder for the OS to swallow.
 enum NvdaModifier: String, CaseIterable, Identifiable, Sendable {
     case capsLock
     case voKeys
-
     var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .capsLock: return "CapsLock"
-        case .voKeys: return "VO keys (Ctrl+Option)"
-        }
-    }
+    var label: String { self == .capsLock ? "CapsLock" : "VO keys (Ctrl+Option)" }
 }
 
-/// What a Mac-style modifier key sends to the slave.
-///
-/// Mac BT keyboards report Option as `keyboardLeftAlt`/`keyboardRightAlt`
-/// and Command as `keyboardLeftGUI`/`keyboardRightGUI`. Out of the box we
-/// map Option → Alt and Command → Alt (the user's preference), but both
-/// are configurable so the layout matches whatever's reachable on the
-/// bridge keyboard.
 enum ModifierMapping: String, CaseIterable, Identifiable, Sendable {
-    case alt
-    case win
-    case ctrl
-    case none
-
+    case alt, win, ctrl, none
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .alt: return "Alt"
-        case .win: return "Windows / GUI"
-        case .ctrl: return "Ctrl"
-        case .none: return "Ignore"
+        case .alt: "Alt"
+        case .win: "Windows / GUI"
+        case .ctrl: "Ctrl"
+        case .none: "Ignore"
         }
     }
 }
 
-/// SSH auth strategy. Many bridge hosts disable password auth entirely, so
-/// key auth needs to be a first-class option.
-enum SSHAuthMode: String, CaseIterable, Identifiable, Sendable {
-    case password
-    case privateKey
-
+enum SSHAuthMode: String, CaseIterable, Identifiable, Codable, Equatable, Sendable {
+    case password, privateKey
     var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .password: return "Password"
-        case .privateKey: return "Private key"
-        }
-    }
+    var label: String { self == .password ? "Password" : "Private key" }
 }
 
 @Observable
 @MainActor
 final class AppSettings {
-    // SSH bridge
-    var sshHost: String
-    var sshPort: Int
-    var sshUser: String
-    var sshAuthMode: SSHAuthMode
-    var sshPassword: String
-    var sshPrivateKeyPEM: String
-    var sshPrivateKeyPassphrase: String
-    var remoteFarRelayCommand: String
-    private(set) var credentialStorageError: String?
-
-    // Relay (forwarded as farrelay --ipc args on the bridge)
+    // Relay settings describe the shared NVDA relay, not one SSH computer.
     var relayHost: String
     var relayPort: Int
     var channel: String
     var fingerprint: String
     var insecure: Bool
-
-    // Local input
     var nvdaModifier: NvdaModifier
     var optionMapping: ModifierMapping
     var commandMapping: ModifierMapping
-
-    // Speech
     var speechRate: Float
     var voiceIdentifier: String?
-
-    // Global terminal controls. Per-host overrides are deferred to HostProfile.
     private(set) var terminalControlKeys: [TerminalControlKey]
+    private(set) var hostProfiles: [HostProfile]
+    var selectedNVDAProfileID: UUID? { didSet { saveSelectedNVDAProfileID() } }
+    private(set) var credentialStorageError: String? = nil
 
     private let defaults: UserDefaults
-    private let credentialPersistence: SSHCredentialPersistence
+    private let profileCredentialPersistence: HostProfileCredentialPersistence
     private let terminalControlKeyStore: TerminalControlKeyStore
+    private let profileStore: HostProfileStore
 
     init(
         defaults: UserDefaults = .standard,
         credentialStore: any CredentialStore = KeychainCredentialStore()
     ) {
-        let d = defaults
-        self.defaults = d
-        credentialPersistence = SSHCredentialPersistence(defaults: d, store: credentialStore)
-        let controlKeyStore = TerminalControlKeyStore(defaults: d, key: Keys.terminalControlKeys)
-        terminalControlKeyStore = controlKeyStore
-        let migrationDiagnostics = credentialPersistence.migrateLegacyValues()
-        sshHost = d.string(forKey: Keys.sshHost) ?? ""
-        sshPort = d.object(forKey: Keys.sshPort) as? Int ?? 22
-        sshUser = d.string(forKey: Keys.sshUser) ?? ""
-        sshAuthMode = SSHAuthMode(rawValue: d.string(forKey: Keys.sshAuthMode) ?? "") ?? .password
-        sshPassword = (try? credentialStore.string(for: SSHCredential.password.account)) ?? ""
-        sshPrivateKeyPEM = (try? credentialStore.string(for: SSHCredential.privateKey.account)) ?? ""
-        sshPrivateKeyPassphrase = (try? credentialStore.string(for: SSHCredential.privateKeyPassphrase.account)) ?? ""
-        remoteFarRelayCommand = d.string(forKey: Keys.remoteFarRelayCommand) ?? "farrelay"
-        relayHost = d.string(forKey: Keys.relayHost) ?? "nvdaremote.com"
-        relayPort = d.object(forKey: Keys.relayPort) as? Int ?? 6837
-        channel = d.string(forKey: Keys.channel) ?? ""
-        fingerprint = d.string(forKey: Keys.fingerprint) ?? ""
-        insecure = d.bool(forKey: Keys.insecure)
-        nvdaModifier = NvdaModifier(rawValue: d.string(forKey: Keys.nvdaModifier) ?? "") ?? .capsLock
-        optionMapping = ModifierMapping(rawValue: d.string(forKey: Keys.optionMapping) ?? "") ?? .win
-        commandMapping = ModifierMapping(rawValue: d.string(forKey: Keys.commandMapping) ?? "") ?? .alt
-        let storedRate = d.object(forKey: Keys.speechRate) as? Double
-        speechRate = Float(storedRate ?? 0.55)
-        voiceIdentifier = d.string(forKey: Keys.voiceIdentifier)
-        switch controlKeyStore.load() {
+        self.defaults = defaults
+        profileCredentialPersistence = HostProfileCredentialPersistence(store: credentialStore)
+        terminalControlKeyStore = TerminalControlKeyStore(defaults: defaults, key: Keys.terminalControlKeys)
+        profileStore = HostProfileStore(defaults: defaults, key: Keys.hostProfiles)
+        relayHost = defaults.string(forKey: Keys.relayHost) ?? "nvdaremote.com"
+        relayPort = defaults.object(forKey: Keys.relayPort) as? Int ?? 6837
+        channel = defaults.string(forKey: Keys.channel) ?? ""
+        fingerprint = defaults.string(forKey: Keys.fingerprint) ?? ""
+        insecure = defaults.bool(forKey: Keys.insecure)
+        nvdaModifier = NvdaModifier(rawValue: defaults.string(forKey: Keys.nvdaModifier) ?? "") ?? .capsLock
+        optionMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.optionMapping) ?? "") ?? .win
+        commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .alt
+        speechRate = Float(defaults.object(forKey: Keys.speechRate) as? Double ?? 0.55)
+        voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
+        selectedNVDAProfileID = UUID(uuidString: defaults.string(forKey: Keys.selectedNVDAProfileID) ?? "")
+        switch terminalControlKeyStore.load() {
         case .uninitialized:
             terminalControlKeys = TerminalControlKey.defaultControls
-            controlKeyStore.save(terminalControlKeys)
-        case .controls(let controls):
-            terminalControlKeys = controls
+            terminalControlKeyStore.save(terminalControlKeys)
+        case .controls(let controls): terminalControlKeys = controls
         case .malformed:
-            // Preserve the user's choice not to restore defaults automatically.
             terminalControlKeys = []
-            controlKeyStore.save([])
+            terminalControlKeyStore.save([])
         }
-        credentialStorageError = migrationDiagnostics.first
+
+        switch profileStore.load() {
+        case .profiles(let profiles): hostProfiles = profiles
+        case .malformed:
+            hostProfiles = []
+            profileStore.save([])
+            credentialStorageError = "Saved computer metadata was unreadable and was reset."
+        case .uninitialized:
+            hostProfiles = []
+            migrateSingleComputerSettings()
+        }
+        if selectedNVDAProfile == nil { selectedNVDAProfileID = hostProfiles.first?.id }
+    }
+
+    var selectedNVDAProfile: HostProfile? {
+        hostProfiles.first { $0.id == selectedNVDAProfileID }
     }
 
     func save() {
-        let d = defaults
-        d.set(sshHost, forKey: Keys.sshHost)
-        d.set(sshPort, forKey: Keys.sshPort)
-        d.set(sshUser, forKey: Keys.sshUser)
-        d.set(sshAuthMode.rawValue, forKey: Keys.sshAuthMode)
-        let secretWrites: [(String, SSHCredential)] = [
-            (sshPassword, .password),
-            (sshPrivateKeyPEM, .privateKey),
-            (sshPrivateKeyPassphrase, .privateKeyPassphrase),
-        ]
-        credentialStorageError = nil
-        for (value, credential) in secretWrites {
-            if case .failure(let error) = credentialPersistence.save(value, for: credential) {
-                credentialStorageError = "Unable to save \(credential.account): \(error.localizedDescription)"
-                break
-            }
-        }
-        d.set(remoteFarRelayCommand, forKey: Keys.remoteFarRelayCommand)
-        d.set(relayHost, forKey: Keys.relayHost)
-        d.set(relayPort, forKey: Keys.relayPort)
-        d.set(channel, forKey: Keys.channel)
-        d.set(fingerprint, forKey: Keys.fingerprint)
-        d.set(insecure, forKey: Keys.insecure)
-        d.set(nvdaModifier.rawValue, forKey: Keys.nvdaModifier)
-        d.set(optionMapping.rawValue, forKey: Keys.optionMapping)
-        d.set(commandMapping.rawValue, forKey: Keys.commandMapping)
-        d.set(Double(speechRate), forKey: Keys.speechRate)
-        if let id = voiceIdentifier {
-            d.set(id, forKey: Keys.voiceIdentifier)
-        } else {
-            d.removeObject(forKey: Keys.voiceIdentifier)
-        }
+        defaults.set(relayHost, forKey: Keys.relayHost)
+        defaults.set(relayPort, forKey: Keys.relayPort)
+        defaults.set(channel, forKey: Keys.channel)
+        defaults.set(fingerprint, forKey: Keys.fingerprint)
+        defaults.set(insecure, forKey: Keys.insecure)
+        defaults.set(nvdaModifier.rawValue, forKey: Keys.nvdaModifier)
+        defaults.set(optionMapping.rawValue, forKey: Keys.optionMapping)
+        defaults.set(commandMapping.rawValue, forKey: Keys.commandMapping)
+        defaults.set(Double(speechRate), forKey: Keys.speechRate)
+        if let voiceIdentifier { defaults.set(voiceIdentifier, forKey: Keys.voiceIdentifier) }
+        else { defaults.removeObject(forKey: Keys.voiceIdentifier) }
         terminalControlKeyStore.save(terminalControlKeys)
+    }
+
+    @discardableResult
+    func saveProfile(_ profile: HostProfile, credentials: HostProfileCredentials) -> Bool {
+        guard case .success = profileCredentialPersistence.save(credentials, for: profile.id) else {
+            credentialStorageError = "Unable to save credentials for \(profile.displayName)."
+            return false
+        }
+        if let index = hostProfiles.firstIndex(where: { $0.id == profile.id }) { hostProfiles[index] = profile }
+        else { hostProfiles.append(profile) }
+        profileStore.save(hostProfiles)
+        if selectedNVDAProfileID == nil { selectedNVDAProfileID = profile.id }
+        credentialStorageError = nil
+        return true
+    }
+
+    @discardableResult
+    func deleteProfile(_ profile: HostProfile) -> Bool {
+        guard case .success = profileCredentialPersistence.deleteCredentials(for: profile.id) else {
+            credentialStorageError = "Unable to remove credentials for \(profile.displayName)."
+            return false
+        }
+        hostProfiles.removeAll { $0.id == profile.id }
+        profileStore.save(hostProfiles)
+        if selectedNVDAProfileID == profile.id { selectedNVDAProfileID = hostProfiles.first?.id }
+        credentialStorageError = nil
+        return true
+    }
+
+    func credentials(for profile: HostProfile) -> HostProfileCredentials? {
+        switch profileCredentialPersistence.load(for: profile.id) {
+        case .success(let credentials): return credentials
+        case .failure:
+            credentialStorageError = "Unable to load credentials for \(profile.displayName)."
+            return nil
+        }
+    }
+
+    func sshSessionConfiguration(for profile: HostProfile) -> SSHSessionConfiguration? {
+        guard profile.isConnectionReady, let credentials = credentials(for: profile) else { return nil }
+        return profile.sshSessionConfiguration(credentials: credentials)
+    }
+
+    /// This is deliberately the legacy NVDA IPC command. `farrelay-host` is a
+    /// distinct structured host protocol command stored on HostProfile.
+    func nvdaBridgeCommand(for profile: HostProfile) -> String {
+        var command = profile.nvdaBridgeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if command.isEmpty { command = "farrelay" }
+        var argv = [command, "--ipc", "--host", relayHost, "--port", String(relayPort), "--channel", channel]
+        if !fingerprint.isEmpty { argv += ["--fingerprint", fingerprint] }
+        if insecure { argv.append("--insecure") }
+        return argv.map(shellQuote).joined(separator: " ")
     }
 
     @discardableResult
     func replaceTerminalControlKeys(_ controls: [TerminalControlKey]) -> Bool {
         guard Set(controls.map(\.id)).count == controls.count,
-              controls.allSatisfy({ $0.validationError(among: controls) == nil }) else {
-            return false
-        }
+              controls.allSatisfy({ $0.validationError(among: controls) == nil }) else { return false }
         terminalControlKeys = controls
         terminalControlKeyStore.save(controls)
         return true
     }
 
-    func restoreDefaultTerminalControlKeys() {
-        _ = replaceTerminalControlKeys(TerminalControlKey.defaultControls)
-    }
+    func restoreDefaultTerminalControlKeys() { _ = replaceTerminalControlKeys(TerminalControlKey.defaultControls) }
 
-    /// Build the remote farrelay --ipc invocation for the SSH exec channel.
-    /// Whitespace / shell-meta in `channel` is shell-quoted so it can't break
-    /// out of the remote command.
-    func remoteCommand() -> String {
-        var argv: [String] = []
-        let cmd = remoteFarRelayCommand.trimmingCharacters(in: .whitespaces)
-        argv.append(cmd.isEmpty ? "farrelay" : cmd)
-        argv.append("--ipc")
-        argv.append("--host"); argv.append(relayHost)
-        argv.append("--port"); argv.append(String(relayPort))
-        argv.append("--channel"); argv.append(channel)
-        if !fingerprint.isEmpty {
-            argv.append("--fingerprint"); argv.append(fingerprint)
-        }
-        if insecure {
-            argv.append("--insecure")
-        }
-        return argv.map(shellQuote).joined(separator: " ")
-    }
-
-    /// Reuses the saved SSH endpoint and authentication for app features that
-    /// open a normal SSH session rather than the NVDA IPC exec channel.
-    func sshSessionConfiguration() -> SSHSessionConfiguration {
-        let authentication: SSHAuthenticationConfiguration
-        switch sshAuthMode {
-        case .password:
-            authentication = .password(sshPassword)
-        case .privateKey:
-            authentication = .privateKey(
-                pem: sshPrivateKeyPEM,
-                passphrase: sshPrivateKeyPassphrase
-            )
-        }
-        return SSHSessionConfiguration(
-            host: sshHost,
-            port: sshPort,
-            username: sshUser,
-            authentication: authentication
+    private func migrateSingleComputerSettings() {
+        let address = defaults.string(forKey: Keys.legacySSHHost) ?? ""
+        let username = defaults.string(forKey: Keys.legacySSHUser) ?? ""
+        guard !address.isEmpty || !username.isEmpty else { profileStore.save([]); return }
+        let profile = HostProfile(
+            displayName: "Imported Computer",
+            address: address,
+            port: defaults.object(forKey: Keys.legacySSHPort) as? Int ?? 22,
+            username: username,
+            authenticationMode: SSHAuthMode(rawValue: defaults.string(forKey: Keys.legacySSHAuthMode) ?? "") ?? .password,
+            farRelayHostCommand: "farrelay-host",
+            nvdaBridgeCommand: defaults.string(forKey: Keys.legacyRemoteCommand) ?? "farrelay"
         )
+        switch profileCredentialPersistence.migrateLegacyCredentials(to: profile.id, defaults: defaults) {
+        case .success:
+            hostProfiles = [profile]
+            profileStore.save(hostProfiles)
+            [Keys.legacySSHHost, Keys.legacySSHPort, Keys.legacySSHUser,
+             Keys.legacySSHAuthMode, Keys.legacyRemoteCommand].forEach(defaults.removeObject(forKey:))
+        case .failure(let error):
+            credentialStorageError = "Unable to migrate the imported computer credentials: \(error.localizedDescription)"
+        }
+    }
+
+    private func saveSelectedNVDAProfileID() {
+        if let selectedNVDAProfileID { defaults.set(selectedNVDAProfileID.uuidString, forKey: Keys.selectedNVDAProfileID) }
+        else { defaults.removeObject(forKey: Keys.selectedNVDAProfileID) }
     }
 
     private enum Keys {
-        static let sshHost = "farrelay.sshHost"
-        static let sshPort = "farrelay.sshPort"
-        static let sshUser = "farrelay.sshUser"
-        static let sshAuthMode = "farrelay.sshAuthMode"
-        static let remoteFarRelayCommand = "farrelay.remoteCommand"
+        static let hostProfiles = "farrelay.hostProfiles"
+        static let selectedNVDAProfileID = "farrelay.selectedNVDAProfileID"
         static let relayHost = "farrelay.relayHost"
         static let relayPort = "farrelay.relayPort"
         static let channel = "farrelay.channel"
@@ -250,15 +218,16 @@ final class AppSettings {
         static let speechRate = "farrelay.speechRate"
         static let voiceIdentifier = "farrelay.voiceIdentifier"
         static let terminalControlKeys = "farrelay.terminalControlKeys"
+        static let legacySSHHost = "farrelay.sshHost"
+        static let legacySSHPort = "farrelay.sshPort"
+        static let legacySSHUser = "farrelay.sshUser"
+        static let legacySSHAuthMode = "farrelay.sshAuthMode"
+        static let legacyRemoteCommand = "farrelay.remoteCommand"
     }
 }
 
-/// POSIX single-quote shell quoting. Equivalent to Python's `shlex.quote`.
-private func shellQuote(_ s: String) -> String {
-    if s.isEmpty { return "''" }
-    let safe = s.allSatisfy { ch in
-        ch.isLetter || ch.isNumber || "@%+=:,./-_".contains(ch)
-    }
-    if safe { return s }
-    return "'" + s.replacing("'", with: "'\\''") + "'"
+private func shellQuote(_ value: String) -> String {
+    if value.isEmpty { return "''" }
+    if value.allSatisfy({ $0.isLetter || $0.isNumber || "@%+=:,./-_".contains($0) }) { return value }
+    return "'" + value.replacing("'", with: "'\\''") + "'"
 }

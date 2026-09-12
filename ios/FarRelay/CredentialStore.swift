@@ -140,3 +140,124 @@ struct SSHCredentialPersistence {
         }
     }
 }
+
+/// Credentials owned by one saved computer. The profile UUID is part of every
+/// Keychain account name so credentials can never be read through another
+/// profile's settings or serialized with the profile metadata.
+enum HostProfileCredential: CaseIterable {
+    case password
+    case privateKey
+    case privateKeyPassphrase
+
+    func account(for profileID: UUID) -> String {
+        "ssh.profile.\(profileID.uuidString.lowercased()).\(suffix)"
+    }
+
+    private var suffix: String {
+        switch self {
+        case .password: "password"
+        case .privateKey: "privateKey"
+        case .privateKeyPassphrase: "privateKeyPassphrase"
+        }
+    }
+
+    fileprivate var legacyCredential: SSHCredential {
+        switch self {
+        case .password: .password
+        case .privateKey: .privateKey
+        case .privateKeyPassphrase: .privateKeyPassphrase
+        }
+    }
+}
+
+struct HostProfileCredentials: Equatable, Sendable {
+    var password: String = ""
+    var privateKeyPEM: String = ""
+    var privateKeyPassphrase: String = ""
+}
+
+struct HostProfileCredentialPersistence {
+    let store: CredentialStore
+
+    func load(for profileID: UUID) -> Result<HostProfileCredentials, Error> {
+        Result {
+            HostProfileCredentials(
+                password: try store.string(for: HostProfileCredential.password.account(for: profileID)) ?? "",
+                privateKeyPEM: try store.string(for: HostProfileCredential.privateKey.account(for: profileID)) ?? "",
+                privateKeyPassphrase: try store.string(for: HostProfileCredential.privateKeyPassphrase.account(for: profileID)) ?? ""
+            )
+        }
+    }
+
+    func save(_ credentials: HostProfileCredentials, for profileID: UUID) -> Result<Void, Error> {
+        Result {
+            try save(credentials.password, credential: .password, profileID: profileID)
+            try save(credentials.privateKeyPEM, credential: .privateKey, profileID: profileID)
+            try save(credentials.privateKeyPassphrase, credential: .privateKeyPassphrase, profileID: profileID)
+        }
+    }
+
+    func deleteCredentials(for profileID: UUID) -> Result<Void, Error> {
+        Result {
+            for credential in HostProfileCredential.allCases {
+                try store.removeValue(for: credential.account(for: profileID))
+            }
+        }
+    }
+
+    /// Copies the former single-profile secrets only after every destination
+    /// value has been written and read back. The old accounts are then removed
+    /// so they cannot become a second writable profile source.
+    func migrateLegacyCredentials(to profileID: UUID, defaults: UserDefaults) -> Result<Void, Error> {
+        Result {
+            var copied: [(HostProfileCredential, LegacySource)] = []
+            for credential in HostProfileCredential.allCases {
+                let source: LegacySource
+                if let value = try store.string(for: credential.legacyCredential.account) {
+                    source = .keychain(value)
+                } else if let value = defaults.string(forKey: credential.legacyCredential.legacyDefaultsKey) {
+                    source = .defaults(value)
+                } else {
+                    continue
+                }
+                let value = source.value
+                let destination = credential.account(for: profileID)
+                if try store.string(for: destination) == nil {
+                    try store.store(value, for: destination)
+                }
+                guard try store.string(for: destination) == value else {
+                    throw CredentialStoreError.invalidStoredValue
+                }
+                copied.append((credential, value))
+            }
+            for (credential, source) in copied {
+                switch source {
+                case .keychain:
+                    try store.removeValue(for: credential.legacyCredential.account)
+                case .defaults:
+                    defaults.removeObject(forKey: credential.legacyCredential.legacyDefaultsKey)
+                }
+            }
+        }
+    }
+
+    private func save(_ value: String, credential: HostProfileCredential, profileID: UUID) throws {
+        let account = credential.account(for: profileID)
+        if value.isEmpty {
+            try store.removeValue(for: account)
+        } else {
+            try store.store(value, for: account)
+        }
+    }
+
+    private enum LegacySource {
+        case keychain(String)
+        case defaults(String)
+
+        var value: String {
+            switch self {
+            case .keychain(let value), .defaults(let value): value
+            }
+        }
+    }
+}

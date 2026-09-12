@@ -87,16 +87,14 @@ final class SSHTerminalHost {
         }
     }
 
-    /// Starts the terminal using the same saved endpoint, credentials, and
-    /// host-key policy as the existing NVDA bridge connection.
-    func start(settings: AppSettings) async {
-        let host = settings.sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let user = settings.sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty, !user.isEmpty else {
-            fail("Set SSH host and user in Settings before opening the terminal.")
+    /// Starts a terminal for the explicitly selected computer. Terminal
+    /// transport does not consult global SSH preferences.
+    func start(settings: AppSettings, profile: HostProfile) async {
+        guard let configuration = settings.sshSessionConfiguration(for: profile) else {
+            fail("Select a complete computer profile before opening the terminal.")
             return
         }
-        await start(configuration: settings.sshSessionConfiguration())
+        await start(configuration: configuration)
     }
 
     /// A configuration entry point keeps lifecycle tests deterministic without

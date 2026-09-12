@@ -1,191 +1,182 @@
 import SwiftUI
 
 struct RootView: View {
-    @Environment(AppSettings.self) private var settings
     @Environment(BridgeClient.self) private var bridge
     @Environment(SSHTerminalHost.self) private var terminalHost
+    @State private var selectedTab: AppShellTab = .home
     @State private var showingSettings = false
 
     var body: some View {
-        @Bindable var bridge = bridge
-        NavigationStack {
-            VStack(spacing: 0) {
-                StatusHeader()
-                ConnectionControls(showingSettings: $showingSettings)
-                Divider()
-                TerminalEntryPoint(host: terminalHost)
-                Divider()
-                ForwardingPanel()
-                Divider()
-                LastSpeechPanel()
-                Divider()
-                LogPanel()
-                // Capture sits at the bottom and is always present so it can
-                // hold first-responder. Zero height — it doesn't render.
-                KeyboardCapture(bridge: bridge, settings: settings)
-                    .frame(height: 0)
+        TabView(selection: $selectedTab) {
+            Tab("Home", systemImage: "house", value: .home) {
+                NavigationStack { HomeTabView(host: terminalHost, showingSettings: $showingSettings) }
             }
-            .navigationTitle("FarRelay")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Settings", systemImage: "gear") { showingSettings = true }
-                }
+            Tab("NVDA", systemImage: "accessibility", value: .nvda) {
+                NavigationStack { NVDATabView() }
             }
-            .sheet(isPresented: $showingSettings) {
-                SettingsView()
+            Tab("Terminals", systemImage: "terminal", value: .terminals) {
+                NavigationStack { TerminalsTabView(host: terminalHost) }
+            }
+            Tab("Agents", systemImage: "person.2", value: .agents) {
+                NavigationStack { EmptyFeatureView(title: "Agents", message: "No agents configured yet.") }
+            }
+            Tab("Assistant", systemImage: "sparkles", value: .assistant) {
+                NavigationStack { EmptyFeatureView(title: "Assistant", message: "Assistant is not configured yet.") }
             }
         }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            if oldTab == .nvda, newTab != .nvda { bridge.suspendInputForInactiveContext() }
+        }
+        .sheet(isPresented: $showingSettings) { SettingsView() }
     }
 }
 
-private struct TerminalEntryPoint: View {
+private struct HomeTabView: View {
+    @Environment(AppSettings.self) private var settings
+    let host: SSHTerminalHost
+    @Binding var showingSettings: Bool
+    @State private var addingProfile = false
+
+    var body: some View {
+        List {
+            if settings.hostProfiles.isEmpty {
+                ContentUnavailableView("No computers", systemImage: "desktopcomputer", description: Text("Add a computer to connect over SSH."))
+            } else {
+                Section("Computers") {
+                    ForEach(settings.hostProfiles) { profile in
+                        NavigationLink {
+                            HostProfileEditorView(profile: profile)
+                        } label: {
+                            VStack(alignment: .leading) {
+                                Text(profile.displayName)
+                                Text("\(profile.username)@\(profile.address):\(profile.port)")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                        NavigationLink("Open Terminal", systemImage: "terminal") {
+                            SSHTerminalFeatureView(host: host, profile: profile)
+                        }
+                    }
+                    .onDelete { indexes in
+                        for index in indexes { _ = settings.deleteProfile(settings.hostProfiles[index]) }
+                    }
+                }
+            }
+            if let error = settings.credentialStorageError {
+                Text(error).font(.footnote).foregroundStyle(.red)
+            }
+        }
+        .navigationTitle("FarRelay")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Settings", systemImage: "gear") { showingSettings = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Add Computer", systemImage: "plus") { addingProfile = true }
+            }
+        }
+        .sheet(isPresented: $addingProfile) { HostProfileEditorView(profile: nil) }
+    }
+}
+
+private struct TerminalsTabView: View {
+    @Environment(AppSettings.self) private var settings
     let host: SSHTerminalHost
 
     var body: some View {
-        NavigationLink {
-            SSHTerminalFeatureView(host: host)
-        } label: {
-            Label("Open SSH terminal", systemImage: "terminal")
-        }
-        .accessibilityLabel("Open SSH terminal")
-        .accessibilityHint("Connect using the SSH settings and open an interactive terminal.")
-        .padding()
-    }
-}
-
-private struct StatusHeader: View {
-    @Environment(BridgeClient.self) private var bridge
-
-    var body: some View {
-        HStack {
-            Circle()
-                .fill(color)
-                .frame(width: 12, height: 12)
-                .accessibilityHidden(true)
-            Text(label)
-                .bold()
-            Spacer()
-        }
-        .padding()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Status: \(label)")
-    }
-
-    private var label: String {
-        switch bridge.status {
-        case .idle: return "Idle"
-        case .connecting: return "Connecting"
-        case .authenticating: return "Authenticating"
-        case .reconnecting(let attempt): return "Reconnecting (attempt \(attempt))"
-        case .ready: return "Ready"
-        case .nvdaNotConnected: return "Connected, no NVDA on channel"
-        case .disconnected(let r): return "Disconnected (\(r))"
-        case .failed(let m): return "Failed: \(m)"
-        }
-    }
-
-    private var color: Color {
-        switch bridge.status {
-        case .ready: return .green
-        case .nvdaNotConnected: return .yellow
-        case .connecting, .authenticating, .reconnecting: return .orange
-        case .failed: return .red
-        case .disconnected, .idle: return .secondary
-        }
-    }
-}
-
-private struct ConnectionControls: View {
-    @Environment(AppSettings.self) private var settings
-    @Environment(BridgeClient.self) private var bridge
-    @Binding var showingSettings: Bool
-
-    var body: some View {
-        HStack {
-            Button(connectLabel, systemImage: "network") {
-                if connected { bridge.stop() } else { bridge.start(settings) }
-            }
-            .buttonStyle(.borderedProminent)
-            Spacer()
-            Button("Edit Settings", systemImage: "slider.horizontal.3") {
-                showingSettings = true
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(.horizontal)
-    }
-
-    private var connected: Bool {
-        switch bridge.status {
-        case .ready, .connecting, .authenticating, .reconnecting, .nvdaNotConnected: return true
-        default: return false
-        }
-    }
-
-    private var connectLabel: String { connected ? "Disconnect" : "Connect" }
-}
-
-private struct ForwardingPanel: View {
-    @Environment(BridgeClient.self) private var bridge
-
-    var body: some View {
-        @Bindable var bridge = bridge
-        VStack(alignment: .leading) {
-            Toggle("Forward keystrokes to slave", isOn: $bridge.forwardingEnabled)
-                .disabled(bridge.status != .ready && bridge.status != .nvdaNotConnected)
-            Text(hint)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-    }
-
-    private var hint: String {
-        switch bridge.status {
-        case .ready, .nvdaNotConnected:
-            return "Toggle on, then a Bluetooth keyboard press is sent to the remote NVDA. Toggle off to interact with the iPhone normally."
-        case .reconnecting:
-            return "Reconnecting. Keyboard forwarding is temporarily paused."
-        default:
-            return "Connect first."
-        }
-    }
-}
-
-private struct LastSpeechPanel: View {
-    @Environment(BridgeClient.self) private var bridge
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("Last spoken")
-                .font(.headline)
-            Text(bridge.lastSpeech.isEmpty ? "—" : bridge.lastSpeech)
-                .font(.body.monospaced())
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding()
-    }
-}
-
-private struct LogPanel: View {
-    @Environment(BridgeClient.self) private var bridge
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("Log")
-                .font(.headline)
-                .padding(.horizontal)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(bridge.log.indices, id: \.self) { i in
-                        Text(bridge.log[i])
-                            .font(.caption.monospaced())
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        List {
+            if settings.hostProfiles.isEmpty {
+                ContentUnavailableView("No computers", systemImage: "terminal", description: Text("Add a computer on the Home tab before opening a terminal."))
+            } else {
+                Section("Choose a computer") {
+                    ForEach(settings.hostProfiles) { profile in
+                        NavigationLink {
+                            SSHTerminalFeatureView(host: host, profile: profile)
+                        } label: {
+                            Label(profile.displayName, systemImage: "terminal")
+                        }
                     }
                 }
-                .padding(.horizontal)
+                Section {
+                    Text("FarRelay currently keeps one active terminal session. Opening another computer replaces that active session.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
-        .frame(maxHeight: .infinity)
+        .navigationTitle("Terminals")
+    }
+}
+
+private struct NVDATabView: View {
+    @Environment(AppSettings.self) private var settings
+    @Environment(BridgeClient.self) private var bridge
+
+    var body: some View {
+        @Bindable var settings = settings
+        Form {
+            Section("Computer") {
+                if settings.hostProfiles.isEmpty {
+                    Text("Add a computer on the Home tab before connecting NVDA.")
+                } else {
+                    Picker("Computer", selection: $settings.selectedNVDAProfileID) {
+                        ForEach(settings.hostProfiles) { profile in
+                            Text(profile.displayName).tag(Optional(profile.id))
+                        }
+                    }
+                    Button(isConnected ? "Disconnect" : "Connect", systemImage: "network") {
+                        if isConnected { bridge.stop() }
+                        else if let profile = settings.selectedNVDAProfile { bridge.start(settings: settings, profile: profile) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            Section("Status") { Text(statusLabel) }
+            Section("Keyboard forwarding") {
+                Toggle("Forward keystrokes to slave", isOn: $bridge.forwardingEnabled)
+                    .disabled(!isForwardingAvailable)
+                Text(isForwardingAvailable ? "Turn this off to use the keyboard locally." : "Connect first.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Last spoken") { Text(bridge.lastSpeech.isEmpty ? "—" : bridge.lastSpeech) }
+            Section("Log") {
+                ForEach(bridge.log.indices, id: \.self) { Text(bridge.log[$0]).font(.caption.monospaced()) }
+            }
+        }
+        .navigationTitle("NVDA")
+        .overlay { KeyboardCapture(bridge: bridge, settings: settings).frame(height: 0) }
+        .onDisappear { bridge.suspendInputForInactiveContext() }
+    }
+
+    private var isConnected: Bool {
+        switch bridge.status {
+        case .ready, .connecting, .authenticating, .reconnecting, .nvdaNotConnected: true
+        default: false
+        }
+    }
+
+    private var isForwardingAvailable: Bool {
+        switch bridge.status { case .ready, .nvdaNotConnected: true; default: false }
+    }
+
+    private var statusLabel: String {
+        switch bridge.status {
+        case .idle: "Idle"
+        case .connecting: "Connecting"
+        case .authenticating: "Authenticating"
+        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"
+        case .ready: "Ready"
+        case .nvdaNotConnected: "Connected, no NVDA on channel"
+        case .disconnected(let reason): "Disconnected (\(reason))"
+        case .failed(let message): "Failed: \(message)"
+        }
+    }
+}
+
+private struct EmptyFeatureView: View {
+    let title: String
+    let message: String
+    var body: some View {
+        ContentUnavailableView(title, systemImage: "tray", description: Text(message))
+            .navigationTitle(title)
     }
 }

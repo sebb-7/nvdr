@@ -66,21 +66,24 @@ final class BridgeClient {
         self.speech = speech
     }
 
-    func start(_ settings: AppSettings) {
+    func start(settings: AppSettings, profile: HostProfile) {
         stop()
         driverGeneration += 1
         let generation = driverGeneration
-        let host = settings.sshHost
-        let port = settings.sshPort
-        let user = settings.sshUser
-        let remote = settings.remoteCommand()
+        let host = profile.address
+        let port = profile.port
+        let user = profile.username
+        let remote = settings.nvdaBridgeCommand(for: profile)
 
-        guard !host.isEmpty, !user.isEmpty, !settings.channel.isEmpty else {
-            status = .failed(message: "Set SSH host, user, and channel in Settings.")
+        guard profile.isConnectionReady, !settings.channel.isEmpty else {
+            status = .failed(message: "Select a complete computer profile and relay channel.")
             return
         }
 
-        let sessionConfiguration = settings.sshSessionConfiguration()
+        guard let sessionConfiguration = settings.sshSessionConfiguration(for: profile) else {
+            status = .failed(message: "Unable to load the selected computer credentials.")
+            return
+        }
 
         // Validate and summarize authentication up front so failures are
         // immediate and diagnostics still include the offered key fingerprint.
@@ -125,6 +128,12 @@ final class BridgeClient {
         Task { await activeSupervisor?.stop() }
         if case .idle = status { return }
         status = .disconnected(reason: "stopped")
+    }
+
+    /// Leaving the NVDA tab must release any remote keys before capture is no
+    /// longer mounted. Keep the SSH connection intact but stop forwarding.
+    func suspendInputForInactiveContext() {
+        forwardingEnabled = false
     }
 
     /// Send an IPC command to the bridge. Silently dropped if not connected —
