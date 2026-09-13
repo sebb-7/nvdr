@@ -65,12 +65,66 @@ struct HostProcessInfo: Codable, Sendable, Equatable {
     let status: HostProcessStatus?
 }
 
+/// Strict VoiceOver cursor movement values accepted by `voiceover.move`.
+enum VoiceOverMoveDirection: String, Codable, Sendable, Equatable {
+    case left
+    case right
+    case up
+    case down
+    case into
+    case out
+}
+
+/// Structured `voiceover.status` result. Availability is runtime state, not capability advertisement.
+struct VoiceOverStatus: Codable, Sendable, Equatable {
+    let platformSupported: Bool
+    let available: Bool
+    let voiceOverRunning: Bool
+    let appleScriptBridgeUsable: Bool
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case platformSupported = "platform_supported"
+        case available
+        case voiceOverRunning = "voiceover_running"
+        case appleScriptBridgeUsable = "applescript_bridge_usable"
+        case message
+    }
+}
+
+/// Structured `voiceover.move` result.
+struct VoiceOverMoveResult: Codable, Sendable, Equatable {
+    let moved: Bool
+}
+
+/// Structured `voiceover.press` result.
+struct VoiceOverPressResult: Codable, Sendable, Equatable {
+    let pressed: Bool
+}
+
+/// Public VoiceOver feedback. Missing fields are omitted rather than invented.
+struct VoiceOverState: Codable, Sendable, Equatable {
+    let lastSpokenPhrase: String?
+    let voiceOverCursorText: String?
+    let keyboardCursorText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case lastSpokenPhrase = "last_spoken_phrase"
+        case voiceOverCursorText = "voiceover_cursor_text"
+        case keyboardCursorText = "keyboard_cursor_text"
+    }
+}
+
 /// The narrow, typed Apple-facing API for the FarRelay Host v1 protocol.
 protocol HostClientProtocol: Sendable {
     func capabilities() async throws -> HostCapabilities
     func hostInfo() async throws -> HostInfo
     func processes() async throws -> [HostProcessInfo]
     func processInfo(pid: UInt32) async throws -> HostProcessInfo
+    func voiceOverStatus() async throws -> VoiceOverStatus
+    func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult
+    func voiceOverPress() async throws -> VoiceOverPressResult
+    func voiceOverState() async throws -> VoiceOverState
 }
 
 /// Errors produced while framing, validating, or correlating Host v1 messages.
@@ -180,6 +234,22 @@ actor FarRelayHostClient: HostClientProtocol {
 
     func processInfo(pid: UInt32) async throws -> HostProcessInfo {
         try await request(operation: "process.info", parameters: HostProcessInfoParameters(pid: pid))
+    }
+
+    func voiceOverStatus() async throws -> VoiceOverStatus {
+        try await request(operation: "voiceover.status", parameters: HostEmptyParameters())
+    }
+
+    func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult {
+        try await request(operation: "voiceover.move", parameters: HostVoiceOverMoveParameters(direction: direction))
+    }
+
+    func voiceOverPress() async throws -> VoiceOverPressResult {
+        try await request(operation: "voiceover.press", parameters: HostEmptyParameters())
+    }
+
+    func voiceOverState() async throws -> VoiceOverState {
+        try await request(operation: "voiceover.state", parameters: HostEmptyParameters())
     }
 
     /// Starts the reader before a caller begins a long-lived operation.
@@ -467,4 +537,8 @@ private struct HostEmptyParameters: Encodable, Sendable {}
 
 private struct HostProcessInfoParameters: Encodable, Sendable {
     let pid: UInt32
+}
+
+private struct HostVoiceOverMoveParameters: Encodable, Sendable {
+    let direction: VoiceOverMoveDirection
 }

@@ -195,6 +195,83 @@ final class FarRelayHostClientTests: XCTestCase {
         await assertError(task, equals: .cancelled)
     }
 
+    func testEncodesVoiceOverStatusMovePressAndDecodesState() async throws {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+
+        let statusTask = Task { try await client.voiceOverStatus() }
+        let statusRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(statusRequest.version, 1)
+        XCTAssertEqual(statusRequest.operation, "voiceover.status")
+        XCTAssertNotNil(statusRequest.requestID)
+        transport.sendSuccess(requestID: statusRequest.requestID, result: voiceOverStatusResult())
+        XCTAssertEqual(try await statusTask.value, voiceOverStatusResult())
+
+        let directions: [VoiceOverMoveDirection] = [.left, .right, .up, .down, .into, .out]
+        for direction in directions {
+            let moveTask = Task { try await client.voiceOverMove(direction) }
+            let moveRequest = try await nextRequest(from: transport)
+            XCTAssertEqual(moveRequest.operation, "voiceover.move")
+            XCTAssertEqual(moveRequest.direction, direction.rawValue)
+            XCTAssertNil(moveRequest.script)
+            transport.sendSuccess(
+                requestID: moveRequest.requestID,
+                result: VoiceOverMoveResult(moved: true)
+            )
+            XCTAssertEqual(try await moveTask.value, VoiceOverMoveResult(moved: true))
+        }
+
+        let pressTask = Task { try await client.voiceOverPress() }
+        let pressRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(pressRequest.operation, "voiceover.press")
+        XCTAssertNil(pressRequest.script)
+        transport.sendSuccess(
+            requestID: pressRequest.requestID,
+            result: VoiceOverPressResult(pressed: true)
+        )
+        XCTAssertEqual(try await pressTask.value, VoiceOverPressResult(pressed: true))
+
+        let stateTask = Task { try await client.voiceOverState() }
+        let stateRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(stateRequest.operation, "voiceover.state")
+        transport.sendSuccess(requestID: stateRequest.requestID, result: voiceOverStateResult())
+        XCTAssertEqual(try await stateTask.value, voiceOverStateResult())
+    }
+
+    func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+        let task = Task { try await client.voiceOverMove(.right) }
+        let request = try await nextRequest(from: transport)
+        XCTAssertEqual(request.operation, "voiceover.move")
+        XCTAssertEqual(request.direction, "right")
+        transport.sendError(
+            requestID: request.requestID,
+            code: "voiceover_control_unavailable",
+            message: "VoiceOver AppleScript control is not currently usable"
+        )
+        await assertError(task, equals: .hostError(
+            code: "voiceover_control_unavailable",
+            message: "VoiceOver AppleScript control is not currently usable"
+        ))
+    }
+
+    func testVoiceOverUnsupportedOperationIsStructured() async throws {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+        let task = Task { try await client.voiceOverStatus() }
+        let request = try await nextRequest(from: transport)
+        transport.sendError(
+            requestID: request.requestID,
+            code: "unsupported_operation",
+            message: "unsupported operation: voiceover.status"
+        )
+        await assertError(task, equals: .hostError(
+            code: "unsupported_operation",
+            message: "unsupported operation: voiceover.status"
+        ))
+    }
+
     func testWriteFailureIsStructured() async throws {
         let transport = FakeHostTransport(writeFailure: FakeHostTransportError.writeFailed)
         let client = FarRelayHostClient(transport: transport)
@@ -255,6 +332,24 @@ final class FarRelayHostClientTests: XCTestCase {
 
     private func processResult() -> HostProcessInfo {
         HostProcessInfo(pid: 42, name: "relay", status: .unknown)
+    }
+
+    private func voiceOverStatusResult() -> VoiceOverStatus {
+        VoiceOverStatus(
+            platformSupported: true,
+            available: true,
+            voiceOverRunning: true,
+            appleScriptBridgeUsable: true,
+            message: nil
+        )
+    }
+
+    private func voiceOverStateResult() -> VoiceOverState {
+        VoiceOverState(
+            lastSpokenPhrase: "Mail, button",
+            voiceOverCursorText: nil,
+            keyboardCursorText: "Inbox"
+        )
     }
 
     private func successData<Result: Encodable>(requestID: String, result: Result) throws -> Data {
@@ -403,6 +498,8 @@ private struct WireRequest: Decodable {
     let params: WireParameters?
 
     var pid: UInt32? { params?.pid }
+    var direction: String? { params?.direction }
+    var script: String? { params?.script }
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -414,6 +511,8 @@ private struct WireRequest: Decodable {
 
 private struct WireParameters: Decodable {
     let pid: UInt32?
+    let direction: String?
+    let script: String?
 }
 
 private struct WireResponse<Result: Encodable>: Encodable {

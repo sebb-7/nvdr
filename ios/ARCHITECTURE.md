@@ -309,7 +309,9 @@ than operating a hidden session. Future controller bindings may target a
 `TerminalSession` ID. They must not guess from titles or list positions.
 
 Future Mac VoiceOver remote-control work, Agents, and Assistant remain after
-this phase. Future controller adapters also consume the stable terminal-scoped
+this phase. The host now exposes a typed VoiceOver capability seam; iPhone
+Remote Control UI, RemoteIntent-to-Mac mapping, and controller input are still
+later slices. Future controller adapters also consume the stable terminal-scoped
 Control Key IDs created with Terminal Control Keys, not labels or list
 positions.
 
@@ -350,12 +352,36 @@ a parallel host capability with independent state and lifetime.
 long-lived `farrelay-host` exec channel. `FarRelayHostClient` sits above the
 generic byte-oriented `SSHExecTransport`: it owns version-1 NDJSON framing,
 request-ID correlation, typed Codable results, structured errors, and bounded
-stderr diagnostics. `SSHSession` remains unaware of the Host protocol and no
-Host client is connected to UI, terminal, NVDA, or remote-intent routing.
+stderr diagnostics. `SSHSession` remains unaware of the Host protocol. VoiceOver
+operations are structured `farrelay-host` exec requests; they are not sent over
+a PTY and do not use a second SSH connection system.
+
+Mac remote control is conceptually one HostProfile capability, analogous to NVDA
+Remote on Windows. This phase adds only the host/protocol seam and typed client
+operations. It does not add a Remote Control screen, RemoteIntent mapping,
+controller input, AXUIElement navigation, or CGEvent injection.
+
+```text
+FarRelay iPhone
+    ↓
+SSH exec
+farrelay-host
+    ↓
+VoiceOverProvider
+    ↓
+macOS VoiceOver AppleScript bridge
+```
+
+VoiceOver remains the actual screen reader. FarRelay does not recreate VoiceOver
+navigation. AXUIElement is a future fallback/verification layer. CGEvent is a
+future raw-input fallback. Physical Mac validation is required before claiming
+that real VoiceOver control works; GitHub-hosted macOS runners are not a
+substitute.
 
 ```text
 FarRelay Host v1                 ✓
 Apple HostClient transport       ✓
+macOS VoiceOver host operations  ✓ (protocol/client seam; physical proof pending)
 HostTarget                       NEXT
 ```
 

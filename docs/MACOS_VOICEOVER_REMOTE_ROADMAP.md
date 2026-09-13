@@ -269,9 +269,8 @@ Implemented:
 - Windows/Linux unsupported-platform results
 - `voiceover.status`, `voiceover.move`, `voiceover.press`, `voiceover.state`
 - platform-sensitive capability advertisement
-- mocked/deterministic host tests
-
-Typed iOS `FarRelayHostClient` operations are the following commit in this branch.
+- typed iOS `FarRelayHostClient` operations
+- mocked/deterministic host and HostClient tests
 
 Explicitly deferred: AXUIElement, CGEvent, RemoteIntent/controller mapping, keyboard passthrough, voice commands, screen/audio streaming, and automatic VoiceOver/AppleScript enablement.
 
