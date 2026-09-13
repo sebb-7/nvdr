@@ -5,13 +5,14 @@ struct RootView: View {
     @Environment(BridgeClient.self) private var bridge
     @Environment(TerminalSessionManager.self) private var terminals
     @Environment(InteractionFeedback.self) private var interactionFeedback
+    @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @State private var selectedTab: AppShellTab = .home
     @State private var showingSettings = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: "house", value: .home) {
-                NavigationStack { HomeTabView(showingSettings: $showingSettings) }
+                HomeTabView(showingSettings: $showingSettings)
             }
             Tab("Terminals", systemImage: "terminal", value: .terminals) {
                 NavigationStack { TerminalsTabView() }
@@ -27,49 +28,164 @@ struct RootView: View {
             if newTab != .home { bridge.suspendInputForInactiveContext() }
             terminals.setTerminalInteractionActive(false)
         }
+        .onChange(of: terminals.lastConnectionAnnouncement?.id) { _, _ in
+            guard isVoiceOverEnabled, let text = terminals.lastConnectionAnnouncement?.text else { return }
+            AccessibilityNotification.Announcement(text).post()
+        }
+        .onChange(of: terminals.lastInteractionFeedback?.id) { _, _ in
+            if let request = terminals.lastInteractionFeedback {
+                interactionFeedback.play(request.kind)
+            }
+        }
+        .userFacingIssueAlert(
+            Binding(
+                get: { terminals.presentedIssue },
+                set: { if $0 == nil { terminals.dismissPresentedIssue() } }
+            ),
+            onRetry: { issue in
+                Task { await terminals.retryPresentedIssue(issue, settings: settings) }
+            }
+        )
         .sheet(isPresented: $showingSettings) { SettingsView() }
         .interactionHaptics(interactionFeedback, enabled: settings.hapticFeedbackEnabled)
     }
 }
 
+private enum HomeDestination: Hashable {
+    case computer(UUID)
+    case nvda(UUID)
+    case terminal(UUID)
+}
+
 private struct HomeTabView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(TerminalSessionManager.self) private var terminals
     @Binding var showingSettings: Bool
     @State private var addingProfile = false
+    @State private var path = NavigationPath()
+    @State private var pendingDeletion: HostProfile?
 
     var body: some View {
-        List {
-            if settings.hostProfiles.isEmpty {
-                ContentUnavailableView("No computers", systemImage: "desktopcomputer", description: Text("Add a computer to connect over SSH."))
-            } else {
-                Section("Computers") {
-                    ForEach(settings.hostProfiles) { profile in
-                        NavigationLink {
-                            HostProfileEditorView(profile: profile)
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(profile.displayName)
-                                Text("\(profile.platform.label) · \(profile.username)@\(profile.address):\(profile.port)")
-                                    .font(.footnote).foregroundStyle(.secondary)
+        NavigationStack(path: $path) {
+            List {
+                if settings.hostProfiles.isEmpty {
+                    ContentUnavailableView("No computers", systemImage: "desktopcomputer", description: Text("Add a computer to connect over SSH."))
+                } else {
+                    Section("Computers") {
+                        ForEach(settings.hostProfiles) { profile in
+                            NavigationLink(value: HomeDestination.computer(profile.id)) {
+                                VStack(alignment: .leading) {
+                                    Text(profile.displayName)
+                                    Text("\(profile.platform.label) · \(profile.username)@\(profile.address):\(profile.port)")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
+                            .namedAccessibilityActions(
+                                HostProfileActionPolicy.actions(for: profile),
+                                name: \.name
+                            ) { action in
+                                perform(action, for: profile)
+                            }
+                        }
+                        .onDelete { indexes in
+                            if let index = indexes.first {
+                                pendingDeletion = settings.hostProfiles[index]
                             }
                         }
                     }
-                    .onDelete { indexes in
-                        for index in indexes { _ = settings.deleteProfile(settings.hostProfiles[index]) }
-                    }
+                }
+                if let error = settings.credentialStorageError {
+                    Text(error).font(.footnote).foregroundStyle(.red)
                 }
             }
-            if let error = settings.credentialStorageError {
-                Text(error).font(.footnote).foregroundStyle(.red)
+            .navigationTitle("FarRelay")
+            .navigationDestination(for: HomeDestination.self) { destination in
+                HomeDestinationView(destination: destination)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Settings", systemImage: "gear") { showingSettings = true } }
+                ToolbarItem(placement: .topBarTrailing) { Button("Add Computer", systemImage: "plus") { addingProfile = true } }
+            }
+            .sheet(isPresented: $addingProfile) {
+                NavigationStack { HostProfileEditorView(profile: nil) }
+            }
+            .alert(
+                "Delete \(pendingDeletion?.displayName ?? "Computer")?",
+                isPresented: Binding(
+                    get: { pendingDeletion != nil },
+                    set: { if !$0 { pendingDeletion = nil } }
+                ),
+                presenting: pendingDeletion
+            ) { profile in
+                Button("Delete Computer", role: .destructive) {
+                    _ = settings.deleteProfile(profile)
+                    pendingDeletion = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeletion = nil
+                }
+            } message: { profile in
+                Text(
+                    HostProfileDeletionPolicy.confirmationMessage(
+                        computerName: profile.displayName,
+                        activeTerminalCount: terminals.activeSessionCount(for: profile.id)
+                    )
+                )
             }
         }
-        .navigationTitle("FarRelay")
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) { Button("Settings", systemImage: "gear") { showingSettings = true } }
-            ToolbarItem(placement: .topBarTrailing) { Button("Add Computer", systemImage: "plus") { addingProfile = true } }
+    }
+
+    private func perform(_ action: HostProfileAccessibilityAction, for profile: HostProfile) {
+        switch action {
+        case .newTerminal:
+            Task {
+                if let session = await terminals.openTerminal(for: profile, settings: settings) {
+                    path.append(HomeDestination.terminal(session.id))
+                }
+            }
+        case .nvdaRemote:
+            path.append(HomeDestination.nvda(profile.id))
+        case .edit:
+            path.append(HomeDestination.computer(profile.id))
+        case .delete:
+            pendingDeletion = profile
         }
-        .sheet(isPresented: $addingProfile) {
-            NavigationStack { HostProfileEditorView(profile: nil) }
+    }
+}
+
+private struct HomeDestinationView: View {
+    @Environment(AppSettings.self) private var settings
+    @Environment(TerminalSessionManager.self) private var terminals
+    let destination: HomeDestination
+
+    var body: some View {
+        switch destination {
+        case .computer(let id):
+            if let profile = settings.hostProfiles.first(where: { $0.id == id }) {
+                HostProfileEditorView(profile: profile)
+            } else {
+                ContentUnavailableView(
+                    "Computer removed",
+                    systemImage: "desktopcomputer",
+                    description: Text("This computer is no longer saved on Home.")
+                )
+            }
+        case .nvda(let id):
+            if let profile = settings.hostProfiles.first(where: { $0.id == id }) {
+                NVDARemoteFeatureView(profile: profile)
+            } else {
+                ContentUnavailableView(
+                    "Computer removed",
+                    systemImage: "accessibility",
+                    description: Text("This computer is no longer saved on Home.")
+                )
+            }
+        case .terminal(let id):
+            if let session = terminals.session(id: id) {
+                SSHTerminalFeatureView(session: session)
+            } else {
+                ContentUnavailableView("Terminal closed", systemImage: "terminal", description: Text("This terminal is no longer open."))
+            }
         }
     }
 }
@@ -150,11 +266,10 @@ private struct HostTerminalGroupView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             ForEach(group.sessions) { session in
-                NavigationLink {
-                    SSHTerminalFeatureView(session: session)
-                } label: {
-                    TerminalSessionRow(session: session)
-                }
+                TerminalSessionRow(
+                    session: session,
+                    openedTerminal: $openedTerminal
+                )
             }
             if group.canOpenNewTerminal {
                 Button("New Terminal", systemImage: "plus") {
@@ -167,22 +282,83 @@ private struct HostTerminalGroupView: View {
                 }
             }
         } label: {
-            Text(group.accessibilityLabel)
+            Text(group.accessibilitySummary(isExpanded: isExpanded))
         }
     }
 }
 
 private struct TerminalSessionRow: View {
+    @Environment(AppSettings.self) private var settings
+    @Environment(TerminalSessionManager.self) private var manager
     let session: TerminalSession
+    @Binding var openedTerminal: TerminalSessionRoute?
+    @State private var showingRename = false
+    @State private var renameDraft = ""
 
     var body: some View {
-        VStack(alignment: .leading) {
-            Text(session.title)
-            Text(session.host.state.statusLabel)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        Button {
+            openedTerminal = TerminalSessionRoute(id: session.id)
+        } label: {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(session.title)
+                    Text(session.host.state.statusLabel)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if session.isPinned {
+                    Image(systemName: "pin.fill")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
         }
-        .accessibilityElement(children: .combine)
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(session.accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+        .namedAccessibilityActions(
+            manager.accessibilityActions(for: session.id),
+            name: \.name
+        ) { action in
+            perform(action)
+        }
+        .alert("Rename Terminal", isPresented: $showingRename) {
+            TextField("Title", text: $renameDraft)
+            Button("Save") {
+                _ = manager.rename(session.id, to: renameDraft)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Enter a name for this terminal.")
+        }
+    }
+
+    private func perform(_ action: TerminalSessionAccessibilityAction) {
+        switch action {
+        case .open:
+            openedTerminal = TerminalSessionRoute(id: session.id)
+        case .pin:
+            manager.pin(session.id)
+        case .unpin:
+            manager.unpin(session.id)
+        case .rename:
+            renameDraft = session.title
+            showingRename = true
+        case .retry:
+            Task { _ = await manager.retry(session.id, settings: settings) }
+        case .moveUp:
+            manager.moveUp(session.id)
+        case .moveDown:
+            manager.moveDown(session.id)
+        case .close:
+            Task { await manager.close(session.id) }
+        }
     }
 }
 

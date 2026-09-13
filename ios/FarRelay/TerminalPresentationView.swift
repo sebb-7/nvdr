@@ -108,7 +108,10 @@ private struct TerminalConversationEntryView: View {
                 .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                 .accessibilityHeading(.h3)
                 .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-                .conversationAccessibilityActions(presentation.accessibilityActions(for: entry)) { action in
+                .namedAccessibilityActions(
+                    presentation.accessibilityActions(for: entry),
+                    name: \.name
+                ) { action in
                     perform(action)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -119,7 +122,10 @@ private struct TerminalConversationEntryView: View {
                     .textSelection(.enabled)
                     .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                     .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-                    .conversationAccessibilityActions(presentation.accessibilityActions(for: entry)) { action in
+                    .namedAccessibilityActions(
+                        presentation.accessibilityActions(for: entry),
+                        name: \.name
+                    ) { action in
                         perform(action)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -208,7 +214,10 @@ private struct TerminalInputControls: View {
                 .onSubmit {
                     sendFromInput()
                 }
-                .conversationAccessibilityActions(presentation.inputAccessibilityActions()) { action in
+                .namedAccessibilityActions(
+                    presentation.inputAccessibilityActions(),
+                    name: \.name
+                ) { action in
                     switch action {
                     case .sendCommand:
                         sendFromInput()
@@ -259,34 +268,3 @@ private struct TerminalInputControls: View {
     }
 }
 
-private extension View {
-    func conversationAccessibilityActions(
-        _ actions: [ConversationAccessibilityAction],
-        perform: @escaping (ConversationAccessibilityAction) -> Void
-    ) -> some View {
-        modifier(ConversationAccessibilityActionsModifier(actions: actions, perform: perform))
-    }
-}
-
-private struct ConversationAccessibilityActionsModifier: ViewModifier {
-    let actions: [ConversationAccessibilityAction]
-    let perform: (ConversationAccessibilityAction) -> Void
-
-    func body(content: Content) -> some View {
-        switch actions.count {
-        case 0:
-            content
-        case 1:
-            content.accessibilityAction(named: actions[0].name) { perform(actions[0]) }
-        case 2:
-            content
-                .accessibilityAction(named: actions[0].name) { perform(actions[0]) }
-                .accessibilityAction(named: actions[1].name) { perform(actions[1]) }
-        default:
-            content
-                .accessibilityAction(named: actions[0].name) { perform(actions[0]) }
-                .accessibilityAction(named: actions[1].name) { perform(actions[1]) }
-                .accessibilityAction(named: actions[2].name) { perform(actions[2]) }
-        }
-    }
-}

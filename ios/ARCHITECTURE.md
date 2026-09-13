@@ -271,9 +271,10 @@ respect the Silent switch.
 Defaults migrate safely for existing installations: **Haptic feedback** is on,
 **Sound cues** are off. The two toggles live under Settings → Interaction
 Feedback and persist independently. Feedback is sparse: Send, Run Again,
-Control Keys, Copy, Open Snapshot, terminal connected/failed, and NVDA
-ready/failed. Incoming terminal lines, cursor motion, and VoiceOver focus
-moves do not vibrate or play sounds.
+Control Keys, Copy, Open Snapshot, pin/rename/move/close, terminal
+connected/failed (emitted by `TerminalSessionManager`, not the presentation
+model), and NVDA ready/failed. Incoming terminal lines, cursor motion,
+VoiceOver focus moves, and New Output markers do not vibrate or play sounds.
 
 ## Terminal conversation actions and native input
 
@@ -295,6 +296,36 @@ successful Send so the next command can be typed immediately. VoiceOver
 accessibility focus is observed, never stolen: live output must not yank the
 user into the input, and remote output must not move local VoiceOver focus.
 `Clear Input` is offered on the rotor only when the field has text.
+
+## Accessibility interaction contract
+
+Secondary actions that belong to a focused object are native SwiftUI
+`.accessibilityAction(named:)` items on that object. FarRelay does not implement
+a custom rotor, synthesize VoiceOver gestures, or plant invisible button farms.
+Primary actions such as Add Computer, global New Terminal, Connect / Disconnect,
+and Send remain visible. Object-specific work such as Pin, Rename, Close,
+Retry, Move Up/Down, Run Again, Copy, Open Snapshot, Edit Computer, and Delete
+Computer is not a row of extra buttons.
+
+A terminal session row is one VoiceOver stop (`Claude, connected, pinned, new
+output`). Its Actions expose only currently valid work. A Home computer row
+exposes New Terminal, NVDA Remote when Windows and enabled, Edit Computer, and
+Delete Computer. Delete confirms with a native alert and never kills captured
+live terminals: those sessions keep running on their HostProfile snapshot, and
+the saved computer is removed from Home.
+
+Connection announcements (`Connecting to G14`, `Connected to G14`, `NVDA Remote
+ready`, …) are informational `AccessibilityNotification.Announcement` posts.
+They never move VoiceOver focus. Equivalent reconnect attempts are not
+re-announced. Manual NVDA forwarding toggles announce on/off; automatic
+`suspendInputForInactiveContext()` does not.
+
+Final user-initiated failures present a native `UserFacingIssue` alert with
+readable copy, optional Retry, Copy Details, and Dismiss. Copy Details is
+redacted: no passwords, private keys, or `--channel` secrets. Missing remote
+executables distinguish `farrelay` (NVDA bridge) from `farrelay-host` (host
+protocol). Connecting, authenticating, automatic reconnect, stderr lines, and
+in-shell command failures are not alerts.
 
 ## Accessibility polish non-goals
 
@@ -326,6 +357,16 @@ physical iPhone. Before claiming those surfaces are done, run:
 13. Test Clear Input.
 14. Test a failed or disconnected send preserves typed text.
 15. Leave BSI and inspect conversation Actions (Copy, Run Again, Open Snapshot).
+
+### VoiceOver Actions, announcements, and alerts
+
+- Terminals list: one stop per session; Pin / Unpin, Rename, Move Up/Down, Close, and Retry when applicable are Actions on that row, not extra buttons.
+- Pinning sorts the session above unpinned sessions without reconnecting. Move Up never lifts an unpinned session over pinned sessions.
+- Rename uses the compact alert, trims whitespace, and rejects an empty title.
+- Home computer rows expose New Terminal, NVDA Remote when enabled, Edit, and Delete via Actions. Delete confirms and leaves active terminals running.
+- Opening a terminal or creating a new one may move that computer group to the top. Background output must not.
+- Connection announcements speak without moving focus. Final SSH/NVDA failures show a native alert with Retry when possible and Copy Details without secrets.
+- NVDA forwarding announces only for the Toggle; leaving the screen must stay quiet.
 
 ### Haptics and sound cues
 
@@ -366,11 +407,38 @@ orchestrator. Both are empty states in this phase.
 
 `TerminalSessionManager` is app-owned. It is the authoritative lifetime owner
 for live terminals. Each `TerminalSession` has a stable UUID, a HostProfile ID,
-a captured profile snapshot, a generated title (`Terminal 1`, `Terminal 2`, …)
-scoped per host, and its own `SSHTerminalHost`. That host still owns exactly
-one SSH connection, PTY, `SSHTerminalSession`, and `TerminalPresentationModel`.
-The manager does not persist sessions across app termination, and it does not
-keep sockets alive through iOS suspension beyond existing SSH behavior.
+a captured profile snapshot, a user-facing title, and its own `SSHTerminalHost`.
+Default titles remain `Terminal 1`, `Terminal 2`, … scoped per host. Rename
+changes only the display title. Identity is never the title.
+
+Display order is not creation-array order. Within one computer group, pinned
+sessions sort above unpinned sessions, and each category is newest-first unless
+the user explicitly Move Up / Move Down. Pin, unpin, rename, and reorder never
+reconnect and never change the session UUID. Passive terminal output and
+connection status never reorder sessions or host groups. Creating a terminal,
+retrying, or opening a session may promote that HostProfile group to the top
+because those are explicit user actions.
+
+Retry does not restart the failed `SSHTerminalHost` (one host object is one
+terminal lifetime, and `start()` would wipe that transcript). The failed session
+stays inspectable. A replacement `TerminalSession` is created with a new host
+and the same user-facing title. Success is not claimed until that replacement
+actually connects.
+
+Unseen output is a boolean on the session. Output while that terminal is the
+active presented interaction does not mark it. Output while another screen is
+active does. Opening the terminal clears the marker; VoiceOver focus on the row
+does not. Closing removes the session and the marker.
+
+The manager exposes capabilities (`canPin`, `canRetry`, `canMoveUp`, …) and the
+UI only surfaces currently valid VoiceOver Actions. Connection lifecycle
+announcements and final-failure `UserFacingIssue` alerts also live at this
+presentation boundary, not inside SSH transport.
+
+That host still owns exactly one SSH connection, PTY, `SSHTerminalSession`, and
+`TerminalPresentationModel`. The manager does not persist sessions across app
+termination, and it does not keep sockets alive through iOS suspension beyond
+existing SSH behavior.
 
 Home owns saved computers. Terminals owns running and retained sessions,
 grouped by HostProfile ID. Only computers with at least one retained session
