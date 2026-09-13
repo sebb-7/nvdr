@@ -66,10 +66,12 @@ struct TerminalHostGroup: Identifiable {
     let sessions: [TerminalSession]
     let canOpenNewTerminal: Bool
 
+    @MainActor
     var newOutputCount: Int {
-        sessions.filter(\.hasUnseenOutput).count
+        sessions.filter { $0.hasUnseenOutput }.count
     }
 
+    @MainActor
     func accessibilitySummary(isExpanded: Bool) -> String {
         let count = sessions.count
         let noun = count == 1 ? "terminal" : "terminals"
