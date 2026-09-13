@@ -47,13 +47,13 @@ final class MacRemoteControlSessionTests: XCTestCase {
         let factory = FakeMacRemoteControlConnectionFactory(clients: [FakeVoiceOverHostClient()])
         let session = MacRemoteControlSession(connectionFactory: factory)
 
-        await session.connect(profile: HostProfile(platform: .windows, address: "g14", username: "user"), configuration: configuration())
+        await session.connect(profile: HostProfile(address: "g14", username: "user", platform: .windows), configuration: configuration())
         XCTAssertEqual(session.phase, .failed("Remote Control is available only for macOS computers."))
-        XCTAssertEqual(await factory.openCount(), 0)
+        assertEqual(await factory.openCount(), 0)
 
-        await session.connect(profile: HostProfile(platform: .macOS, address: "", username: "user"), configuration: configuration())
+        await session.connect(profile: HostProfile(address: "", username: "user", platform: .macOS), configuration: configuration())
         XCTAssertEqual(session.phase, .failed("Select a complete macOS computer before connecting."))
-        XCTAssertEqual(await factory.openCount(), 0)
+        assertEqual(await factory.openCount(), 0)
         XCTAssertFalse(session.controlsEnabled)
     }
 
@@ -75,10 +75,10 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertEqual(session.usedConfiguration?.host, "macmini.example")
         XCTAssertEqual(session.usedConfiguration?.port, 2200)
         XCTAssertEqual(session.usedConfiguration?.username, "reader")
-        XCTAssertEqual(await factory.hostCommands(), ["/usr/local/bin/farrelay-host"])
-        XCTAssertEqual(await factory.hosts(), ["macmini.example"])
-        XCTAssertEqual(await factory.ports(), [2200])
-        XCTAssertEqual(await factory.usernames(), ["reader"])
+        assertEqual(await factory.hostCommands(), ["/usr/local/bin/farrelay-host"])
+        assertEqual(await factory.hosts(), ["macmini.example"])
+        assertEqual(await factory.ports(), [2200])
+        assertEqual(await factory.usernames(), ["reader"])
         await session.disconnect()
     }
 
@@ -100,7 +100,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertEqual(session.usedHostCommand, "farrelay-host")
         XCTAssertEqual(FarRelayHostConnection.defaultCommand, "farrelay-host")
         XCTAssertEqual(FarRelayHostConnection.command, "farrelay-host")
-        XCTAssertEqual(await factory.hostCommands(), ["farrelay-host", "farrelay-host"])
+        assertEqual(await factory.hostCommands(), ["farrelay-host", "farrelay-host"])
         await session.disconnect()
     }
 
@@ -115,8 +115,8 @@ final class MacRemoteControlSessionTests: XCTestCase {
 
         await session.connect(settings: settings, profile: profile)
         XCTAssertEqual(session.phase, .ready)
-        XCTAssertEqual(await factory.hosts(), ["mini.local"])
-        XCTAssertEqual(await factory.usernames(), ["vo"])
+        assertEqual(await factory.hosts(), ["mini.local"])
+        assertEqual(await factory.usernames(), ["vo"])
         await session.disconnect()
     }
 
@@ -135,7 +135,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         await session.connect(profile: macProfile(), configuration: configuration())
         XCTAssertEqual(session.phase, .unsupportedHost)
         XCTAssertFalse(session.controlsEnabled)
-        XCTAssertEqual(await client.operations(), ["capabilities"])
+        assertEqual(await client.operations(), ["capabilities"])
         await session.disconnect()
     }
 
@@ -157,7 +157,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertEqual(session.phase, .unavailable)
         XCTAssertEqual(session.voiceOverStatusText, "VoiceOver is not running.")
         XCTAssertFalse(session.controlsEnabled)
-        XCTAssertEqual(await client.operations(), ["capabilities", "voiceover.status"])
+        assertEqual(await client.operations(), ["capabilities", "voiceover.status"])
         await session.disconnect()
     }
 
@@ -180,7 +180,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertEqual(session.lastSpokenPhraseText, "Safari")
         XCTAssertEqual(session.voiceOverCursorText, "Search field")
         XCTAssertNil(session.keyboardCursorText)
-        XCTAssertEqual(await client.operations(), ["capabilities", "voiceover.status", "voiceover.state"])
+        assertEqual(await client.operations(), ["capabilities", "voiceover.status", "voiceover.state"])
         await session.disconnect()
     }
 
@@ -201,7 +201,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         await session.perform(.activate)
         await session.perform(.refreshState)
 
-        XCTAssertEqual(await client.operations(), [
+        assertEqual(await client.operations(), [
             "move.left", "voiceover.state",
             "move.right", "voiceover.state",
             "move.up", "voiceover.state",
@@ -235,7 +235,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
             session.lastStateRefreshError,
             "Unable to refresh VoiceOver state: FarRelay Host error internal_error: state probe failed"
         )
-        XCTAssertEqual(await client.operations(), ["move.right", "voiceover.state"])
+        assertEqual(await client.operations(), ["move.right", "voiceover.state"])
         await session.disconnect()
     }
 
@@ -257,7 +257,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
             "Next failed: FarRelay Host error voiceover_control_unavailable: VoiceOver AppleScript control is not currently usable"
         )
         XCTAssertNil(session.lastStateRefreshError)
-        XCTAssertEqual(await client.operations(), ["move.right"])
+        assertEqual(await client.operations(), ["move.right"])
         await session.disconnect()
     }
 
@@ -274,11 +274,11 @@ final class MacRemoteControlSessionTests: XCTestCase {
         await waitUntil { await client.moveCount() == 1 }
         async let second: Void = session.perform(.previousItem)
         try? await Task.sleep(for: .milliseconds(40))
-        XCTAssertEqual(await client.operations(), ["move.right"])
+        assertEqual(await client.operations(), ["move.right"])
         await client.unblockMoves()
         await first
         await second
-        XCTAssertEqual(await client.operations(), [
+        assertEqual(await client.operations(), [
             "move.right", "voiceover.state",
             "move.left", "voiceover.state",
         ])
@@ -291,7 +291,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
             connectionFactory: FakeMacRemoteControlConnectionFactory(clients: [client])
         )
         await session.perform(.nextItem)
-        XCTAssertEqual(await client.operations(), [])
+        assertEqual(await client.operations(), [])
         XCTAssertFalse(session.controlsEnabled)
 
         await session.connect(profile: macProfile(), configuration: configuration())
@@ -301,7 +301,7 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertFalse(session.controlsEnabled)
         await client.resetOperations()
         await session.perform(.activate)
-        XCTAssertEqual(await client.operations(), [])
+        assertEqual(await client.operations(), [])
     }
 
     func testConnectionLossLeavesNoUsableStaleClient() async {
@@ -321,8 +321,8 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertFalse(session.controlsEnabled)
         XCTAssertEqual(session.lastSpokenPhraseText, "Safari")
         await session.perform(.nextItem)
-        XCTAssertEqual(await client.operations(), [])
-        XCTAssertTrue(await client.isUnavailable())
+        assertEqual(await client.operations(), [])
+        assertTrue(await client.isUnavailable())
     }
 
     func testReconnectCreatesACleanSessionAndDoesNotLeakProfiles() async {
@@ -350,12 +350,12 @@ final class MacRemoteControlSessionTests: XCTestCase {
         XCTAssertEqual(session.activeProfile?.id, secondProfile.id)
         XCTAssertEqual(session.lastSpokenPhraseText, "Mail")
         XCTAssertEqual(session.voiceOverCursorText, "Inbox")
-        XCTAssertEqual(await factory.hosts(), ["mini.example", "studio.example"])
-        XCTAssertEqual(await factory.openCount(), 2)
+        assertEqual(await factory.hosts(), ["mini.example", "studio.example"])
+        assertEqual(await factory.openCount(), 2)
         await first.resetOperations()
         await session.perform(.nextItem)
-        XCTAssertEqual(await first.operations(), [])
-        XCTAssertEqual(await second.operations().suffix(2), ["move.right", "voiceover.state"])
+        assertEqual(await first.operations(), [])
+        assertEqual(Array(await second.operations().suffix(2)), ["move.right", "voiceover.state"])
         await session.disconnect()
         XCTAssertEqual(session.phase, .disconnected)
     }
@@ -365,13 +365,13 @@ final class MacRemoteControlSessionTests: XCTestCase {
         let factory = FakeMacRemoteControlConnectionFactory(clients: [client])
         let session = MacRemoteControlSession(connectionFactory: factory)
         await session.connect(profile: macProfile(), configuration: configuration())
-        XCTAssertEqual(await factory.openCount(), 1)
+        assertEqual(await factory.openCount(), 1)
         await session.disconnect()
-        XCTAssertTrue(await client.isUnavailable())
+        assertTrue(await client.isUnavailable())
         XCTAssertFalse(session.controlsEnabled)
         await client.resetOperations()
         await session.perform(.refreshState)
-        XCTAssertEqual(await client.operations(), [])
+        assertEqual(await client.operations(), [])
     }
 
     private func macProfile(
@@ -407,6 +407,23 @@ final class MacRemoteControlSessionTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
         return defaults
+    }
+
+    private func assertEqual<T: Equatable>(
+        _ value: T,
+        _ expected: T,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(value, expected, file: file, line: line)
+    }
+
+    private func assertTrue(
+        _ value: Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(value, file: file, line: line)
     }
 
     private func waitUntil(
@@ -619,5 +636,5 @@ private final class TestRemoteControlCredentialStore: CredentialStore {
 
     func string(for account: String) throws -> String? { values[account] }
     func store(_ value: String, for account: String) throws { values[account] = value }
-    func removeValue(for account: String) throws { values.removeValue(for: account) }
+    func removeValue(for account: String) throws { values.removeValue(forKey: account) }
 }
