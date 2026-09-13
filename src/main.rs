@@ -349,7 +349,11 @@ fn writeln_raw<W: Write>(w: &mut W, line: &str) -> io::Result<()> {
 fn write_raw_buf(buf: &[u8]) {
     let mut stdout = std::io::stdout().lock();
     for line in buf.split_inclusive(|b| *b == b'\n') {
-        if let Some((body, _)) = line.split_last().filter(|(last, _)| **last == b'\n').map(|(last, rest)| (rest, last)) {
+        if let Some((body, _)) = line
+            .split_last()
+            .filter(|(last, _)| **last == b'\n')
+            .map(|(last, rest)| (rest, last))
+        {
             let _ = stdout.write_all(body);
             let _ = stdout.write_all(b"\r\n");
         } else {
@@ -565,7 +569,7 @@ fn handle_pin_mismatch(m: &PinMismatch, auto_accept: bool) -> Result<bool> {
     if accept {
         transport::store_pin(&m.path, &m.host, &m.got)
             .with_context(|| format!("updating pin at {}", m.path.display()))?;
-    eprintln!("farrelay: pin updated.");
+        eprintln!("farrelay: pin updated.");
     }
     Ok(accept)
 }

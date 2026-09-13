@@ -239,8 +239,7 @@ impl Leader {
             "k" | "key" | "send" => {
                 if arg.is_empty() {
                     Action::Info(
-                        "usage: :k <combo>   e.g. :k win+m, :k ctrl+alt+del, :k alt+f4"
-                            .into(),
+                        "usage: :k <combo>   e.g. :k win+m, :k ctrl+alt+del, :k alt+f4".into(),
                     )
                 } else {
                     match keymap::parse_combo(&arg, self.nvda_vk) {
@@ -281,21 +280,35 @@ pub struct Shortcut {
 }
 
 pub const SHORTCUTS: &[Shortcut] = &[
-    Shortcut { key: 'c', combo: "alt+f4",  desc: "close window (Alt+F4)" },
-    Shortcut { key: 'w', combo: "nvda+t",  desc: "read window title (NVDA+T)" },
-    Shortcut { key: 'd', combo: "win+d",   desc: "show desktop (Win+D)" },
-    Shortcut { key: 't', combo: "alt+tab", desc: "switch window (Alt+Tab)" },
+    Shortcut {
+        key: 'c',
+        combo: "alt+f4",
+        desc: "close window (Alt+F4)",
+    },
+    Shortcut {
+        key: 'w',
+        combo: "nvda+t",
+        desc: "read window title (NVDA+T)",
+    },
+    Shortcut {
+        key: 'd',
+        combo: "win+d",
+        desc: "show desktop (Win+D)",
+    },
+    Shortcut {
+        key: 't',
+        combo: "alt+tab",
+        desc: "switch window (Alt+Tab)",
+    },
 ];
 
 pub fn help() -> String {
     let mut sc_lines = String::new();
     for sc in SHORTCUTS {
-        sc_lines.push_str(&format!(
-            "  <leader> {}          {}\n",
-            sc.key, sc.desc
-        ));
+        sc_lines.push_str(&format!("  <leader> {}          {}\n", sc.key, sc.desc));
     }
-    format!(r#"
+    format!(
+        r#"
 farrelay key reference
 ------------------
 
@@ -373,5 +386,6 @@ OTHER
   Session auto-reconnects with exponential backoff on a dropped connection.
   On a cert-pin change you'll be prompted interactively (use --trust-new-cert
   to auto-accept in scripts).
-"#)
+"#
+    )
 }

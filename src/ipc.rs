@@ -284,9 +284,7 @@ fn parse_command(line: &str, nvda_vk: u16) -> Result<Cmd, String> {
             let pr_s = it
                 .next()
                 .ok_or_else(|| "key: missing pressed flag".to_string())?;
-            let vk: u16 = vk_s
-                .parse()
-                .map_err(|_| format!("key: bad vk {vk_s:?}"))?;
+            let vk: u16 = vk_s.parse().map_err(|_| format!("key: bad vk {vk_s:?}"))?;
             let pressed = match pr_s {
                 "0" => false,
                 "1" => true,
