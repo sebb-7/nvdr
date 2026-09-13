@@ -334,7 +334,8 @@ final class TerminalSessionManagerTests: XCTestCase {
         }
         XCTAssertTrue(manager.rename(failed.id, to: "PowerShell"))
         let originalHost = failed.host
-        let replacement = try XCTUnwrap(await manager.retry(failed.id, settings: settings))
+        let retried = await manager.retry(failed.id, settings: settings)
+        let replacement = try XCTUnwrap(retried)
         XCTAssertNotEqual(replacement.id, failed.id)
         XCTAssertEqual(replacement.title, "PowerShell")
         XCTAssertEqual(failed.title, "PowerShell")
