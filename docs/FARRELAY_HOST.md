@@ -2,6 +2,10 @@
 
 `farrelay-host` is an independent target-side executable for Windows, macOS, and Linux. It exposes a platform-neutral, versioned structured capability protocol over newline-delimited JSON (NDJSON): requests arrive on stdin and responses leave on stdout. Operational diagnostics belong on stderr. The intended transport is an authenticated SSH exec channel; the host does not open a separate network listener, become a daemon, or start a VoiceOver socket server.
 
+It is an application, not a reusable library, so its `Cargo.lock` is committed
+to keep deployed and CI dependency resolution reproducible. Dependency updates
+remain deliberate changes rather than part of protocol work.
+
 The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
 
 ```text
