@@ -290,7 +290,7 @@ final class TerminalSessionManager {
         from old: SSHTerminalHostState,
         to new: SSHTerminalHostState
     ) {
-        guard let session = session(id: sessionID) else { return }
+        guard session(id: sessionID) != nil else { return }
         lastLifecycleEvent = TerminalSessionLifecycleEvent(
             sessionID: sessionID,
             previousState: old,

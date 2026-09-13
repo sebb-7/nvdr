@@ -80,7 +80,7 @@ struct RootView: View {
 
     private func retryTerminalIssue(_ issue: UserFacingIssue) {
         terminalIssue = nil
-        guard case .terminal(let sessionID) = issue.retry else { return }
+        guard case let .some(.terminal(sessionID)) = issue.retry else { return }
         Task { _ = await terminals.retry(sessionID, settings: settings) }
     }
 }
