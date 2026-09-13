@@ -56,7 +56,7 @@ public final class TerminalPresentationModel {
     public private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     public private(set) var lastInputError: String?
     public private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
-    public private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
+    private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
     public private(set) var shellPromptContext: String?
     public var inputText = ""
     public var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
