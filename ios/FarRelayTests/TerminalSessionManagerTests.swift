@@ -51,8 +51,8 @@ final class TerminalSessionManagerTests: XCTestCase {
 
         let groups = manager.hostGroups(using: settings.hostProfiles)
         XCTAssertEqual(groups.count, 2)
-        XCTAssertEqual(groups[0].hostProfileID, g14.id)
-        XCTAssertEqual(groups[1].hostProfileID, mac.id)
+        XCTAssertEqual(groups[0].hostProfileID, mac.id)
+        XCTAssertEqual(groups[1].hostProfileID, g14.id)
         XCTAssertEqual(groups.map(\.sessions.count), [1, 1])
     }
 
@@ -63,7 +63,9 @@ final class TerminalSessionManagerTests: XCTestCase {
         let groups = manager.hostGroups(using: settings.hostProfiles)
         XCTAssertEqual(groups.count, 1)
         XCTAssertEqual(groups[0].sessions.count, 2)
-        XCTAssertEqual(groups[0].accessibilityLabel, "G14, 2 terminals")
+        XCTAssertEqual(groups[0].sessions.map(\.title), ["Terminal 2", "Terminal 1"])
+        XCTAssertEqual(groups[0].accessibilitySummary(isExpanded: true), "G14, 2 terminals, expanded")
+        XCTAssertEqual(groups[0].accessibilitySummary(isExpanded: false), "G14, 2 terminals, collapsed")
     }
 
     func testClosingOneOfTwoSessionsLeavesTheOther() async throws {
@@ -178,6 +180,240 @@ final class TerminalSessionManagerTests: XCTestCase {
         manager.present(nil)
         let cleared = await target.perform(.terminalInterrupt)
         XCTAssertEqual(cleared, .unavailable("No SSH terminal is currently active."))
+    }
+
+    func testNewestUnpinnedSessionSortsFirst() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, g14, settings: settings)
+        let third = try await opened(manager, g14, settings: settings)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [third.id, second.id, first.id]
+        )
+    }
+
+    func testPinnedSessionsSortAboveUnpinnedAndKeepStablePinOrder() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, g14, settings: settings)
+        let third = try await opened(manager, g14, settings: settings)
+        manager.pin(second.id)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [second.id, third.id, first.id]
+        )
+        manager.pin(first.id)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [first.id, second.id, third.id]
+        )
+        XCTAssertEqual(manager.session(id: first.id)?.id, first.id)
+        XCTAssertEqual(manager.session(id: second.id)?.id, second.id)
+    }
+
+    func testPinAndUnpinDoNotChangeSessionIdentityOrReconnect() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let session = try await opened(manager, g14, settings: settings)
+        await waitUntil { session.host.state == .connected }
+        let host = session.host
+        manager.pin(session.id)
+        XCTAssertTrue(session.isPinned)
+        XCTAssertTrue(session.host === host)
+        XCTAssertEqual(session.host.state, .connected)
+        manager.unpin(session.id)
+        XCTAssertFalse(session.isPinned)
+        XCTAssertTrue(session.host === host)
+        XCTAssertEqual(session.host.state, .connected)
+        XCTAssertEqual(manager.session(id: session.id)?.title, "Terminal 1")
+    }
+
+    func testMoveUpAndDownStayWithinPinnedOrUnpinnedCategory() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, g14, settings: settings)
+        let third = try await opened(manager, g14, settings: settings)
+        manager.pin(first.id)
+        manager.pin(second.id)
+        manager.moveDown(second.id)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [first.id, second.id, third.id]
+        )
+        manager.moveUp(second.id)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [second.id, first.id, third.id]
+        )
+        manager.moveUp(third.id)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            [second.id, first.id, third.id]
+        )
+        XCTAssertFalse(manager.capabilities(for: third.id).canMoveUp)
+        XCTAssertFalse(manager.capabilities(for: third.id).canMoveDown)
+    }
+
+    func testMoveCannotCrossHostProfiles() async throws {
+        let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
+        let g14 = try await opened(manager, profiles[0], settings: settings)
+        let mac = try await opened(manager, profiles[1], settings: settings)
+        manager.moveUp(mac.id)
+        manager.moveDown(mac.id)
+        manager.moveUp(g14.id)
+        let groups = manager.hostGroups(using: settings.hostProfiles)
+        XCTAssertEqual(groups[0].hostProfileID, profiles[1].id)
+        XCTAssertEqual(groups[0].sessions.map(\.id), [mac.id])
+        XCTAssertEqual(groups[1].hostProfileID, profiles[0].id)
+        XCTAssertEqual(groups[1].sessions.map(\.id), [g14.id])
+    }
+
+    func testPassiveOutputAndConnectionChangesDoNotReorder() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, g14, settings: settings)
+        let before = manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id)
+        XCTAssertEqual(before, [second.id, first.id])
+        manager.setTerminalInteractionActive(false)
+        manager.noteIncomingOutput(from: first.id)
+        await waitUntil { first.host.state == .connected && second.host.state == .connected }
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].sessions.map(\.id),
+            before
+        )
+        XCTAssertTrue(first.hasUnseenOutput)
+        XCTAssertFalse(second.hasUnseenOutput)
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].accessibilitySummary(isExpanded: false),
+            "G14, 2 terminals, 1 with new output, collapsed"
+        )
+    }
+
+    func testNewTerminalPromotesHostGroupAndBackgroundOutputDoesNot() async throws {
+        let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
+        let g14First = try await opened(manager, profiles[0], settings: settings)
+        _ = try await opened(manager, profiles[1], settings: settings)
+        XCTAssertEqual(manager.hostGroups(using: settings.hostProfiles).map(\.hostProfileID), [profiles[1].id, profiles[0].id])
+        manager.setTerminalInteractionActive(false)
+        manager.noteIncomingOutput(from: g14First.id)
+        XCTAssertEqual(manager.hostGroups(using: settings.hostProfiles).map(\.hostProfileID), [profiles[1].id, profiles[0].id])
+        _ = try await opened(manager, profiles[0], settings: settings)
+        XCTAssertEqual(manager.hostGroups(using: settings.hostProfiles).map(\.hostProfileID), [profiles[0].id, profiles[1].id])
+    }
+
+    func testRenameChangesTitleWithoutChangingIdentityHostOrTranscript() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let session = try await opened(manager, g14, settings: settings)
+        await waitUntil { session.host.state == .connected }
+        let presentation = session.host.presentation
+        let transcript = presentation.conversationEntries.map(\.text)
+        let id = session.id
+        XCTAssertTrue(manager.rename(id, to: "  Claude  "))
+        XCTAssertEqual(session.title, "Claude")
+        XCTAssertEqual(session.id, id)
+        XCTAssertTrue(session.host.presentation === presentation)
+        XCTAssertEqual(session.hostProfileID, g14.id)
+        XCTAssertEqual(presentation.conversationEntries.map(\.text), transcript)
+        XCTAssertFalse(manager.rename(id, to: "   "))
+        XCTAssertEqual(session.title, "Claude")
+        XCTAssertTrue(manager.rename(id, to: "Codex"))
+        let other = try await opened(manager, g14, settings: settings)
+        XCTAssertTrue(manager.rename(other.id, to: "Codex"))
+        XCTAssertEqual(session.title, "Codex")
+        XCTAssertEqual(other.title, "Codex")
+        XCTAssertNotEqual(session.id, other.id)
+    }
+
+    func testRetryKeepsFailedSessionAndCreatesReplacementWithSameTitle() async throws {
+        let factory = UniqueFakeTerminalFactory(failure: .connect)
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"], factory: factory)
+        let failed = try await opened(manager, g14, settings: settings)
+        await waitUntil {
+            if case .failed = failed.host.state { return true }
+            return false
+        }
+        XCTAssertTrue(manager.rename(failed.id, to: "PowerShell"))
+        let originalHost = failed.host
+        let replacement = try XCTUnwrap(await manager.retry(failed.id, settings: settings))
+        XCTAssertNotEqual(replacement.id, failed.id)
+        XCTAssertEqual(replacement.title, "PowerShell")
+        XCTAssertEqual(failed.title, "PowerShell")
+        XCTAssertTrue(failed.host === originalHost)
+        if case .failed = failed.host.state {
+        } else {
+            XCTFail("Failed session must remain inspectable")
+        }
+        XCTAssertEqual(manager.sessions.count, 2)
+        XCTAssertTrue(manager.capabilities(for: failed.id).canRetry)
+    }
+
+    func testNewOutputMarkerClearsOnOpenAndIsIndependentPerSession() async throws {
+        let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
+        let g14 = try await opened(manager, profiles[0], settings: settings)
+        let mac = try await opened(manager, profiles[1], settings: settings)
+        manager.present(g14.id)
+        manager.setTerminalInteractionActive(true)
+        manager.noteIncomingOutput(from: g14.id)
+        XCTAssertFalse(g14.hasUnseenOutput)
+        manager.setTerminalInteractionActive(false)
+        manager.noteIncomingOutput(from: g14.id)
+        XCTAssertTrue(g14.hasUnseenOutput)
+        manager.noteIncomingOutput(from: mac.id)
+        XCTAssertTrue(mac.hasUnseenOutput)
+        manager.present(g14.id)
+        XCTAssertFalse(g14.hasUnseenOutput)
+        XCTAssertTrue(mac.hasUnseenOutput)
+        await manager.close(mac.id)
+        XCTAssertNil(manager.session(id: mac.id))
+        XCTAssertEqual(
+            manager.hostGroups(using: settings.hostProfiles)[0].accessibilitySummary(isExpanded: true),
+            "G14, 1 terminal, expanded"
+        )
+    }
+
+    func testIncomingPresentationCallbackMarksBackgroundOutput() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let session = try await opened(manager, g14, settings: settings)
+        manager.setTerminalInteractionActive(false)
+        XCTAssertNotNil(session.host.presentation.onIncomingConversationContent)
+        session.host.presentation.onIncomingConversationContent?()
+        XCTAssertTrue(session.hasUnseenOutput)
+    }
+
+    func testConnectionFailurePresentsIssueAndAnnouncement() async throws {
+        let factory = UniqueFakeTerminalFactory(failure: .connect)
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"], factory: factory)
+        let session = try await opened(manager, g14, settings: settings)
+        await waitUntil { manager.presentedIssue != nil }
+        XCTAssertEqual(manager.presentedIssue?.title, "Unable to connect to G14")
+        XCTAssertEqual(manager.lastInteractionFeedback?.kind, .error)
+        XCTAssertEqual(manager.lastConnectionAnnouncement?.text.hasPrefix("Connection failed:"), true)
+        if case .failed = session.host.state {
+        } else {
+            XCTFail("Expected failed session")
+        }
+        XCTAssertTrue(manager.capabilities(for: session.id).canRetry)
+        XCTAssertTrue(manager.accessibilityActions(for: session.id).contains(.retry))
+        XCTAssertFalse(manager.accessibilityActions(for: session.id).contains(.moveUp))
+    }
+
+    func testConnectedSessionActionsOmitRetryAndIncludePin() async throws {
+        let (manager, settings, g14) = try makeManager(hosts: ["G14"])
+        let session = try await opened(manager, g14, settings: settings)
+        await waitUntil { session.host.state == .connected }
+        XCTAssertEqual(
+            manager.accessibilityActions(for: session.id),
+            [.open, .pin, .rename, .close]
+        )
+        manager.pin(session.id)
+        XCTAssertEqual(
+            manager.accessibilityActions(for: session.id),
+            [.open, .unpin, .rename, .close]
+        )
+        XCTAssertEqual(session.accessibilityLabel, "Terminal 1, connected, pinned")
+        manager.setTerminalInteractionActive(false)
+        manager.noteIncomingOutput(from: session.id)
+        XCTAssertEqual(session.accessibilityLabel, "Terminal 1, connected, pinned, new output")
     }
 
     private func makeManager(

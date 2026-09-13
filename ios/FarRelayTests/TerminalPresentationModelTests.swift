@@ -487,14 +487,14 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.inputAccessibilityActions(), [.sendCommand])
     }
 
-    func testConnectionStateChangesRequestSparseFeedback() {
+    func testConnectionStateChangesDoNotRequestPresentationFeedback() {
         let model = TerminalPresentationModel()
         model.setSessionState(.connecting)
         XCTAssertNil(model.lastInteractionFeedback)
         model.setSessionState(.connected)
-        XCTAssertEqual(model.lastInteractionFeedback?.kind, .success)
+        XCTAssertNil(model.lastInteractionFeedback)
         model.setSessionState(.failed("no route"))
-        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
+        XCTAssertNil(model.lastInteractionFeedback)
     }
 
     private func snapshot(

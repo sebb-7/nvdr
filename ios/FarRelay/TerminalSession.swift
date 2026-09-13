@@ -10,9 +10,11 @@ final class TerminalSession: Identifiable {
     let id: UUID
     let hostProfileID: UUID
     let profileSnapshot: HostProfile
-    let title: String
+    private(set) var title: String
     let createdAt: Date
     let host: SSHTerminalHost
+    private(set) var isPinned = false
+    private(set) var hasUnseenOutput = false
 
     init(
         id: UUID = UUID(),
@@ -32,6 +34,29 @@ final class TerminalSession: Identifiable {
     func displayName(from profiles: [HostProfile]) -> String {
         profiles.first { $0.id == hostProfileID }?.displayName ?? profileSnapshot.displayName
     }
+
+    func applyTitle(_ title: String) {
+        self.title = title
+    }
+
+    func applyPinned(_ isPinned: Bool) {
+        self.isPinned = isPinned
+    }
+
+    func applyHasUnseenOutput(_ hasUnseenOutput: Bool) {
+        self.hasUnseenOutput = hasUnseenOutput
+    }
+
+    var accessibilityLabel: String {
+        var parts = [title, host.state.rowStatusPhrase]
+        if isPinned {
+            parts.append("pinned")
+        }
+        if hasUnseenOutput {
+            parts.append("new output")
+        }
+        return parts.joined(separator: ", ")
+    }
 }
 
 struct TerminalHostGroup: Identifiable {
@@ -41,13 +66,51 @@ struct TerminalHostGroup: Identifiable {
     let sessions: [TerminalSession]
     let canOpenNewTerminal: Bool
 
-    var accessibilityLabel: String {
+    var newOutputCount: Int {
+        sessions.filter(\.hasUnseenOutput).count
+    }
+
+    func accessibilitySummary(isExpanded: Bool) -> String {
         let count = sessions.count
         let noun = count == 1 ? "terminal" : "terminals"
-        return "\(displayName), \(count) \(noun)"
+        var parts = ["\(displayName), \(count) \(noun)"]
+        if newOutputCount == 1 {
+            parts.append("1 with new output")
+        } else if newOutputCount > 1 {
+            parts.append("\(newOutputCount) with new output")
+        }
+        parts.append(isExpanded ? "expanded" : "collapsed")
+        return parts.joined(separator: ", ")
     }
 }
 
 struct TerminalSessionRoute: Hashable, Identifiable {
     let id: UUID
+}
+
+extension SSHTerminalHostState {
+    var isRetryable: Bool {
+        switch self {
+        case .failed, .ended:
+            true
+        default:
+            false
+        }
+    }
+
+    var rowStatusPhrase: String {
+        switch self {
+        case .idle: "starting"
+        case .connecting: "connecting"
+        case .connected: "connected"
+        case .ended: "ended"
+        case .failed(let message):
+            if RemoteLaunchDiagnostics.looksLikeAuthenticationFailure(message) {
+                "failed, authentication failed"
+            } else {
+                "failed, \(RemoteLaunchDiagnostics.sanitizedReason(message))"
+            }
+        case .closed: "closed"
+        }
+    }
 }

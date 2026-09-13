@@ -78,6 +78,7 @@ final class SSHTerminalHost {
     private(set) var state: SSHTerminalHostState = .idle
     private(set) var activeProfile: HostProfile?
     let presentation = TerminalPresentationModel()
+    var onStateChange: (@MainActor (SSHTerminalHostState, SSHTerminalHostState) -> Void)?
 
     private let connectionFactory: any SSHTerminalHostConnectionFactory
     private var connection: (any SSHTerminalHostConnection)?
@@ -244,7 +245,11 @@ final class SSHTerminalHost {
     }
 
     private func transition(to newState: SSHTerminalHostState) {
+        let oldState = state
         state = newState
         presentation.setSessionState(newState.presentationState)
+        if oldState != newState {
+            onStateChange?(oldState, newState)
+        }
     }
 }

@@ -57,6 +57,7 @@ public final class TerminalPresentationModel {
     public private(set) var lastInputError: String?
     public private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
     private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
+    var onIncomingConversationContent: (@MainActor () -> Void)?
     public private(set) var shellPromptContext: String?
     public var inputText = ""
     public var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
@@ -337,6 +338,7 @@ public final class TerminalPresentationModel {
     }
 
     private func apply(_ events: [TerminalAccessibilityEvent]) {
+        var receivedIncomingContent = false
         for event in events {
             switch event {
             case .completedLinesAppended(let lines):
@@ -345,9 +347,13 @@ public final class TerminalPresentationModel {
                 if let openGroup = ingested.openGroup {
                     finalized.append(openGroup)
                 }
+                if !finalized.isEmpty {
+                    receivedIncomingContent = true
+                }
                 announceFinalized(finalized)
             case .currentLineChanged(let line):
                 if let entry = ingestCurrentLine(line) {
+                    receivedIncomingContent = true
                     announceStreamingIfNeeded(entry)
                 } else {
                     applyLiveOutputEffects(liveOutputPolicy.cancelPending())
@@ -362,6 +368,9 @@ public final class TerminalPresentationModel {
             case .cursorMoved, .shellIntegrationMarksAppeared:
                 break
             }
+        }
+        if receivedIncomingContent {
+            onIncomingConversationContent?()
         }
     }
 
@@ -573,17 +582,7 @@ public final class TerminalPresentationModel {
     }
 
     private func updateSessionState(_ state: TerminalPresentationSessionState) {
-        let previous = sessionState
         sessionState = state
-        guard previous != state else { return }
-        switch state {
-        case .connected:
-            requestFeedback(.success)
-        case .failed:
-            requestFeedback(.error)
-        default:
-            break
-        }
     }
 
     private func requestFeedback(_ kind: InteractionFeedbackKind) {
