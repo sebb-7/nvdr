@@ -12,7 +12,7 @@ This repository originated from [ogomez92/nvdr](https://github.com/ogomez92/nvdr
 - `RemoteIntent` routing
 - Cross-platform `farrelay-host` structured capability executable
 
-`farrelay-host` accepts versioned NDJSON over standard input and currently exposes `host.info`, `process.list`, and `process.info`. It has no arbitrary command execution, listener, daemon, or service-lifecycle API. See [FarRelay Host](docs/FARRELAY_HOST.md).
+`farrelay-host` accepts versioned NDJSON over standard input and currently exposes `host.info`, `process.list`, and `process.info`. On macOS it also advertises `voiceover.status`, `voiceover.move`, `voiceover.press`, and `voiceover.state` as implementation capabilities; those operations drive the Mac's real VoiceOver through a fixed AppleScript bridge rather than a FarRelay-owned screen reader. It has no arbitrary command execution, listener, daemon, or service-lifecycle API. See [FarRelay Host](docs/FARRELAY_HOST.md) and [macOS VoiceOver remote-control roadmap](docs/MACOS_VOICEOVER_REMOTE_ROADMAP.md).
 
 ## Future capabilities
 

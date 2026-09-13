@@ -1,6 +1,6 @@
 # macOS VoiceOver Remote-Control Roadmap
 
-Status: planned
+Status: Phase M0 host/protocol spike implemented; physical VoiceOver proof pending
 
 Priority: immediately after `TerminalSessionManager`, before Agents/Assistant implementation
 
@@ -247,21 +247,50 @@ The capability should be discovered/reported by the host rather than hard-coded 
 
 ### Phase M0 — API spike before physical Mac arrival
 
-Build the smallest isolated macOS probe/helper and protocol abstraction necessary to validate compilation and structure.
+The first production-shaped host/protocol seam is implemented:
 
-Do not wire production UI yet.
+```text
+FarRelay iPhone
+    ↓
+SSH exec
+farrelay-host
+    ↓
+VoiceOverProvider
+    ↓
+macOS VoiceOver AppleScript bridge
+```
 
-Prototype:
+This slice proves the host boundary. It does **not** build the iPhone Remote Control screen.
 
-- VoiceOver AppleScript command adapter
-- last-phrase / VoiceOver-cursor read adapter
-- AXUIElement snapshot and notification adapter
-- CGEvent input abstraction
-- permission/readiness model
-- typed results/errors
-- deterministic mocks/tests
+Implemented:
 
-CI may compile and unit-test abstractions, but headless CI must not be treated as proof that real VoiceOver automation works. Existing reports show that enabling VoiceOver AppleScript automation programmatically in CI can fail because the user-controlled VoiceOver setting/TCC state is not available there.
+- `VoiceOverProvider` semantic operations (no raw AppleScript in protocol dispatch)
+- macOS AppleScript provider via fixed `/usr/bin/osascript` templates
+- Windows/Linux unsupported-platform results
+- `voiceover.status`, `voiceover.move`, `voiceover.press`, `voiceover.state`
+- platform-sensitive capability advertisement
+- mocked/deterministic host tests
+
+Typed iOS `FarRelayHostClient` operations are the following commit in this branch.
+
+Explicitly deferred: AXUIElement, CGEvent, RemoteIntent/controller mapping, keyboard passthrough, voice commands, screen/audio streaming, and automatic VoiceOver/AppleScript enablement.
+
+CI may compile and unit-test abstractions, but headless CI must not be treated as proof that real VoiceOver automation works. GitHub-hosted macOS runners may have VoiceOver AppleScript control disabled.
+
+### Phase M0 physical Mac checklist — October 1
+
+Do not claim success until these are physically tested on the Mac mini, in this order:
+
+1. VoiceOver is running
+2. AppleScript control is explicitly enabled (`Allow VoiceOver to be controlled with AppleScript`)
+3. `farrelay-host` capabilities advertise VoiceOver support
+4. `voiceover.status` succeeds
+5. `voiceover.state` returns useful text
+6. move right changes the real VoiceOver cursor
+7. move left returns it
+8. move into/out works on an interactive control/group
+9. press activates the real VoiceOver item
+10. state/last phrase changes after navigation
 
 ### Phase M1 — physical Mac proof, October 1 target
 
