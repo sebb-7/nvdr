@@ -205,7 +205,8 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertEqual(statusRequest.operation, "voiceover.status")
         XCTAssertNotNil(statusRequest.requestID)
         transport.sendSuccess(requestID: statusRequest.requestID, result: voiceOverStatusResult())
-        XCTAssertEqual(try await statusTask.value, voiceOverStatusResult())
+        let status = try await statusTask.value
+        XCTAssertEqual(status, voiceOverStatusResult())
 
         let directions: [VoiceOverMoveDirection] = [.left, .right, .up, .down, .into, .out]
         for direction in directions {
@@ -218,7 +219,8 @@ final class FarRelayHostClientTests: XCTestCase {
                 requestID: moveRequest.requestID,
                 result: VoiceOverMoveResult(moved: true)
             )
-            XCTAssertEqual(try await moveTask.value, VoiceOverMoveResult(moved: true))
+            let moved = try await moveTask.value
+            XCTAssertEqual(moved, VoiceOverMoveResult(moved: true))
         }
 
         let pressTask = Task { try await client.voiceOverPress() }
@@ -229,13 +231,15 @@ final class FarRelayHostClientTests: XCTestCase {
             requestID: pressRequest.requestID,
             result: VoiceOverPressResult(pressed: true)
         )
-        XCTAssertEqual(try await pressTask.value, VoiceOverPressResult(pressed: true))
+        let pressed = try await pressTask.value
+        XCTAssertEqual(pressed, VoiceOverPressResult(pressed: true))
 
         let stateTask = Task { try await client.voiceOverState() }
         let stateRequest = try await nextRequest(from: transport)
         XCTAssertEqual(stateRequest.operation, "voiceover.state")
         transport.sendSuccess(requestID: stateRequest.requestID, result: voiceOverStateResult())
-        XCTAssertEqual(try await stateTask.value, voiceOverStateResult())
+        let state = try await stateTask.value
+        XCTAssertEqual(state, voiceOverStateResult())
     }
 
     func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
