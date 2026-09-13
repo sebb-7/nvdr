@@ -62,19 +62,14 @@ pub struct VoiceOverState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VoiceOverError {
+    #[cfg_attr(all(not(test), target_os = "macos"), allow(dead_code))]
     UnsupportedPlatform,
     #[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
-    Unavailable {
-        message: String,
-    },
+    Unavailable { message: String },
     #[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
-    ControlUnavailable {
-        message: String,
-    },
+    ControlUnavailable { message: String },
     #[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
-    Internal {
-        message: String,
-    },
+    Internal { message: String },
 }
 
 impl VoiceOverError {
