@@ -32,6 +32,13 @@ struct HostProfileEditorView: View {
                             Label("NVDA Remote", systemImage: "accessibility")
                         }
                     }
+                    if draft.exposesMacRemoteControl {
+                        NavigationLink {
+                            MacRemoteControlFeatureView(profile: draft)
+                        } label: {
+                            Label("Remote Control", systemImage: "hand.point.up.left")
+                        }
+                    }
                 }
             }
             Section("Computer") {

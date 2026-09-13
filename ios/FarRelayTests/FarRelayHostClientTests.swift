@@ -308,6 +308,23 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertEqual(diagnostics.last, "diagnostic 54")
     }
 
+    func testResolvedHostCommandUsesProfileValueWithoutConcatenatingArguments() {
+        XCTAssertEqual(FarRelayHostConnection.defaultCommand, "farrelay-host")
+        XCTAssertEqual(FarRelayHostConnection.command, "farrelay-host")
+        XCTAssertEqual(FarRelayHostConnection.resolvedCommand(""), "farrelay-host")
+        XCTAssertEqual(FarRelayHostConnection.resolvedCommand("   "), "farrelay-host")
+        XCTAssertEqual(FarRelayHostConnection.resolvedCommand("/usr/local/bin/farrelay-host"), "/usr/local/bin/farrelay-host")
+    }
+
+    func testWaitUntilUnavailableCompletesAfterClose() async {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+        let waiter = Task { await client.waitUntilUnavailable() }
+        await client.close()
+        await waiter.value
+        await client.waitUntilUnavailable()
+    }
+
     private func nextRequest(from transport: FakeHostTransport) async throws -> WireRequest {
         let data = await transport.nextWrite()
         XCTAssertEqual(data.last, 0x0A)

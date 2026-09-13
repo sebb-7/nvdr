@@ -308,12 +308,14 @@ is the active interaction context, terminal intents return unavailable rather
 than operating a hidden session. Future controller bindings may target a
 `TerminalSession` ID. They must not guess from titles or list positions.
 
-Future Mac VoiceOver remote-control work, Agents, and Assistant remain after
-this phase. The host now exposes a typed VoiceOver capability seam; iPhone
-Remote Control UI, RemoteIntent-to-Mac mapping, and controller input are still
-later slices. Future controller adapters also consume the stable terminal-scoped
-Control Key IDs created with Terminal Control Keys, not labels or list
-positions.
+Mac Remote Control is a macOS HostProfile action, not a fifth tab and not a
+terminal. Navigation is Home → macOS computer → Remote Control. The iPhone
+screen is an M2-prep shell: it can connect, probe, display status, and issue
+the existing structured VoiceOver host operations. It does **not** prove
+physical VoiceOver control, register a RemoteIntent target, or capture
+keyboard/controller input. Future controller adapters also consume the stable
+terminal-scoped Control Key IDs created with Terminal Control Keys, not labels
+or list positions.
 
 ## App-level SSH terminal host
 
@@ -349,20 +351,57 @@ a parallel host capability with independent state and lifetime.
 ## FarRelay Host v1
 
 `FarRelayHostConnection` composes one connected `SSHSession` with exactly one
-long-lived `farrelay-host` exec channel. `FarRelayHostClient` sits above the
-generic byte-oriented `SSHExecTransport`: it owns version-1 NDJSON framing,
-request-ID correlation, typed Codable results, structured errors, and bounded
-stderr diagnostics. `SSHSession` remains unaware of the Host protocol. VoiceOver
-operations are structured `farrelay-host` exec requests; they are not sent over
-a PTY and do not use a second SSH connection system.
-
-Mac remote control is conceptually one HostProfile capability, analogous to NVDA
-Remote on Windows. This phase adds only the host/protocol seam and typed client
-operations. It does not add a Remote Control screen, RemoteIntent mapping,
-controller input, AXUIElement navigation, or CGEvent injection.
+long-lived structured host exec. The command comes from the selected
+`HostProfile.farRelayHostCommand`, resolved to `farrelay-host` when empty. The
+UI never builds that string, and iOS does not concatenate extra arguments.
+`farrelay --ipc` remains the separate NVDA bridge command. `FarRelayHostClient`
+sits above the generic byte-oriented `SSHExecTransport`: it owns version-1
+NDJSON framing, request-ID correlation, typed Codable results, structured
+errors, and bounded stderr diagnostics. `SSHSession` remains unaware of the Host
+protocol. VoiceOver operations are structured host exec requests; they are not
+sent over a PTY and do not use a second SSH connection system.
 
 ```text
-FarRelay iPhone
+Home → macOS HostProfile → Remote Control
+    MacRemoteControlSession
+        SSHSession
+            farrelay-host exec
+                FarRelayHostClient
+                    VoiceOver host operations
+```
+
+`MacRemoteControlSession` is the authority for that screen. Connect validates
+the explicit macOS HostProfile, opens one SSH session, starts one structured
+host exec, and reuses one `FarRelayHostClient` for the session. It then fetches
+capabilities, requires `voiceover.status` / `voiceover.move` /
+`voiceover.press` / `voiceover.state`, fetches runtime status, and only if that
+status is usable fetches initial `voiceover.state` before becoming Ready.
+`platform == macOS` only exposes the Remote Control action; it does not mean
+VoiceOver is ready. Windows keeps NVDA Remote. Linux/Other do not expose Mac
+Remote Control.
+
+The screen lifetime is enter → explicit Connect → operate → Disconnect or
+Back. Leaving the screen ends the control session; there is no hidden
+background VoiceOver session. SSH or host loss leaves Ready, disables
+controls, keeps the last useful returned state, and rejects further actions.
+Reconnect creates a new client. Missing VoiceOver operations are an outdated
+host; unusable `voiceover.status` is shown conservatively. The iPhone never
+enables VoiceOver, AppleScript control, or TCC remotely.
+
+Semantic buttons map provisionally to the existing host operations (Previous →
+move left, Next → move right, Up/Down, Interact → into, Stop Interacting →
+out, Activate → press, Refresh → state). Those mappings are unvalidated on
+hardware. Successful navigation/activation then refreshes state; a refresh
+failure does not rewrite a successful action as failed. Actions run serially.
+
+Remote output updates visible accessible text and does not move local
+VoiceOver focus, post repeated announcements, synthesize gestures, or create a
+fake rotor. Automatic spoken-feedback policy is deferred until physical
+validation. RemoteIntent, hardware keyboard capture, and controller bindings
+are not registered in this slice.
+
+```text
+iPhone FarRelay
     ↓
 SSH exec
 farrelay-host
@@ -382,7 +421,8 @@ substitute.
 FarRelay Host v1                 ✓
 Apple HostClient transport       ✓
 macOS VoiceOver host operations  ✓ (protocol/client seam; physical proof pending)
-HostTarget                       NEXT
+Mac Remote Control shell         ✓ (M2-prep; M1 physical proof still pending)
+RemoteIntent Mac target          NEXT after October 1 validation
 ```
 
 ## Remote intent routing

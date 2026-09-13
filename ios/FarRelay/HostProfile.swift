@@ -123,6 +123,12 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         platform == .windows && nvdaRemote?.isEnabled == true
     }
 
+    /// macOS computers may enter Remote Control to *probe* VoiceOver. Platform
+    /// alone never means VoiceOver is ready.
+    var exposesMacRemoteControl: Bool {
+        platform == .macOS
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, displayName, address, port, username, authenticationMode
         case platform, credentialReference, farRelayHostCommand, nvdaBridgeCommand, nvdaRemote

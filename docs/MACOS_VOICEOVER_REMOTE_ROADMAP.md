@@ -1,6 +1,6 @@
 # macOS VoiceOver Remote-Control Roadmap
 
-Status: Phase M0 host/protocol spike implemented; physical VoiceOver proof pending
+Status: M2-prep implemented; M1 physical proof still pending
 
 Priority: immediately after `TerminalSessionManager`, before Agents/Assistant implementation
 
@@ -260,7 +260,8 @@ VoiceOverProvider
 macOS VoiceOver AppleScript bridge
 ```
 
-This slice proves the host boundary. It does **not** build the iPhone Remote Control screen.
+This slice proves the host boundary. It does **not** claim that real VoiceOver
+control works.
 
 Implemented:
 
@@ -272,7 +273,7 @@ Implemented:
 - typed iOS `FarRelayHostClient` operations
 - mocked/deterministic host and HostClient tests
 
-Explicitly deferred: AXUIElement, CGEvent, RemoteIntent/controller mapping, keyboard passthrough, voice commands, screen/audio streaming, and automatic VoiceOver/AppleScript enablement.
+Explicitly deferred from M0: AXUIElement, CGEvent, RemoteIntent/controller mapping, keyboard passthrough, voice commands, screen/audio streaming, and automatic VoiceOver/AppleScript enablement.
 
 CI may compile and unit-test abstractions, but headless CI must not be treated as proof that real VoiceOver automation works. GitHub-hosted macOS runners may have VoiceOver AppleScript control disabled.
 
@@ -322,13 +323,39 @@ Success gate:
 
 > A blind user can navigate and activate meaningful UI on the Mac mini remotely, using VoiceOver semantics and returned feedback, without sighted assistance.
 
+### Phase M2-prep — iPhone Remote Control shell (implemented; not physical proof)
+
+The iPhone now has a production-shaped control session and accessible UI that
+uses the typed Host API and deterministic fakes. This is **not** Phase M1 or
+M2 completion. Physical VoiceOver control, AppleScript permissions on the Mac
+mini, returned-speech sufficiency, and NVDA Remote parity remain October 1
+validation items.
+
+Implemented:
+
+- Home → macOS HostProfile → Remote Control
+- `MacRemoteControlSession` connection lifecycle over one structured `farrelay-host` exec
+- profile-scoped SSH configuration and `farRelayHostCommand`
+- capability probing and conservative VoiceOver status/state display
+- provisional semantic buttons mapped to existing host operations
+- serial action execution, truthful failure, disconnect/reconnect cleanup
+- accessible native SwiftUI controls that inform without hijacking iPhone VoiceOver
+
+Not in this slice:
+
+- RemoteIntent-to-Mac mapping
+- keyboard or controller capture
+- a global Remote Control mode
+- enabling VoiceOver or AppleScript remotely
+- claiming real VoiceOver navigation works
+
 ### Phase M2 — FarRelay iPhone Remote Control mode
 
-Add a host-scoped action for capable macOS profiles:
+After October 1 physical validation, the same `MacRemoteControlSession` can
+become the backend for a Mac RemoteIntent target and explicit Remote Control
+mode.
 
-`Home -> Mac mini -> Remote Control`
-
-Requirements:
+Remaining M2 requirements:
 
 - explicit Enter Remote Control
 - explicit Exit Remote Control

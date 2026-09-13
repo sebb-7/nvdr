@@ -313,6 +313,15 @@ final class HostProfileTests: XCTestCase {
         XCTAssertFalse(bridge.isInputForwardingReady)
     }
 
+    func testOnlyMacOSProfilesExposeRemoteControlAndPlatformIsNotReadiness() {
+        XCTAssertFalse(HostProfile(platform: .windows).exposesMacRemoteControl)
+        XCTAssertFalse(HostProfile(platform: .linux).exposesMacRemoteControl)
+        XCTAssertFalse(HostProfile(platform: .other).exposesMacRemoteControl)
+        let mac = HostProfile(displayName: "Mac mini", address: "mini", username: "user", platform: .macOS)
+        XCTAssertTrue(mac.exposesMacRemoteControl)
+        XCTAssertFalse(mac.isNVDARemoteEnabled)
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let suiteName = "HostProfileTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

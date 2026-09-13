@@ -90,6 +90,22 @@ struct VoiceOverStatus: Codable, Sendable, Equatable {
         case appleScriptBridgeUsable = "applescript_bridge_usable"
         case message
     }
+
+    /// Runtime usability for Remote Control. Capability advertisement is separate.
+    var isUsableForRemoteControl: Bool {
+        platformSupported && available && voiceOverRunning && appleScriptBridgeUsable
+    }
+
+    /// Conservative status text from returned fields only.
+    var runtimeSummary: String {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        if isUsableForRemoteControl { return "Ready" }
+        if !platformSupported { return "VoiceOver is not supported on this computer." }
+        if !voiceOverRunning { return "VoiceOver is not running." }
+        if !appleScriptBridgeUsable { return "VoiceOver control is not currently usable." }
+        return "VoiceOver is unavailable."
+    }
 }
 
 /// Structured `voiceover.move` result.
@@ -125,6 +141,8 @@ protocol HostClientProtocol: Sendable {
     func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult
     func voiceOverPress() async throws -> VoiceOverPressResult
     func voiceOverState() async throws -> VoiceOverState
+    /// Completes when this client can no longer serve requests.
+    func waitUntilUnavailable() async
 }
 
 /// Errors produced while framing, validating, or correlating Host v1 messages.
@@ -207,6 +225,7 @@ actor FarRelayHostClient: HostClientProtocol {
     private let transport: any HostByteTransport
     private var readerTask: Task<Void, Never>?
     private var pending: [String: CheckedContinuation<Data, Error>] = [:]
+    private var unavailableWaiters: [CheckedContinuation<Void, Never>] = []
     private var stdoutBuffer = Data()
     private var stderrBuffer = Data()
     private var diagnostics: [String] = []
@@ -250,6 +269,21 @@ actor FarRelayHostClient: HostClientProtocol {
 
     func voiceOverState() async throws -> VoiceOverState {
         try await request(operation: "voiceover.state", parameters: HostEmptyParameters())
+    }
+
+    func waitUntilUnavailable() async {
+        if terminalError != nil { return }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if terminalError != nil {
+                    continuation.resume()
+                } else {
+                    unavailableWaiters.append(continuation)
+                }
+            }
+        } onCancel: {
+            Task { await self.resumeUnavailableWaiters() }
+        }
     }
 
     /// Starts the reader before a caller begins a long-lived operation.
@@ -459,18 +493,35 @@ actor FarRelayHostClient: HostClientProtocol {
         guard terminalError == nil else { return }
         terminalError = error
         failAll(with: error)
+        resumeUnavailableWaiters()
+    }
+
+    private func resumeUnavailableWaiters() {
+        let waiters = unavailableWaiters
+        unavailableWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 }
 
-/// Production composition of the Host API over exactly one `farrelay-host` exec.
+/// Production composition of the Host API over exactly one structured host exec.
 enum FarRelayHostConnection {
-    static let command = "farrelay-host"
+    static let defaultCommand = "farrelay-host"
+    static let command = defaultCommand
+
+    /// Uses the profile command when it is non-empty after trimming; otherwise
+    /// `farrelay-host`. The value is passed as one SSH exec command with no
+    /// extra arguments concatenated.
+    static func resolvedCommand(_ command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultCommand : trimmed
+    }
 
     static func withClient(
         session: SSHSession,
+        command: String = defaultCommand,
         operation: @escaping @Sendable (FarRelayHostClient) async throws -> Void
     ) async throws {
-        try await session.withExec(command) { transport in
+        try await session.withExec(resolvedCommand(command)) { transport in
             let client = FarRelayHostClient(transport: transport)
             await client.start()
             do {
