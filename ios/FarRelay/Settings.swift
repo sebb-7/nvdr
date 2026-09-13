@@ -30,12 +30,6 @@ enum SSHAuthMode: String, CaseIterable, Identifiable, Codable, Equatable, Sendab
 @Observable
 @MainActor
 final class AppSettings {
-    // Relay settings describe the shared NVDA relay, not one SSH computer.
-    var relayHost: String
-    var relayPort: Int
-    var channel: String
-    var fingerprint: String
-    var insecure: Bool
     var nvdaModifier: NvdaModifier
     var optionMapping: ModifierMapping
     var commandMapping: ModifierMapping
@@ -43,7 +37,6 @@ final class AppSettings {
     var voiceIdentifier: String?
     private(set) var terminalControlKeys: [TerminalControlKey]
     private(set) var hostProfiles: [HostProfile] = []
-    var selectedNVDAProfileID: UUID? { didSet { saveSelectedNVDAProfileID() } }
     private(set) var credentialStorageError: String? = nil
 
     private let defaults: UserDefaults
@@ -59,17 +52,11 @@ final class AppSettings {
         profileCredentialPersistence = HostProfileCredentialPersistence(store: credentialStore)
         terminalControlKeyStore = TerminalControlKeyStore(defaults: defaults, key: Keys.terminalControlKeys)
         profileStore = HostProfileStore(defaults: defaults, key: Keys.hostProfiles)
-        relayHost = defaults.string(forKey: Keys.relayHost) ?? "nvdaremote.com"
-        relayPort = defaults.object(forKey: Keys.relayPort) as? Int ?? 6837
-        channel = defaults.string(forKey: Keys.channel) ?? ""
-        fingerprint = defaults.string(forKey: Keys.fingerprint) ?? ""
-        insecure = defaults.bool(forKey: Keys.insecure)
         nvdaModifier = NvdaModifier(rawValue: defaults.string(forKey: Keys.nvdaModifier) ?? "") ?? .capsLock
         optionMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.optionMapping) ?? "") ?? .win
         commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .alt
         speechRate = Float(defaults.object(forKey: Keys.speechRate) as? Double ?? 0.55)
         voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
-        selectedNVDAProfileID = UUID(uuidString: defaults.string(forKey: Keys.selectedNVDAProfileID) ?? "")
         switch terminalControlKeyStore.load() {
         case .uninitialized:
             terminalControlKeys = TerminalControlKey.defaultControls
@@ -90,19 +77,10 @@ final class AppSettings {
             hostProfiles = []
             migrateSingleComputerSettings()
         }
-        if selectedNVDAProfile == nil { selectedNVDAProfileID = hostProfiles.first?.id }
-    }
-
-    var selectedNVDAProfile: HostProfile? {
-        hostProfiles.first { $0.id == selectedNVDAProfileID }
+        migrateLegacyNVDARemoteConfiguration()
     }
 
     func save() {
-        defaults.set(relayHost, forKey: Keys.relayHost)
-        defaults.set(relayPort, forKey: Keys.relayPort)
-        defaults.set(channel, forKey: Keys.channel)
-        defaults.set(fingerprint, forKey: Keys.fingerprint)
-        defaults.set(insecure, forKey: Keys.insecure)
         defaults.set(nvdaModifier.rawValue, forKey: Keys.nvdaModifier)
         defaults.set(optionMapping.rawValue, forKey: Keys.optionMapping)
         defaults.set(commandMapping.rawValue, forKey: Keys.commandMapping)
@@ -121,7 +99,6 @@ final class AppSettings {
         if let index = hostProfiles.firstIndex(where: { $0.id == profile.id }) { hostProfiles[index] = profile }
         else { hostProfiles.append(profile) }
         profileStore.save(hostProfiles)
-        if selectedNVDAProfileID == nil { selectedNVDAProfileID = profile.id }
         credentialStorageError = nil
         return true
     }
@@ -134,7 +111,6 @@ final class AppSettings {
         }
         hostProfiles.removeAll { $0.id == profile.id }
         profileStore.save(hostProfiles)
-        if selectedNVDAProfileID == profile.id { selectedNVDAProfileID = hostProfiles.first?.id }
         credentialStorageError = nil
         return true
     }
@@ -155,12 +131,13 @@ final class AppSettings {
 
     /// This is deliberately the legacy NVDA IPC command. `farrelay-host` is a
     /// distinct structured host protocol command stored on HostProfile.
-    func nvdaBridgeCommand(for profile: HostProfile) -> String {
+    func nvdaBridgeCommand(for profile: HostProfile) -> String? {
+        guard profile.isNVDARemoteEnabled, let capability = profile.nvdaRemote else { return nil }
         var command = profile.nvdaBridgeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         if command.isEmpty { command = "farrelay" }
-        var argv = [command, "--ipc", "--host", relayHost, "--port", String(relayPort), "--channel", channel]
-        if !fingerprint.isEmpty { argv += ["--fingerprint", fingerprint] }
-        if insecure { argv.append("--insecure") }
+        var argv = [command, "--ipc", "--host", capability.relayHost, "--port", String(capability.relayPort), "--channel", capability.channel]
+        if !capability.fingerprint.isEmpty { argv += ["--fingerprint", capability.fingerprint] }
+        if capability.insecure { argv.append("--insecure") }
         return argv.map(shellQuote).joined(separator: " ")
     }
 
@@ -185,8 +162,10 @@ final class AppSettings {
             port: defaults.object(forKey: Keys.legacySSHPort) as? Int ?? 22,
             username: username,
             authenticationMode: SSHAuthMode(rawValue: defaults.string(forKey: Keys.legacySSHAuthMode) ?? "") ?? .password,
+            platform: legacyNVDARemoteCapability() == nil ? .other : .windows,
             farRelayHostCommand: "farrelay-host",
-            nvdaBridgeCommand: defaults.string(forKey: Keys.legacyRemoteCommand) ?? "farrelay"
+            nvdaBridgeCommand: defaults.string(forKey: Keys.legacyRemoteCommand) ?? "farrelay",
+            nvdaRemote: legacyNVDARemoteCapability()
         )
         switch profileCredentialPersistence.migrateLegacyCredentials(to: profile.id, defaults: defaults) {
         case .success:
@@ -199,19 +178,55 @@ final class AppSettings {
         }
     }
 
-    private func saveSelectedNVDAProfileID() {
-        if let selectedNVDAProfileID { defaults.set(selectedNVDAProfileID.uuidString, forKey: Keys.selectedNVDAProfileID) }
-        else { defaults.removeObject(forKey: Keys.selectedNVDAProfileID) }
+    private func migrateLegacyNVDARemoteConfiguration() {
+        guard !defaults.bool(forKey: Keys.nvdaCapabilityMigrationComplete) else { return }
+        guard let capability = legacyNVDARemoteCapability() else {
+            clearLegacyNVDARemoteKeys()
+            defaults.set(true, forKey: Keys.nvdaCapabilityMigrationComplete)
+            return
+        }
+        let selectedID = UUID(uuidString: defaults.string(forKey: Keys.legacySelectedNVDAProfileID) ?? "")
+        guard let index = hostProfiles.firstIndex(where: { $0.id == selectedID }) ?? hostProfiles.indices.first else { return }
+        if hostProfiles[index].nvdaRemote == nil {
+            hostProfiles[index].nvdaRemote = capability
+            hostProfiles[index].platform = .windows
+            profileStore.save(hostProfiles)
+        }
+        clearLegacyNVDARemoteKeys()
+        defaults.set(true, forKey: Keys.nvdaCapabilityMigrationComplete)
+    }
+
+    /// An empty legacy channel means NVDA Remote was never actually configured.
+    /// Default relay host/port alone must not create or enable a capability.
+    private func legacyNVDARemoteCapability() -> NVDARemoteCapability? {
+        let keys = [Keys.legacyRelayHost, Keys.legacyRelayPort, Keys.legacyChannel, Keys.legacyFingerprint, Keys.legacyInsecure]
+        guard keys.contains(where: { defaults.object(forKey: $0) != nil }) else { return nil }
+        let channel = defaults.string(forKey: Keys.legacyChannel) ?? ""
+        guard !channel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return NVDARemoteCapability(
+            isEnabled: true,
+            relayHost: defaults.string(forKey: Keys.legacyRelayHost) ?? "nvdaremote.com",
+            relayPort: defaults.object(forKey: Keys.legacyRelayPort) as? Int ?? 6837,
+            channel: channel,
+            fingerprint: defaults.string(forKey: Keys.legacyFingerprint) ?? "",
+            insecure: defaults.bool(forKey: Keys.legacyInsecure)
+        )
+    }
+
+    private func clearLegacyNVDARemoteKeys() {
+        [Keys.legacyRelayHost, Keys.legacyRelayPort, Keys.legacyChannel, Keys.legacyFingerprint,
+         Keys.legacyInsecure, Keys.legacySelectedNVDAProfileID].forEach(defaults.removeObject(forKey:))
     }
 
     private enum Keys {
         static let hostProfiles = "farrelay.hostProfiles"
-        static let selectedNVDAProfileID = "farrelay.selectedNVDAProfileID"
-        static let relayHost = "farrelay.relayHost"
-        static let relayPort = "farrelay.relayPort"
-        static let channel = "farrelay.channel"
-        static let fingerprint = "farrelay.fingerprint"
-        static let insecure = "farrelay.insecure"
+        static let nvdaCapabilityMigrationComplete = "farrelay.nvdaCapabilityMigrationComplete"
+        static let legacySelectedNVDAProfileID = "farrelay.selectedNVDAProfileID"
+        static let legacyRelayHost = "farrelay.relayHost"
+        static let legacyRelayPort = "farrelay.relayPort"
+        static let legacyChannel = "farrelay.channel"
+        static let legacyFingerprint = "farrelay.fingerprint"
+        static let legacyInsecure = "farrelay.insecure"
         static let nvdaModifier = "farrelay.nvdaModifier"
         static let optionMapping = "farrelay.optionMapping"
         static let commandMapping = "farrelay.commandMapping"

@@ -64,6 +64,7 @@ extension SSHSession: SSHTerminalHostConnection {
 @MainActor
 final class SSHTerminalHost {
     private(set) var state: SSHTerminalHostState = .idle
+    private(set) var activeProfile: HostProfile?
     let presentation = TerminalPresentationModel()
 
     private let connectionFactory: any SSHTerminalHostConnectionFactory
@@ -94,13 +95,19 @@ final class SSHTerminalHost {
             fail("Select a complete computer profile before opening the terminal.")
             return
         }
-        await start(configuration: configuration)
+        await close()
+        activeProfile = profile
+        await start(configuration: configuration, closingExisting: false)
     }
 
     /// A configuration entry point keeps lifecycle tests deterministic without
     /// creating a second app settings or credential system.
     func start(configuration: SSHSessionConfiguration) async {
-        await close()
+        await start(configuration: configuration, closingExisting: true)
+    }
+
+    private func start(configuration: SSHSessionConfiguration, closingExisting: Bool) async {
+        if closingExisting { await close() }
         do {
             _ = try SSHSession.authenticationSummary(for: configuration)
         } catch {
@@ -134,6 +141,7 @@ final class SSHTerminalHost {
         driver = nil
         let connection = connection
         self.connection = nil
+        activeProfile = nil
         transition(to: .closed)
         try? await connection?.close()
     }
@@ -196,6 +204,7 @@ final class SSHTerminalHost {
         guard isCurrent(generation) else { return }
         self.connection = nil
         driver = nil
+        activeProfile = nil
         if state == .connected {
             transition(to: .ended)
         }

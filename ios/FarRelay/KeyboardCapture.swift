@@ -26,6 +26,17 @@ struct KeyboardCapture: UIViewRepresentable {
     func updateUIView(_ view: CaptureView, context: Context) {
         view.bridge = bridge
         view.settings = settings
+        if bridge.forwardingEnabled {
+            if view.window != nil, !view.isFirstResponder {
+                Task { @MainActor in _ = view.becomeFirstResponder() }
+            }
+        } else if view.isFirstResponder {
+            _ = view.resignFirstResponder()
+        }
+    }
+
+    static func dismantleUIView(_ uiView: CaptureView, coordinator: Void) {
+        _ = uiView.resignFirstResponder()
     }
 }
 

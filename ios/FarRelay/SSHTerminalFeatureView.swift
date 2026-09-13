@@ -5,8 +5,15 @@ struct SSHTerminalFeatureView: View {
     @Environment(AppSettings.self) private var settings
     let host: SSHTerminalHost
     let profile: HostProfile
+    let ownsLifecycle: Bool
     @State private var snapshot: AccessibleConversationSnapshot?
     @State private var hasStarted = false
+
+    init(host: SSHTerminalHost, profile: HostProfile, ownsLifecycle: Bool = true) {
+        self.host = host
+        self.profile = profile
+        self.ownsLifecycle = ownsLifecycle
+    }
 
     var body: some View {
         TerminalPresentationView(presentation: host.presentation) { snapshot in
@@ -22,14 +29,14 @@ struct SSHTerminalFeatureView: View {
             host.presentation.setLiveOutputSnapshotInspecting(snapshotID != nil)
         }
         .task {
-            guard !hasStarted else { return }
+            guard ownsLifecycle, !hasStarted else { return }
             hasStarted = true
             await host.start(settings: settings, profile: profile)
         }
         .onDisappear {
             // Pushing a Snapshot hides this view while the terminal must stay
             // alive. A real Back navigation has no active Snapshot.
-            guard snapshot == nil else { return }
+            guard ownsLifecycle, snapshot == nil else { return }
             Task {
                 await host.close()
             }

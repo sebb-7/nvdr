@@ -9,10 +9,7 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: "house", value: .home) {
-                NavigationStack { HomeTabView(host: terminalHost, showingSettings: $showingSettings) }
-            }
-            Tab("NVDA", systemImage: "accessibility", value: .nvda) {
-                NavigationStack { NVDATabView() }
+                NavigationStack { HomeTabView(showingSettings: $showingSettings) }
             }
             Tab("Terminals", systemImage: "terminal", value: .terminals) {
                 NavigationStack { TerminalsTabView(host: terminalHost) }
@@ -24,8 +21,8 @@ struct RootView: View {
                 NavigationStack { EmptyFeatureView(title: "Assistant", message: "Assistant is not configured yet.") }
             }
         }
-        .onChange(of: selectedTab) { oldTab, newTab in
-            if oldTab == .nvda, newTab != .nvda { bridge.suspendInputForInactiveContext() }
+        .onChange(of: selectedTab) { _, newTab in
+            if newTab != .home { bridge.suspendInputForInactiveContext() }
         }
         .sheet(isPresented: $showingSettings) { SettingsView() }
     }
@@ -33,7 +30,6 @@ struct RootView: View {
 
 private struct HomeTabView: View {
     @Environment(AppSettings.self) private var settings
-    let host: SSHTerminalHost
     @Binding var showingSettings: Bool
     @State private var addingProfile = false
 
@@ -49,14 +45,9 @@ private struct HomeTabView: View {
                         } label: {
                             VStack(alignment: .leading) {
                                 Text(profile.displayName)
-                                Text("\(profile.username)@\(profile.address):\(profile.port)")
+                                Text("\(profile.platform.label) · \(profile.username)@\(profile.address):\(profile.port)")
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
-                        }
-                        NavigationLink {
-                            SSHTerminalFeatureView(host: host, profile: profile)
-                        } label: {
-                            Label("Open Terminal", systemImage: "terminal")
                         }
                     }
                     .onDelete { indexes in
@@ -70,108 +61,34 @@ private struct HomeTabView: View {
         }
         .navigationTitle("FarRelay")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Settings", systemImage: "gear") { showingSettings = true }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Add Computer", systemImage: "plus") { addingProfile = true }
-            }
+            ToolbarItem(placement: .topBarLeading) { Button("Settings", systemImage: "gear") { showingSettings = true } }
+            ToolbarItem(placement: .topBarTrailing) { Button("Add Computer", systemImage: "plus") { addingProfile = true } }
         }
-        .sheet(isPresented: $addingProfile) { HostProfileEditorView(profile: nil) }
+        .sheet(isPresented: $addingProfile) {
+            NavigationStack { HostProfileEditorView(profile: nil) }
+        }
     }
 }
 
 private struct TerminalsTabView: View {
-    @Environment(AppSettings.self) private var settings
     let host: SSHTerminalHost
+    @State private var isExpanded = true
 
     var body: some View {
         List {
-            if settings.hostProfiles.isEmpty {
-                ContentUnavailableView("No computers", systemImage: "terminal", description: Text("Add a computer on the Home tab before opening a terminal."))
-            } else {
-                Section("Choose a computer") {
-                    ForEach(settings.hostProfiles) { profile in
-                        NavigationLink {
-                            SSHTerminalFeatureView(host: host, profile: profile)
-                        } label: {
-                            Label(profile.displayName, systemImage: "terminal")
-                        }
+            if let profile = host.activeProfile {
+                DisclosureGroup(profile.displayName, isExpanded: $isExpanded) {
+                    NavigationLink {
+                        SSHTerminalFeatureView(host: host, profile: profile, ownsLifecycle: false)
+                    } label: {
+                        Label("Active Terminal", systemImage: "terminal")
                     }
                 }
-                Section {
-                    Text("FarRelay currently keeps one active terminal session. Opening another computer replaces that active session.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+            } else {
+                ContentUnavailableView("No active terminals", systemImage: "terminal", description: Text("Open a terminal from a computer on Home."))
             }
         }
         .navigationTitle("Terminals")
-    }
-}
-
-private struct NVDATabView: View {
-    @Environment(AppSettings.self) private var settings
-    @Environment(BridgeClient.self) private var bridge
-
-    var body: some View {
-        @Bindable var settings = settings
-        @Bindable var bridge = bridge
-        Form {
-            Section("Computer") {
-                if settings.hostProfiles.isEmpty {
-                    Text("Add a computer on the Home tab before connecting NVDA.")
-                } else {
-                    Picker("Computer", selection: $settings.selectedNVDAProfileID) {
-                        ForEach(settings.hostProfiles) { profile in
-                            Text(profile.displayName).tag(Optional(profile.id))
-                        }
-                    }
-                    Button(isConnected ? "Disconnect" : "Connect", systemImage: "network") {
-                        if isConnected { bridge.stop() }
-                        else if let profile = settings.selectedNVDAProfile { bridge.start(settings: settings, profile: profile) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-            Section("Status") { Text(statusLabel) }
-            Section("Keyboard forwarding") {
-                Toggle("Forward keystrokes to slave", isOn: $bridge.forwardingEnabled)
-                    .disabled(!isForwardingAvailable)
-                Text(isForwardingAvailable ? "Turn this off to use the keyboard locally." : "Connect first.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("Last spoken") { Text(bridge.lastSpeech.isEmpty ? "—" : bridge.lastSpeech) }
-            Section("Log") {
-                ForEach(bridge.log.indices, id: \.self) { Text(bridge.log[$0]).font(.caption.monospaced()) }
-            }
-        }
-        .navigationTitle("NVDA")
-        .overlay { KeyboardCapture(bridge: bridge, settings: settings).frame(height: 0) }
-        .onDisappear { bridge.suspendInputForInactiveContext() }
-    }
-
-    private var isConnected: Bool {
-        switch bridge.status {
-        case .ready, .connecting, .authenticating, .reconnecting, .nvdaNotConnected: true
-        default: false
-        }
-    }
-
-    private var isForwardingAvailable: Bool {
-        switch bridge.status { case .ready, .nvdaNotConnected: true; default: false }
-    }
-
-    private var statusLabel: String {
-        switch bridge.status {
-        case .idle: "Idle"
-        case .connecting: "Connecting"
-        case .authenticating: "Authenticating"
-        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"
-        case .ready: "Ready"
-        case .nvdaNotConnected: "Connected, no NVDA on channel"
-        case .disconnected(let reason): "Disconnected (\(reason))"
-        case .failed(let message): "Failed: \(message)"
-        }
     }
 }
 
@@ -179,7 +96,6 @@ private struct EmptyFeatureView: View {
     let title: String
     let message: String
     var body: some View {
-        ContentUnavailableView(title, systemImage: "tray", description: Text(message))
-            .navigationTitle(title)
+        ContentUnavailableView(title, systemImage: "tray", description: Text(message)).navigationTitle(title)
     }
 }

@@ -10,20 +10,6 @@ struct SettingsView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
-                Section("NVDA Remote relay") {
-                    LabeledTextField("Relay host", text: $settings.relayHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    LabeledIntField("Port", value: $settings.relayPort)
-                    LabeledTextField("Channel key", text: $settings.channel)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    LabeledTextField("Pinned fingerprint (sha-256, blank=TOFU)", text: $settings.fingerprint)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Toggle("Insecure (skip TLS verify)", isOn: $settings.insecure)
-                }
-
                 Section("Local input") {
                     Picker("NVDA modifier", selection: $settings.nvdaModifier) {
                         ForEach(NvdaModifier.allCases) { m in

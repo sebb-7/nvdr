@@ -106,25 +106,211 @@ final class HostProfileTests: XCTestCase {
         let defaults = try makeDefaults()
         let credentials = TestCredentialStore()
         let settings = AppSettings(defaults: defaults, credentialStore: credentials)
-        settings.channel = "relay channel"
         let profile = HostProfile(
             displayName: "Tailscale is just SSH",
             address: "100.64.0.8",
             port: 2200,
             username: "reader",
+            platform: .windows,
             farRelayHostCommand: "farrelay-host",
-            nvdaBridgeCommand: "farrelay"
+            nvdaBridgeCommand: "farrelay",
+            nvdaRemote: NVDARemoteCapability(isEnabled: true, channel: "relay channel")
         )
+        XCTAssertTrue(profile.isNVDARemoteEnabled)
         XCTAssertTrue(settings.saveProfile(profile, credentials: HostProfileCredentials(password: "secret")))
         let configuration = try XCTUnwrap(settings.sshSessionConfiguration(for: profile))
         XCTAssertEqual(configuration.host, "100.64.0.8")
         XCTAssertEqual(configuration.port, 2200)
         XCTAssertEqual(configuration.username, "reader")
-        XCTAssertEqual(settings.nvdaBridgeCommand(for: profile), "farrelay --ipc --host nvdaremote.com --port 6837 --channel 'relay channel'")
+        let command = try XCTUnwrap(settings.nvdaBridgeCommand(for: profile))
+        XCTAssertEqual(command, "farrelay --ipc --host nvdaremote.com --port 6837 --channel 'relay channel'")
+        XCTAssertFalse(command.contains("farrelay-host"))
+        XCTAssertNotEqual(profile.farRelayHostCommand, profile.nvdaBridgeCommand)
     }
 
     func testAppShellTabsHaveStableRequiredOrder() {
-        XCTAssertEqual(AppShellTab.allCases, [.home, .nvda, .terminals, .agents, .assistant])
+        XCTAssertEqual(AppShellTab.allCases, [.home, .terminals, .agents, .assistant])
+        XCTAssertEqual(AppShellTab.allCases.map(\.rawValue), ["home", "terminals", "agents", "assistant"])
+        XCTAssertFalse(AppShellTab.allCases.map(\.rawValue).contains("nvda"))
+        XCTAssertFalse(AppShellTab.allCases.map(\.rawValue).contains("settings"))
+    }
+
+    func testHostProfileWithoutPlatformFieldDecodesAsOther() throws {
+        let id = UUID()
+        let json = """
+        {"id":"\(id.uuidString)","displayName":"G14","address":"host.example","port":22,"username":"reader","authenticationMode":"password"}
+        """
+        let decoded = try JSONDecoder().decode(HostProfile.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.id, id)
+        XCTAssertEqual(decoded.platform, .other)
+        XCTAssertEqual(decoded.farRelayHostCommand, "farrelay-host")
+        XCTAssertEqual(decoded.nvdaBridgeCommand, "farrelay")
+        XCTAssertNil(decoded.nvdaRemote)
+        XCTAssertFalse(decoded.isNVDARemoteEnabled)
+    }
+
+    func testPlatformRoundTripAndEditPreserveProfileIdentity() throws {
+        let original = HostProfile(displayName: "G14", address: "g14", username: "user", platform: .linux)
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(HostProfile.self, from: encoded)
+        XCTAssertEqual(decoded.platform, .linux)
+        XCTAssertEqual(decoded.id, original.id)
+
+        var edited = decoded
+        edited.platform = .windows
+        XCTAssertEqual(edited.id, original.id)
+        XCTAssertEqual(edited.platform, .windows)
+        let credentials = HostProfileCredentials(password: "pw")
+        let before = original.sshSessionConfiguration(credentials: credentials)
+        let after = edited.sshSessionConfiguration(credentials: credentials)
+        XCTAssertEqual(before.host, after.host)
+        XCTAssertEqual(before.port, after.port)
+        XCTAssertEqual(before.username, after.username)
+    }
+
+    func testNVDARemoteCapabilityIsOptionalAndWindowsOnly() throws {
+        let defaults = try makeDefaults()
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        let unset = HostProfile(platform: .windows)
+        XCTAssertNil(unset.nvdaRemote)
+        XCTAssertFalse(unset.isNVDARemoteEnabled)
+        XCTAssertNil(settings.nvdaBridgeCommand(for: unset))
+
+        let windows = HostProfile(
+            platform: .windows,
+            nvdaRemote: NVDARemoteCapability(isEnabled: true, relayHost: "relay.example", relayPort: 7001, channel: "chan")
+        )
+        XCTAssertTrue(windows.isNVDARemoteEnabled)
+        XCTAssertEqual(
+            settings.nvdaBridgeCommand(for: windows),
+            "farrelay --ipc --host relay.example --port 7001 --channel chan"
+        )
+
+        let linux = HostProfile(
+            platform: .linux,
+            nvdaRemote: NVDARemoteCapability(isEnabled: true, channel: "chan")
+        )
+        XCTAssertFalse(linux.isNVDARemoteEnabled)
+        XCTAssertNil(settings.nvdaBridgeCommand(for: linux))
+    }
+
+    func testEmptyLegacyNVDAChannelDoesNotEnableCapability() throws {
+        let defaults = try makeDefaults()
+        let first = HostProfile(displayName: "First", address: "first", username: "user")
+        saveHostProfiles([first], defaults: defaults)
+        defaults.set("nvdaremote.com", forKey: "farrelay.relayHost")
+        defaults.set(6837, forKey: "farrelay.relayPort")
+        defaults.set("", forKey: "farrelay.channel")
+        defaults.set("sha-256-fp", forKey: "farrelay.fingerprint")
+        defaults.set(true, forKey: "farrelay.insecure")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        let profile = try XCTUnwrap(settings.hostProfiles.only)
+        XCTAssertEqual(profile.id, first.id)
+        XCTAssertNil(profile.nvdaRemote)
+        XCTAssertFalse(profile.isNVDARemoteEnabled)
+        XCTAssertEqual(profile.platform, .other)
+        XCTAssertTrue(defaults.bool(forKey: "farrelay.nvdaCapabilityMigrationComplete"))
+        XCTAssertNil(defaults.object(forKey: "farrelay.relayHost"))
+        XCTAssertNil(defaults.object(forKey: "farrelay.channel"))
+        XCTAssertNil(defaults.object(forKey: "farrelay.fingerprint"))
+    }
+
+    func testWhitespaceLegacyNVDAChannelDoesNotEnableCapability() throws {
+        let defaults = try makeDefaults()
+        saveHostProfiles([HostProfile(displayName: "First", address: "first", username: "user")], defaults: defaults)
+        defaults.set("   \t", forKey: "farrelay.channel")
+        defaults.set("nvdaremote.com", forKey: "farrelay.relayHost")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertNil(try XCTUnwrap(settings.hostProfiles.only).nvdaRemote)
+        XCTAssertTrue(defaults.bool(forKey: "farrelay.nvdaCapabilityMigrationComplete"))
+    }
+
+    func testConfiguredLegacyNVDAMigratesOntoSelectedProfileOnce() throws {
+        let defaults = try makeDefaults()
+        let first = HostProfile(displayName: "Mac mini", address: "mac", username: "user", platform: .macOS)
+        let second = HostProfile(displayName: "G14", address: "g14", username: "user", platform: .other)
+        saveHostProfiles([first, second], defaults: defaults)
+        defaults.set(second.id.uuidString, forKey: "farrelay.selectedNVDAProfileID")
+        defaults.set("relay.example", forKey: "farrelay.relayHost")
+        defaults.set(7001, forKey: "farrelay.relayPort")
+        defaults.set("channel-key", forKey: "farrelay.channel")
+        defaults.set("pinned-fp", forKey: "farrelay.fingerprint")
+        defaults.set(true, forKey: "farrelay.insecure")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertEqual(settings.hostProfiles.count, 2)
+        XCTAssertNil(settings.hostProfiles.first { $0.id == first.id }?.nvdaRemote)
+        let migrated = try XCTUnwrap(settings.hostProfiles.first { $0.id == second.id })
+        XCTAssertEqual(migrated.platform, .windows)
+        let capability = try XCTUnwrap(migrated.nvdaRemote)
+        XCTAssertTrue(capability.isEnabled)
+        XCTAssertEqual(capability.relayHost, "relay.example")
+        XCTAssertEqual(capability.relayPort, 7001)
+        XCTAssertEqual(capability.channel, "channel-key")
+        XCTAssertEqual(capability.fingerprint, "pinned-fp")
+        XCTAssertTrue(capability.insecure)
+        XCTAssertTrue(migrated.isNVDARemoteEnabled)
+        XCTAssertNil(defaults.object(forKey: "farrelay.channel"))
+        XCTAssertNil(defaults.object(forKey: "farrelay.selectedNVDAProfileID"))
+        XCTAssertTrue(defaults.bool(forKey: "farrelay.nvdaCapabilityMigrationComplete"))
+
+        let reloaded = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertEqual(reloaded.hostProfiles, settings.hostProfiles)
+        XCTAssertEqual(reloaded.hostProfiles.filter { $0.nvdaRemote != nil }.count, 1)
+    }
+
+    func testLegacyNVDAMigrationChoosesFirstProfileWhenSelectionIsMissing() throws {
+        let defaults = try makeDefaults()
+        let first = HostProfile(displayName: "First", address: "first", username: "user")
+        let second = HostProfile(displayName: "Second", address: "second", username: "user")
+        saveHostProfiles([first, second], defaults: defaults)
+        defaults.set(UUID().uuidString, forKey: "farrelay.selectedNVDAProfileID")
+        defaults.set("channel-key", forKey: "farrelay.channel")
+        defaults.set("relay.example", forKey: "farrelay.relayHost")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertEqual(settings.hostProfiles[0].nvdaRemote?.channel, "channel-key")
+        XCTAssertEqual(settings.hostProfiles[0].platform, .windows)
+        XCTAssertNil(settings.hostProfiles[1].nvdaRemote)
+        XCTAssertNil(defaults.object(forKey: "farrelay.selectedNVDAProfileID"))
+    }
+
+    func testLegacyNVDAMigrationDoesNotOverwriteExistingCapability() throws {
+        let defaults = try makeDefaults()
+        let existing = NVDARemoteCapability(isEnabled: true, relayHost: "already.example", channel: "kept")
+        let first = HostProfile(displayName: "G14", address: "g14", username: "user", platform: .windows, nvdaRemote: existing)
+        saveHostProfiles([first], defaults: defaults)
+        defaults.set("new.relay", forKey: "farrelay.relayHost")
+        defaults.set("new-channel", forKey: "farrelay.channel")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        let profile = try XCTUnwrap(settings.hostProfiles.only)
+        XCTAssertEqual(profile.nvdaRemote?.channel, "kept")
+        XCTAssertEqual(profile.nvdaRemote?.relayHost, "already.example")
+        XCTAssertTrue(defaults.bool(forKey: "farrelay.nvdaCapabilityMigrationComplete"))
+    }
+
+    func testHostProfileJSONNeverContainsCredentialSecrets() throws {
+        var profile = HostProfile(platform: .windows)
+        profile.nvdaRemote = NVDARemoteCapability(isEnabled: true, channel: "relay-channel")
+        let encoded = try JSONEncoder().encode(profile)
+        let text = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        XCTAssertFalse(text.contains("SECRET"))
+        XCTAssertFalse(text.contains("passwordValue"))
+        XCTAssertFalse(text.contains("BEGIN PRIVATE KEY"))
+        XCTAssertTrue(text.contains("relay-channel"))
+        XCTAssertTrue(text.contains("farrelay-host"))
+        XCTAssertTrue(text.contains("farrelay"))
+    }
+
+    func testLeavingNVDAHostContextSuspendsKeyboardForwarding() {
+        let bridge = BridgeClient(speech: SpeechOutput())
+        bridge.forwardingEnabled = true
+        bridge.suspendInputForInactiveContext()
+        XCTAssertFalse(bridge.forwardingEnabled)
+        XCTAssertFalse(bridge.isInputForwardingReady)
     }
 
     private func makeDefaults() throws -> UserDefaults {
@@ -132,6 +318,10 @@ final class HostProfileTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
         return defaults
+    }
+
+    private func saveHostProfiles(_ profiles: [HostProfile], defaults: UserDefaults) {
+        HostProfileStore(defaults: defaults, key: "farrelay.hostProfiles").save(profiles)
     }
 }
 

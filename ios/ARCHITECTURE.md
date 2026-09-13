@@ -188,10 +188,12 @@ not infer command completion, exit status, or grouped command output, and it
 does not capture arbitrary alternate-screen repaint state. Alternate-screen
 applications remain an inspectable replacement display rather than fabricated
 append-only conversation history. Automatic large-output thresholds, search,
-rich link metadata, reliable command/output grouping,
-Host Profiles, multiple terminals, onboarding,
-NVDA separation, agents, Assistant integration, and productivity features such
-as Starred Commands and a command palette remain future phases.
+rich link metadata, reliable command/output grouping, onboarding,
+and productivity features such as Starred Commands and a command palette
+remain future phases. Host Profiles and NVDA-as-a-host-capability live at the
+app composition boundary; multiple simultaneous terminals are the next
+`TerminalSessionManager` phase. Agents and Assistant remain honest empty
+shells until those features are implemented.
 
 The ownership boundary is intentionally strict:
 
@@ -246,15 +248,58 @@ NVDA mapping, or RemoteIntent expansion. OS- and NVDA-level chords will later
 flow through their appropriate semantic targets rather than being faked as PTY
 input.
 
+## FarRelay app shell
+
+The main tabs are exactly Home, Terminals, Agents, and Assistant. Settings is
+a Home toolbar sheet, not a tab. There is no top-level NVDA tab.
+
+Home is the saved-computer directory. Each `HostProfile` is one computer
+(address, port, user, authentication, platform, and host-specific
+capabilities). Credentials stay in the Keychain under a profile-scoped
+reference; profile JSON may record authentication mode and credential
+metadata but never passwords, private keys, or passphrases. A Tailscale IP,
+MagicDNS name, LAN IP, or ordinary hostname is just an SSH address—the app
+does not embed a VPN SDK or infer platform from the address.
+
+`HostPlatform` (`windows`, `macOS`, `linux`, `other`) is descriptive and
+capability-gating metadata. It does not change SSH semantics. Missing
+legacy JSON decodes as `other`. Changing platform does not change the
+profile ID.
+
+NVDA Remote is an optional capability of a Windows `HostProfile`. Windows
+does not imply that NVDA is configured. Non-Windows computers do not expose
+or activate it. Navigation is Home → computer → NVDA Remote. Keyboard
+capture exists only while that operating screen is active; leaving it, or
+leaving the Home tab, suspends forwarding and releases held keys. The
+bridge remains SSH-backed `farrelay --ipc`. The structured host command is
+`farrelay-host` and must not be collapsed with that bridge command.
+
+Agents is the future home of things the user directly operates (Claude Code,
+Codex, local coding agents). Assistant is a future cross-host semantic
+orchestrator. Both are empty states in this phase.
+
+Terminals is the active terminal-session workspace. The next dedicated
+phase introduces `TerminalSessionManager`: sessions grouped by computer,
+independent stable session IDs, expandable host groups, host-level and
+global New Terminal, and tab switches that do not close sessions. Closing
+the last terminal for a host removes that group from Terminals while the
+`HostProfile` remains on Home. This phase does not implement that manager.
+`SSHTerminalHost` still owns one interactive terminal and must not fake
+multi-session behavior.
+
+Future controller adapters consume the stable terminal-scoped Control Key
+IDs created with Terminal Control Keys, not labels or list positions.
+
 ## App-level SSH terminal host
 
 `SSHTerminalHost` is the narrow app-level composition owner for one interactive
-terminal. It reuses `AppSettings.sshSessionConfiguration()`—the same endpoint,
-authentication, credential, and host-key behavior used by the NVDA bridge—to
-create one `SSHSession`, open one production `SSHPTYTransport`, create one
-`SSHTerminalSession`, and attach that session to `TerminalPresentationModel`.
-It does not use the reconnecting NVDA supervisor, parse terminal bytes, or
-share the NVDA IPC channel.
+terminal. It builds an `SSHSessionConfiguration` from the explicitly selected
+`HostProfile` and that profile's Keychain credentials—the same profile-scoped
+endpoint, authentication, credential, and host-key behavior used by the NVDA
+bridge—then creates one `SSHSession`, opens one production `SSHPTYTransport`,
+creates one `SSHTerminalSession`, and attaches that session to
+`TerminalPresentationModel`. It does not use the reconnecting NVDA supervisor,
+parse terminal bytes, or share the NVDA IPC channel.
 
 ```text
 App / SSHTerminalHost
@@ -271,12 +316,12 @@ TerminalPresentationModel / TerminalPresentationView
     own accessible interaction
 ```
 
-Opening **Open SSH terminal** creates this independent terminal feature from
-the saved SSH settings. The host reports connecting, startup failure, end, and
-close through the presentation model. Closing the view first closes the
-terminal session, cancels host work, and then releases the SSH connection;
-repeated closes are safe. NVDA IPC remains a parallel feature with independent
-state and lifetime.
+Opening **Open Terminal** from a saved computer creates this independent
+terminal feature from that profile's SSH settings. The host reports connecting,
+startup failure, end, and close through the presentation model. Closing the
+view first closes the terminal session, cancels host work, and then releases
+the SSH connection; repeated closes are safe. NVDA Remote remains a parallel
+host capability with independent state and lifetime.
 
 ## FarRelay Host v1
 

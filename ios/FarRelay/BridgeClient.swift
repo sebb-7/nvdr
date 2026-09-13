@@ -73,10 +73,13 @@ final class BridgeClient {
         let host = profile.address
         let port = profile.port
         let user = profile.username
-        let remote = settings.nvdaBridgeCommand(for: profile)
+        guard let remote = settings.nvdaBridgeCommand(for: profile) else {
+            status = .failed(message: "Configure and enable NVDA Remote for this Windows computer.")
+            return
+        }
 
-        guard profile.isConnectionReady, !settings.channel.isEmpty else {
-            status = .failed(message: "Select a complete computer profile and relay channel.")
+        guard profile.isConnectionReady else {
+            status = .failed(message: "Select a complete computer profile.")
             return
         }
 
@@ -130,8 +133,9 @@ final class BridgeClient {
         status = .disconnected(reason: "stopped")
     }
 
-    /// Leaving the NVDA tab must release any remote keys before capture is no
-    /// longer mounted. Keep the SSH connection intact but stop forwarding.
+    /// Leaving the NVDA Remote host screen, or leaving Home for another tab,
+    /// must release any remote keys before capture is no longer mounted. Keep
+    /// the SSH connection intact but stop forwarding.
     func suspendInputForInactiveContext() {
         forwardingEnabled = false
     }
