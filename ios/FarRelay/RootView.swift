@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(AppSettings.self) private var settings
     @Environment(BridgeClient.self) private var bridge
     @Environment(TerminalSessionManager.self) private var terminals
+    @Environment(InteractionFeedback.self) private var interactionFeedback
     @State private var selectedTab: AppShellTab = .home
     @State private var showingSettings = false
 
@@ -26,6 +28,7 @@ struct RootView: View {
             terminals.setTerminalInteractionActive(false)
         }
         .sheet(isPresented: $showingSettings) { SettingsView() }
+        .interactionHaptics(interactionFeedback, enabled: settings.hapticFeedbackEnabled)
     }
 }
 

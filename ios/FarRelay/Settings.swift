@@ -35,6 +35,8 @@ final class AppSettings {
     var commandMapping: ModifierMapping
     var speechRate: Float
     var voiceIdentifier: String?
+    var hapticFeedbackEnabled: Bool
+    var soundCuesEnabled: Bool
     private(set) var terminalControlKeys: [TerminalControlKey]
     private(set) var hostProfiles: [HostProfile] = []
     private(set) var credentialStorageError: String? = nil
@@ -57,6 +59,8 @@ final class AppSettings {
         commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .alt
         speechRate = Float(defaults.object(forKey: Keys.speechRate) as? Double ?? 0.55)
         voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
+        hapticFeedbackEnabled = defaults.object(forKey: Keys.hapticFeedbackEnabled) as? Bool ?? true
+        soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? false
         switch terminalControlKeyStore.load() {
         case .uninitialized:
             terminalControlKeys = TerminalControlKey.defaultControls
@@ -87,6 +91,8 @@ final class AppSettings {
         defaults.set(Double(speechRate), forKey: Keys.speechRate)
         if let voiceIdentifier { defaults.set(voiceIdentifier, forKey: Keys.voiceIdentifier) }
         else { defaults.removeObject(forKey: Keys.voiceIdentifier) }
+        defaults.set(hapticFeedbackEnabled, forKey: Keys.hapticFeedbackEnabled)
+        defaults.set(soundCuesEnabled, forKey: Keys.soundCuesEnabled)
         terminalControlKeyStore.save(terminalControlKeys)
     }
 
@@ -232,6 +238,8 @@ final class AppSettings {
         static let commandMapping = "farrelay.commandMapping"
         static let speechRate = "farrelay.speechRate"
         static let voiceIdentifier = "farrelay.voiceIdentifier"
+        static let hapticFeedbackEnabled = "farrelay.hapticFeedbackEnabled"
+        static let soundCuesEnabled = "farrelay.soundCuesEnabled"
         static let terminalControlKeys = "farrelay.terminalControlKeys"
         static let legacySSHHost = "farrelay.sshHost"
         static let legacySSHPort = "farrelay.sshPort"

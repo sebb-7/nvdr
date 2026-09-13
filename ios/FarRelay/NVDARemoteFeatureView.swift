@@ -3,6 +3,7 @@ import SwiftUI
 struct NVDARemoteFeatureView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(BridgeClient.self) private var bridge
+    @Environment(InteractionFeedback.self) private var interactionFeedback
     let profile: HostProfile
 
     var body: some View {
@@ -25,6 +26,17 @@ struct NVDARemoteFeatureView: View {
         }
         .navigationTitle("NVDA Remote")
         .overlay { KeyboardCapture(bridge: bridge, settings: settings).frame(height: 0) }
+        .onChange(of: bridge.status) { old, new in
+            guard old != new else { return }
+            switch new {
+            case .ready:
+                interactionFeedback.play(.success)
+            case .failed:
+                interactionFeedback.play(.error)
+            default:
+                break
+            }
+        }
         .onDisappear { bridge.suspendInputForInactiveContext() }
     }
 
