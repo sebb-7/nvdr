@@ -170,8 +170,8 @@ SwiftUI supplies the normal accessibility behavior: command entries use native
 heading semantics, output uses native selectable text, input remains a native
 text-entry control, and buttons remain buttons. FarRelay does not recreate
 VoiceOver's built-in heading, link, selection, or text-navigation features.
-`Run Again` is a custom accessibility action because replaying an exact terminal
-command is FarRelay-specific.
+Custom Actions-rotor items are FarRelay-specific: `Copy`, `Run Again`, and
+`Open Snapshot`. Native text selection remains.
 
 Conversation means operate; a Snapshot means inspect. An incoming conversation
 entry can be explicitly captured as an immutable `AccessibleConversationSnapshot`:
@@ -183,16 +183,26 @@ new terminal lifetime moving content under VoiceOver focus. The small Snapshot
 value is provider-neutral and may later serve other conversation providers
 without introducing those dependencies now.
 
-The first Snapshot scope is one incoming logical conversation entry. It does
-not infer command completion, exit status, or grouped command output, and it
-does not capture arbitrary alternate-screen repaint state. Alternate-screen
-applications remain an inspectable replacement display rather than fabricated
-append-only conversation history. Automatic large-output thresholds, search,
-rich link metadata, reliable command/output grouping, onboarding,
-and productivity features such as Starred Commands and a command palette
-remain future phases. Host Profiles and NVDA-as-a-host-capability live at the
-app composition boundary. Multiple simultaneous terminals are owned by
-`TerminalSessionManager`. Agents and Assistant remain honest empty shells
+When the terminal supplies OSC 133 roles already parsed by `TerminalEngine`,
+the presentation layer groups consecutive `.output` lines into one incoming
+response block, stores prompt-only lines as unobtrusive `shellPromptContext`
+instead of conversation messages, and suppresses a shell command echo only
+when `.input` semantics prove it matches the last FarRelay outbound command
+text-for-text. It does not reparse ANSI/OSC in SwiftUI and does not invent
+those boundaries when marks are absent. Without shell integration, the
+previous per-completed-line fallback remains. Alternate-screen applications
+stay an inspectable replacement display rather than fabricated append-only
+history.
+
+A response block that reaches 50 logical lines or 4,000 characters is still
+stored in full on the conversation entry and in any Snapshot. The conversation
+list presents a compact summary (`Large output, N lines. Open Snapshot.`),
+Copy still copies the complete text, and live VoiceOver announcements become
+`Large output received, N lines.` Focus is not moved. Search, rich link
+metadata, onboarding, and productivity features such as Starred Commands and
+a command palette remain future phases. Host Profiles and NVDA-as-a-host-capability
+live at the app composition boundary. Multiple simultaneous terminals are owned
+by `TerminalSessionManager`. Agents and Assistant remain honest empty shells
 until those features are implemented.
 
 The ownership boundary is intentionally strict:
@@ -244,9 +254,85 @@ Future controller bindings may reference stable Control Key IDs without
 depending on labels or order. Renaming or reordering therefore does not break a
 binding; deleting a target will require that future adapter to handle a missing
 ID gracefully. This phase does not include a controller adapter, GameController,
-NVDA mapping, or RemoteIntent expansion. OS- and NVDA-level chords will later
-flow through their appropriate semantic targets rather than being faked as PTY
-input.
+NVDA mapping, F11-style global remote input, or RemoteIntent expansion. OS- and
+NVDA-level chords will later flow through their appropriate semantic targets
+rather than being faked as PTY input.
+
+## Interaction feedback
+
+`InteractionFeedback` is a small app-level semantic player. Terminal and NVDA
+models emit categories (`selectionAccepted`, `success`, `warning`, `error`,
+`copied`) without knowing about vibration hardware or audio APIs. SwiftUI
+`sensoryFeedback` delivers optional haptics from `RootView`. Short locally
+generated WAV earcons use AudioServices UI sounds so they do not take the
+shared audio session, duck VoiceOver, or interrupt `SpeechOutput`. They
+respect the Silent switch.
+
+Defaults migrate safely for existing installations: **Haptic feedback** is on,
+**Sound cues** are off. The two toggles live under Settings → Interaction
+Feedback and persist independently. Feedback is sparse: Send, Run Again,
+Control Keys, Copy, Open Snapshot, terminal connected/failed, and NVDA
+ready/failed. Incoming terminal lines, cursor motion, and VoiceOver focus
+moves do not vibrate or play sounds.
+
+## Terminal conversation actions and native input
+
+The terminal should feel closer to an accessible messaging conversation than
+to a visual grid. Command entries remain native headings. Incoming content
+remains selectable text. The Actions rotor exposes `Copy` and `Run Again` on
+commands, and `Copy` plus `Open Snapshot` on incoming output. The visible
+Open Snapshot button remains. Output Snapshot also has `Copy All`. Copy uses
+a tiny `AppClipboard` seam and posts `Copied` without moving VoiceOver focus.
+Run Again still resends exact command bytes; a disconnected retry reports
+error feedback and does not duplicate the command in the transcript.
+
+Terminal input is a native `TextField` so VoiceOver Braille Screen Input can
+type Unicode into it. Autocorrect and autocapitalization stay off. Send is an
+explicit action (button, keyboard Send, or the `Send Command` rotor action).
+Successful Send clears the field; failed Send preserves it. If the user was
+already editing in the field, keyboard/editing focus is restored after a
+successful Send so the next command can be typed immediately. VoiceOver
+accessibility focus is observed, never stolen: live output must not yank the
+user into the input, and remote output must not move local VoiceOver focus.
+`Clear Input` is offered on the rotor only when the field has text.
+
+## Accessibility polish non-goals
+
+This phase does not implement controller adapters, GameController, F11-style
+NVDA global remote mode, global hardware-keyboard passthrough, a Mac
+RemoteIntent adapter, CGEvent/AXUIElement injection, custom BSI or braille
+tables, Agents/Assistant runtimes, terminal persistence across app restart,
+SSH multiplexing, command-history search, terminal tabs, or a visual redesign.
+
+## Manual accessibility QA
+
+Automated tests do not prove Braille Screen Input, haptics, or earcons on a
+physical iPhone. Before claiming those surfaces are done, run:
+
+### Braille Screen Input
+
+1. Open an active terminal.
+2. Focus Terminal input.
+3. Enable Braille Screen Input.
+4. Type a normal command.
+5. Verify spaces and punctuation survive.
+6. Send.
+7. Verify the command is transmitted exactly once.
+8. Verify the field clears.
+9. Verify input remains usable for the next command.
+10. Type another command immediately.
+11. Verify incoming output does not steal input focus.
+12. Test Unicode and accented text.
+13. Test Clear Input.
+14. Test a failed or disconnected send preserves typed text.
+15. Leave BSI and inspect conversation Actions (Copy, Run Again, Open Snapshot).
+
+### Haptics and sound cues
+
+- Haptics on, sounds off: Send, Copy, and Run Again produce a tactile response; streaming terminal output does not vibrate repeatedly.
+- Haptics off: the app does not generate haptics.
+- Sound cues on: cues are brief and distinguish ordinary success from error; VoiceOver and FarRelay speech remain understandable; streaming output does not spam sounds.
+- Sound cues off: silence.
 
 ## FarRelay app shell
 

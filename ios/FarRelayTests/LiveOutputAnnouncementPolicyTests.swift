@@ -82,6 +82,18 @@ final class LiveOutputAnnouncementPolicyTests: XCTestCase {
         XCTAssertTrue(policy.settle(token: schedule.token, context: enabled).isEmpty)
     }
 
+    func testLargeOutputAnnouncementIsConcise() {
+        let policy = LiveOutputAnnouncementPolicy()
+        let text = (0..<TerminalConversationOutputLimits.largeOutputLineCount)
+            .map { "line \($0)" }
+            .joined(separator: "\n")
+        let output = AccessibleConversationEntry(text: text, role: .incomingContent)
+        XCTAssertEqual(announcements(in: policy.completed([output], context: enabled)), [
+            "Large output received, 50 lines."
+        ])
+        XCTAssertTrue(policy.completed([output], context: enabled).isEmpty)
+    }
+
     private func entry(_ text: String) -> AccessibleConversationEntry {
         AccessibleConversationEntry(text: text, role: .incomingContent)
     }
