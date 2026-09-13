@@ -12,7 +12,7 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testOpeningOneTerminalCreatesAStableSessionID() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let session = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let session = try await opened(manager, g14, settings: settings)
         XCTAssertEqual(manager.sessions.count, 1)
         XCTAssertEqual(session.id, manager.sessions[0].id)
         XCTAssertEqual(session.hostProfileID, g14.id)
@@ -22,9 +22,9 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testTwoTerminalsOnTheSameHostHaveDifferentIDsAndCoexist() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let first = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let first = try await opened(manager, g14, settings: settings)
         await waitUntil { first.host.state == .connected }
-        let second = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let second = try await opened(manager, g14, settings: settings)
         await waitUntil { second.host.state == .connected }
 
         XCTAssertNotEqual(first.id, second.id)
@@ -44,8 +44,8 @@ final class TerminalSessionManagerTests: XCTestCase {
         mac.displayName = "G14"
         XCTAssertTrue(settings.saveProfile(mac, credentials: HostProfileCredentials(password: "pw")))
 
-        let first = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
-        let second = try XCTUnwrap(await manager.openTerminal(for: mac, settings: settings))
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, mac, settings: settings)
         XCTAssertEqual(manager.sessions.count, 2)
         XCTAssertNotEqual(first.hostProfileID, second.hostProfileID)
 
@@ -58,8 +58,8 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testTwoSessionsForOneHostProduceOneGroup() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        _ = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
-        _ = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        _ = try await opened(manager, g14, settings: settings)
+        _ = try await opened(manager, g14, settings: settings)
         let groups = manager.hostGroups(using: settings.hostProfiles)
         XCTAssertEqual(groups.count, 1)
         XCTAssertEqual(groups[0].sessions.count, 2)
@@ -68,8 +68,8 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testClosingOneOfTwoSessionsLeavesTheOther() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let first = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
-        let second = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let first = try await opened(manager, g14, settings: settings)
+        let second = try await opened(manager, g14, settings: settings)
         await waitUntil { first.host.state == .connected }
         let secondPresentation = second.host.presentation
         await manager.close(first.id)
@@ -81,8 +81,8 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testClosingTheLastSessionRemovesTheHostGroup() async throws {
         let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
-        let g14 = try XCTUnwrap(await manager.openTerminal(for: profiles[0], settings: settings))
-        let mac = try XCTUnwrap(await manager.openTerminal(for: profiles[1], settings: settings))
+        let g14 = try await opened(manager, profiles[0], settings: settings)
+        let mac = try await opened(manager, profiles[1], settings: settings)
         await manager.close(g14.id)
         XCTAssertEqual(manager.hostGroups(using: settings.hostProfiles).map(\.hostProfileID), [profiles[1].id])
         XCTAssertEqual(settings.hostProfiles.map(\.id), [profiles[0].id, profiles[1].id])
@@ -94,8 +94,8 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testCloseIsIdempotentAndDoesNotAffectAnotherHost() async throws {
         let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
-        let g14 = try XCTUnwrap(await manager.openTerminal(for: profiles[0], settings: settings))
-        let mac = try XCTUnwrap(await manager.openTerminal(for: profiles[1], settings: settings))
+        let g14 = try await opened(manager, profiles[0], settings: settings)
+        let mac = try await opened(manager, profiles[1], settings: settings)
         await waitUntil { mac.host.state == .connected }
         await manager.close(g14.id)
         await manager.close(g14.id)
@@ -106,7 +106,7 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testSessionsRemainUntilExplicitClose() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let session = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let session = try await opened(manager, g14, settings: settings)
         manager.setTerminalInteractionActive(false)
         manager.present(nil)
         XCTAssertEqual(manager.sessions.count, 1)
@@ -117,7 +117,7 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testTitleIsStableAndIDSurvivesDisplayNameChanges() async throws {
         let (manager, settings, original) = try makeManager(hosts: ["G14"])
-        let session = try XCTUnwrap(await manager.openTerminal(for: original, settings: settings))
+        let session = try await opened(manager, original, settings: settings)
         let id = session.id
         let title = session.title
         var renamed = original
@@ -130,7 +130,7 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testDeletedProfileKeepsExistingSessionButCannotOpenAnother() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let session = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let session = try await opened(manager, g14, settings: settings)
         XCTAssertTrue(settings.deleteProfile(g14))
         XCTAssertEqual(manager.sessions.count, 1)
         XCTAssertEqual(session.displayName(from: settings.hostProfiles), "G14")
@@ -146,7 +146,7 @@ final class TerminalSessionManagerTests: XCTestCase {
     func testFailedSessionRemainsUntilExplicitlyClosed() async throws {
         let factory = UniqueFakeTerminalFactory(failure: .connect)
         let (manager, settings, g14) = try makeManager(hosts: ["G14"], factory: factory)
-        let session = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let session = try await opened(manager, g14, settings: settings)
         await waitUntil {
             if case .failed = session.host.state { return true }
             return false
@@ -159,7 +159,7 @@ final class TerminalSessionManagerTests: XCTestCase {
 
     func testRemoteIntentDoesNotTargetAHiddenTerminal() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
-        let session = try XCTUnwrap(await manager.openTerminal(for: g14, settings: settings))
+        let session = try await opened(manager, g14, settings: settings)
         await waitUntil { session.host.state == .connected }
         let target = TerminalRemoteIntentTarget(manager: manager)
 
@@ -208,6 +208,15 @@ final class TerminalSessionManagerTests: XCTestCase {
             profiles.append(profile)
         }
         return (TerminalSessionManager(connectionFactory: factory), settings, profiles)
+    }
+
+    private func opened(
+        _ manager: TerminalSessionManager,
+        _ profile: HostProfile,
+        settings: AppSettings
+    ) async throws -> TerminalSession {
+        let session = await manager.openTerminal(for: profile, settings: settings)
+        return try XCTUnwrap(session)
     }
 
     private func waitUntil(
