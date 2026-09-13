@@ -72,6 +72,102 @@ final class HostProfileTests: XCTestCase {
         XCTAssertEqual(reloaded.hostProfiles, [profile])
     }
 
+    func testBuild5MigrationPreservesCompletePasswordAndNVDAConfiguration() throws {
+        let defaults = try makeDefaults()
+        defaults.set("build5.example.test", forKey: "farrelay.sshHost")
+        defaults.set(2202, forKey: "farrelay.sshPort")
+        defaults.set("legacy-reader", forKey: "farrelay.sshUser")
+        defaults.set("password", forKey: "farrelay.sshAuthMode")
+        defaults.set("farrelay", forKey: "farrelay.remoteCommand")
+        defaults.set("relay.example.test", forKey: "farrelay.relayHost")
+        defaults.set(7001, forKey: "farrelay.relayPort")
+        defaults.set("test-channel", forKey: "farrelay.channel")
+        defaults.set("test-fingerprint", forKey: "farrelay.fingerprint")
+        defaults.set(true, forKey: "farrelay.insecure")
+        let credentials = TestCredentialStore()
+        try credentials.store("test-password", for: SSHCredential.password.account)
+
+        let settings = AppSettings(defaults: defaults, credentialStore: credentials)
+        let profile = try XCTUnwrap(settings.hostProfiles.only)
+        XCTAssertEqual(profile.address, "build5.example.test")
+        XCTAssertEqual(profile.port, 2202)
+        XCTAssertEqual(profile.username, "legacy-reader")
+        XCTAssertEqual(profile.authenticationMode, .password)
+        XCTAssertEqual(profile.farRelayHostCommand, "farrelay-host")
+        XCTAssertEqual(profile.nvdaBridgeCommand, "farrelay")
+        XCTAssertEqual(profile.platform, .windows)
+        XCTAssertEqual(
+            profile.nvdaRemote,
+            NVDARemoteCapability(
+                isEnabled: true,
+                relayHost: "relay.example.test",
+                relayPort: 7001,
+                channel: "test-channel",
+                fingerprint: "test-fingerprint",
+                insecure: true
+            )
+        )
+        XCTAssertEqual(settings.credentials(for: profile)?.password, "test-password")
+        XCTAssertNil(try credentials.string(for: SSHCredential.password.account))
+
+        let profileJSON = try XCTUnwrap(String(data: JSONEncoder().encode(profile), encoding: .utf8))
+        XCTAssertFalse(profileJSON.contains("test-password"))
+        XCTAssertEqual(AppSettings(defaults: defaults, credentialStore: credentials).hostProfiles, [profile])
+    }
+
+    func testBuild5MigrationPreservesPrivateKeyAndPartialSSHConfiguration() throws {
+        let defaults = try makeDefaults()
+        defaults.set("partial.example.test", forKey: "farrelay.sshHost")
+        defaults.set("privateKey", forKey: "farrelay.sshAuthMode")
+        let credentials = TestCredentialStore()
+        try credentials.store("test-private-key", for: SSHCredential.privateKey.account)
+        try credentials.store("test-passphrase", for: SSHCredential.privateKeyPassphrase.account)
+
+        let settings = AppSettings(defaults: defaults, credentialStore: credentials)
+        let profile = try XCTUnwrap(settings.hostProfiles.only)
+        XCTAssertEqual(profile.address, "partial.example.test")
+        XCTAssertEqual(profile.port, 22)
+        XCTAssertEqual(profile.username, "")
+        XCTAssertEqual(profile.authenticationMode, .privateKey)
+        XCTAssertNil(profile.nvdaRemote)
+        XCTAssertEqual(
+            settings.credentials(for: profile),
+            HostProfileCredentials(
+                password: "",
+                privateKeyPEM: "test-private-key",
+                privateKeyPassphrase: "test-passphrase"
+            )
+        )
+
+        let profileJSON = try XCTUnwrap(String(data: JSONEncoder().encode(profile), encoding: .utf8))
+        XCTAssertFalse(profileJSON.contains("test-private-key"))
+        XCTAssertFalse(profileJSON.contains("test-passphrase"))
+    }
+
+    func testStaleLegacySSHKeysDoNotOverwriteAnExistingModernProfile() throws {
+        let defaults = try makeDefaults()
+        let modern = HostProfile(
+            displayName: "Modern G14",
+            address: "modern.example.test",
+            port: 2222,
+            username: "modern-reader",
+            authenticationMode: .privateKey,
+            platform: .windows
+        )
+        saveHostProfiles([modern], defaults: defaults)
+        defaults.set("stale.example.test", forKey: "farrelay.sshHost")
+        defaults.set("stale-reader", forKey: "farrelay.sshUser")
+        defaults.set("stale-password", forKey: SSHCredential.password.legacyDefaultsKey)
+        let credentials = TestCredentialStore()
+        try credentials.store("modern-private-key", for: HostProfileCredential.privateKey.account(for: modern.id))
+
+        let settings = AppSettings(defaults: defaults, credentialStore: credentials)
+        XCTAssertEqual(settings.hostProfiles, [modern])
+        XCTAssertEqual(settings.credentials(for: modern)?.privateKeyPEM, "modern-private-key")
+        XCTAssertEqual(defaults.string(forKey: "farrelay.sshHost"), "stale.example.test")
+        XCTAssertEqual(defaults.string(forKey: SSHCredential.password.legacyDefaultsKey), "stale-password")
+    }
+
     func testDeletingProfileRemovesOnlyItsCredentials() throws {
         let defaults = try makeDefaults()
         let credentials = TestCredentialStore()
