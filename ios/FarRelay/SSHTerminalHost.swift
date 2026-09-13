@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Feature lifecycle state for the one interactive terminal owned by the app.
+/// Feature lifecycle state for one interactive terminal owned by `SSHTerminalHost`.
 enum SSHTerminalHostState: Equatable, Sendable {
     case idle
     case connecting
@@ -18,6 +18,18 @@ enum SSHTerminalHostState: Equatable, Sendable {
         case .ended: .ended
         case .failed(let message): .failed(message)
         case .closed: .closed
+        }
+    }
+
+    /// Truthful, VoiceOver-readable status for the Terminals workspace.
+    var statusLabel: String {
+        switch self {
+        case .idle: "Starting"
+        case .connecting: "Connecting"
+        case .connected: "Connected"
+        case .ended: "Ended"
+        case .failed(let message): "Failed: \(message)"
+        case .closed: "Closed"
         }
     }
 }

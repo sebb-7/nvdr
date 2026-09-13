@@ -1,55 +1,45 @@
 import SwiftUI
 
-/// App-level entry point that owns the terminal feature while it is visible.
+/// Presents a manager-owned terminal. The manager owns lifetime; Back, tab
+/// changes, and Snapshots must not close the session.
 struct SSHTerminalFeatureView: View {
-    @Environment(AppSettings.self) private var settings
-    let host: SSHTerminalHost
-    let profile: HostProfile
-    let ownsLifecycle: Bool
+    @Environment(TerminalSessionManager.self) private var manager
+    @Environment(\.dismiss) private var dismiss
+    let session: TerminalSession
     @State private var snapshot: AccessibleConversationSnapshot?
-    @State private var hasStarted = false
-
-    init(host: SSHTerminalHost, profile: HostProfile, ownsLifecycle: Bool = true) {
-        self.host = host
-        self.profile = profile
-        self.ownsLifecycle = ownsLifecycle
-    }
 
     var body: some View {
-        TerminalPresentationView(presentation: host.presentation) { snapshot in
+        TerminalPresentationView(presentation: session.host.presentation) { snapshot in
             self.snapshot = snapshot
         }
+        .navigationTitle(session.title)
         .navigationDestination(item: $snapshot) { snapshot in
             OutputSnapshotView(snapshot: snapshot)
         }
         .onAppear {
-            host.presentation.setLiveOutputSnapshotInspecting(snapshot != nil)
+            session.host.presentation.setLiveOutputSnapshotInspecting(snapshot != nil)
+            manager.present(session.id)
+            manager.setTerminalInteractionActive(true)
         }
         .onChange(of: snapshot?.id) { _, snapshotID in
-            host.presentation.setLiveOutputSnapshotInspecting(snapshotID != nil)
-        }
-        .task {
-            guard ownsLifecycle, !hasStarted else { return }
-            hasStarted = true
-            await host.start(settings: settings, profile: profile)
+            session.host.presentation.setLiveOutputSnapshotInspecting(snapshotID != nil)
         }
         .onDisappear {
-            // Pushing a Snapshot hides this view while the terminal must stay
-            // alive. A real Back navigation has no active Snapshot.
-            guard ownsLifecycle, snapshot == nil else { return }
-            Task {
-                await host.close()
+            if snapshot == nil {
+                manager.clearPresentedSession(if: session.id)
+                manager.setTerminalInteractionActive(false)
             }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close terminal", systemImage: "xmark") {
-                        Task {
-                            await host.close()
-                        }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Close terminal", systemImage: "xmark") {
+                    Task {
+                        await manager.close(session.id)
+                        dismiss()
                     }
-                    .accessibilityIdentifier("close-ssh-terminal")
                 }
+                .accessibilityIdentifier("close-ssh-terminal")
             }
+        }
     }
 }

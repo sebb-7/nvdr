@@ -2,11 +2,12 @@ import SwiftUI
 
 struct HostProfileEditorView: View {
     @Environment(AppSettings.self) private var settings
-    @Environment(SSHTerminalHost.self) private var terminalHost
+    @Environment(TerminalSessionManager.self) private var terminals
     @Environment(\.dismiss) private var dismiss
     @State private var draft: HostProfile
     @State private var credentials = HostProfileCredentials()
     @State private var saveFailed = false
+    @State private var openedTerminal: TerminalSessionRoute?
 
     init(profile: HostProfile?) {
         _draft = State(initialValue: profile ?? HostProfile())
@@ -16,10 +17,13 @@ struct HostProfileEditorView: View {
         Form {
             if isSavedComputer {
                 Section("Actions") {
-                    NavigationLink {
-                        SSHTerminalFeatureView(host: terminalHost, profile: draft)
-                    } label: {
-                        Label("Open Terminal", systemImage: "terminal")
+                    Button("New Terminal", systemImage: "terminal") {
+                        guard let profile = settings.hostProfiles.first(where: { $0.id == draft.id }) else { return }
+                        Task {
+                            if let session = await terminals.openTerminal(for: profile, settings: settings) {
+                                openedTerminal = TerminalSessionRoute(id: session.id)
+                            }
+                        }
                     }
                     if draft.isNVDARemoteEnabled {
                         NavigationLink {
@@ -93,6 +97,13 @@ struct HostProfileEditorView: View {
             }
         }
         .navigationTitle("Computer")
+        .navigationDestination(item: $openedTerminal) { route in
+            if let session = terminals.session(id: route.id) {
+                SSHTerminalFeatureView(session: session)
+            } else {
+                ContentUnavailableView("Terminal closed", systemImage: "terminal", description: Text("This terminal is no longer open."))
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {

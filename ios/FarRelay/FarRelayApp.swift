@@ -4,7 +4,7 @@ import SwiftUI
 struct FarRelayApp: App {
     @State private var settings: AppSettings
     @State private var bridge: BridgeClient
-    @State private var terminalHost: SSHTerminalHost
+    @State private var terminals: TerminalSessionManager
     @State private var remoteIntentRouter: RemoteIntentRouter
 
     init() {
@@ -13,11 +13,11 @@ struct FarRelayApp: App {
         let bridge = BridgeClient(speech: speech)
         _settings = State(initialValue: s)
         _bridge = State(initialValue: bridge)
-        let terminalHost = SSHTerminalHost()
+        let terminals = TerminalSessionManager()
         let remoteIntentRouter = RemoteIntentRouter()
         remoteIntentRouter.register(NVDARemoteIntentTarget(keySink: bridge))
-        remoteIntentRouter.register(TerminalRemoteIntentTarget(presentation: terminalHost.presentation))
-        _terminalHost = State(initialValue: terminalHost)
+        remoteIntentRouter.register(TerminalRemoteIntentTarget(manager: terminals))
+        _terminals = State(initialValue: terminals)
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
     }
 
@@ -26,7 +26,7 @@ struct FarRelayApp: App {
             RootView()
                 .environment(settings)
                 .environment(bridge)
-                .environment(terminalHost)
+                .environment(terminals)
                 .environment(remoteIntentRouter)
         }
     }

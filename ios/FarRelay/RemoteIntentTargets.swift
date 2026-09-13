@@ -9,6 +9,9 @@ protocol RemoteWindowsKeySink: AnyObject {
 extension BridgeClient: RemoteWindowsKeySink {}
 
 /// Translates semantic intent into existing terminal presentation controls.
+/// Presentation is resolved at perform-time so a hidden or arbitrary session
+/// is never targeted. Future controller bindings should select a
+/// `TerminalSession` ID rather than a list position.
 @MainActor
 final class TerminalRemoteIntentTarget: RemoteIntentTarget {
     let remoteTargetID: RemoteTargetID
@@ -19,34 +22,45 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         .rawKeyInput
     ]
 
-    private let presentation: TerminalPresentationModel
+    private let resolvePresentation: @MainActor () -> TerminalPresentationModel?
 
     init(
         presentation: TerminalPresentationModel,
         id: RemoteTargetID = RemoteTargetID("ssh-terminal")
     ) {
-        self.presentation = presentation
+        self.resolvePresentation = { presentation }
+        remoteTargetID = id
+    }
+
+    init(
+        manager: TerminalSessionManager,
+        id: RemoteTargetID = RemoteTargetID("ssh-terminal")
+    ) {
+        self.resolvePresentation = { manager.currentTerminalPresentation }
         remoteTargetID = id
     }
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
         guard capabilities.contains(intent.requiredCapability) else { return .unsupported }
+        guard let presentation = resolvePresentation() else {
+            return .unavailable("No SSH terminal is currently active.")
+        }
         guard presentation.sessionState == .connected else {
             return .unavailable("The SSH terminal is not connected.")
         }
 
         switch intent {
         case .terminalInterrupt:
-            return await send(defaultControlID: "terminal.interrupt")
+            return await send(defaultControlID: "terminal.interrupt", using: presentation)
         case .terminalEOF:
-            return await send(defaultControlID: "terminal.eof")
+            return await send(defaultControlID: "terminal.eof", using: presentation)
         case .activate:
-            return await send(defaultControlID: "terminal.return")
+            return await send(defaultControlID: "terminal.return", using: presentation)
         case .cancel:
-            return await send(defaultControlID: "terminal.escape")
+            return await send(defaultControlID: "terminal.escape", using: presentation)
         case .sendKey(let key):
             guard let controlID = terminalControlID(for: key) else { return .unsupported }
-            return await send(defaultControlID: controlID)
+            return await send(defaultControlID: controlID, using: presentation)
         case .reviewPrevious, .reviewNext, .returnToLive,
              .nextItem, .previousItem,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
@@ -55,7 +69,10 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         }
     }
 
-    private func send(defaultControlID: String) async -> RemoteIntentResult {
+    private func send(
+        defaultControlID: String,
+        using presentation: TerminalPresentationModel
+    ) async -> RemoteIntentResult {
         guard let control = TerminalControlKey.defaultControl(id: defaultControlID) else {
             return .failed("The terminal control is unavailable.")
         }

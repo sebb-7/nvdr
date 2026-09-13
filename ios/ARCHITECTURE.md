@@ -191,9 +191,9 @@ append-only conversation history. Automatic large-output thresholds, search,
 rich link metadata, reliable command/output grouping, onboarding,
 and productivity features such as Starred Commands and a command palette
 remain future phases. Host Profiles and NVDA-as-a-host-capability live at the
-app composition boundary; multiple simultaneous terminals are the next
-`TerminalSessionManager` phase. Agents and Assistant remain honest empty
-shells until those features are implemented.
+app composition boundary. Multiple simultaneous terminals are owned by
+`TerminalSessionManager`. Agents and Assistant remain honest empty shells
+until those features are implemented.
 
 The ownership boundary is intentionally strict:
 
@@ -278,50 +278,71 @@ Agents is the future home of things the user directly operates (Claude Code,
 Codex, local coding agents). Assistant is a future cross-host semantic
 orchestrator. Both are empty states in this phase.
 
-Terminals is the active terminal-session workspace. The next dedicated
-phase introduces `TerminalSessionManager`: sessions grouped by computer,
-independent stable session IDs, expandable host groups, host-level and
-global New Terminal, and tab switches that do not close sessions. Closing
-the last terminal for a host removes that group from Terminals while the
-`HostProfile` remains on Home. This phase does not implement that manager.
-`SSHTerminalHost` still owns one interactive terminal and must not fake
-multi-session behavior.
+`TerminalSessionManager` is app-owned. It is the authoritative lifetime owner
+for live terminals. Each `TerminalSession` has a stable UUID, a HostProfile ID,
+a captured profile snapshot, a generated title (`Terminal 1`, `Terminal 2`, …)
+scoped per host, and its own `SSHTerminalHost`. That host still owns exactly
+one SSH connection, PTY, `SSHTerminalSession`, and `TerminalPresentationModel`.
+The manager does not persist sessions across app termination, and it does not
+keep sockets alive through iOS suspension beyond existing SSH behavior.
 
-Future controller adapters consume the stable terminal-scoped Control Key
-IDs created with Terminal Control Keys, not labels or list positions.
+Home owns saved computers. Terminals owns running and retained sessions,
+grouped by HostProfile ID. Only computers with at least one retained session
+appear there. Native `DisclosureGroup` expand/collapse is memory-only; new
+host groups default to expanded, and incoming output does not force a group
+open. Per-group and global **New Terminal** create another independent session
+for a still-saved HostProfile. A deleted HostProfile cannot mint new terminals
+from a stale group, but already-running sessions keep their snapshot identity
+and are not silently terminated. Rename uses the current saved display name
+when the profile still exists.
+
+Back navigation, tab switching, Settings, and Output Snapshots do not close a
+terminal. Only explicit Close Terminal, or manager cleanup, removes a session.
+Failed and ended sessions remain inspectable until the user closes them.
+Closing the last session for a host removes that group from Terminals; the
+saved HostProfile remains on Home.
+
+RemoteIntent terminal targeting is explicit and current-context based: intents
+resolve against the currently presented `TerminalSession` only. If no terminal
+is the active interaction context, terminal intents return unavailable rather
+than operating a hidden session. Future controller bindings may target a
+`TerminalSession` ID. They must not guess from titles or list positions.
+
+Future Mac VoiceOver remote-control work, Agents, and Assistant remain after
+this phase. Future controller adapters also consume the stable terminal-scoped
+Control Key IDs created with Terminal Control Keys, not labels or list
+positions.
 
 ## App-level SSH terminal host
 
-`SSHTerminalHost` is the narrow app-level composition owner for one interactive
-terminal. It builds an `SSHSessionConfiguration` from the explicitly selected
-`HostProfile` and that profile's Keychain credentials—the same profile-scoped
+`SSHTerminalHost` remains the narrow composition owner for **one** interactive
+terminal. `TerminalSessionManager` owns many of them. A host builds an
+`SSHSessionConfiguration` from the HostProfile snapshot supplied at session
+creation and that profile's Keychain credentials—the same profile-scoped
 endpoint, authentication, credential, and host-key behavior used by the NVDA
 bridge—then creates one `SSHSession`, opens one production `SSHPTYTransport`,
-creates one `SSHTerminalSession`, and attaches that session to
+creates one `SSHTerminalSession`, and attaches that session to its own
 `TerminalPresentationModel`. It does not use the reconnecting NVDA supervisor,
-parse terminal bytes, or share the NVDA IPC channel.
+parse terminal bytes, share an NVDA IPC channel, or multiplex SSH connections.
 
 ```text
-App / SSHTerminalHost
-    owns composition and feature lifetime
-SSHSession
-    owns SSH connection lifecycle
-SSHPTYTransport
-    owns byte-oriented PTY transport
-SSHTerminalSession
-    owns PTY reader coordination and TerminalEngine
-TerminalAccessibilityModel
-    owns semantic interpretation
-TerminalPresentationModel / TerminalPresentationView
-    own accessible interaction
+FarRelayApp
+    TerminalSessionManager
+        TerminalSession
+            SSHTerminalHost
+                SSHSession
+                SSHPTYTransport
+                SSHTerminalSession
+                    TerminalEngine
+                TerminalAccessibilityModel
+                TerminalPresentationModel
 ```
 
-Opening **Open Terminal** from a saved computer creates this independent
-terminal feature from that profile's SSH settings. The host reports connecting,
-startup failure, end, and close through the presentation model. Closing the
-view first closes the terminal session, cancels host work, and then releases
-the SSH connection; repeated closes are safe. NVDA Remote remains a parallel
-host capability with independent state and lifetime.
+Opening **New Terminal** from Home or the Terminals workspace asks the manager
+to create a session. The presentation view never starts a second host and never
+closes the host on disappearance. Close Terminal goes through the manager,
+which closes only that host and removes only that session. NVDA Remote remains
+a parallel host capability with independent state and lifetime.
 
 ## FarRelay Host v1
 
