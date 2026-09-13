@@ -5,12 +5,12 @@ import Foundation
 ///
 /// The source identifier preserves provenance without coupling the Snapshot
 /// to SSH, terminal parsing, or a particular conversation provider.
-public struct AccessibleConversationSnapshot: Identifiable, Equatable, Hashable, Sendable {
-    public let id: UUID
-    public let sourceEntryID: UUID
-    public let text: String
+struct AccessibleConversationSnapshot: Identifiable, Equatable, Hashable, Sendable {
+    let id: UUID
+    let sourceEntryID: UUID
+    let text: String
 
-    public init(
+    init(
         id: UUID = UUID(),
         sourceEntryID: UUID,
         text: String

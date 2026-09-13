@@ -152,7 +152,14 @@ enum RemoteLaunchDiagnostics {
     static func redact(_ text: String) -> String {
         var redacted = redactFlag(text, flag: "--channel")
         redacted = redactFlag(redacted, flag: "--password")
-        let secretMarkers = ["BEGIN OPENSSH PRIVATE KEY", "BEGIN RSA PRIVATE KEY", "BEGIN PRIVATE KEY"]
+        redacted = redactFlag(redacted, flag: "--passphrase")
+        let secretMarkers = [
+            "BEGIN OPENSSH PRIVATE KEY",
+            "BEGIN RSA PRIVATE KEY",
+            "BEGIN EC PRIVATE KEY",
+            "BEGIN DSA PRIVATE KEY",
+            "BEGIN PRIVATE KEY",
+        ]
         for marker in secretMarkers where redacted.localizedStandardContains(marker) {
             return "Private key material omitted."
         }
@@ -193,12 +200,65 @@ enum RemoteLaunchDiagnostics {
     }
 
     private static func redactFlag(_ text: String, flag: String) -> String {
-        guard let range = text.range(of: flag) else { return text }
-        let afterFlag = text[range.upperBound...].drop(while: \.isWhitespace)
-        guard let valueEnd = afterFlag.firstIndex(where: \.isWhitespace) else {
-            return String(text[..<range.lowerBound]) + "\(flag) •••"
+        var result = ""
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: flag, range: searchStart..<text.endIndex) {
+            let hasLeadingBoundary = range.lowerBound == text.startIndex
+                || text[text.index(before: range.lowerBound)].isWhitespace
+            let suffixStart = range.upperBound
+            let hasTrailingBoundary = suffixStart == text.endIndex
+                || text[suffixStart].isWhitespace
+                || text[suffixStart] == "="
+            guard hasLeadingBoundary, hasTrailingBoundary else {
+                result += String(text[searchStart..<suffixStart])
+                searchStart = suffixStart
+                continue
+            }
+
+            result += String(text[searchStart..<suffixStart])
+            var valueStart = suffixStart
+            if valueStart < text.endIndex, text[valueStart] == "=" {
+                result.append("=")
+                valueStart = text.index(after: valueStart)
+            } else {
+                while valueStart < text.endIndex, text[valueStart].isWhitespace {
+                    result.append(text[valueStart])
+                    valueStart = text.index(after: valueStart)
+                }
+            }
+            guard valueStart < text.endIndex else {
+                searchStart = valueStart
+                continue
+            }
+
+            result += "•••"
+            searchStart = endOfShellValue(in: text, startingAt: valueStart)
         }
-        return String(text[..<range.lowerBound]) + "\(flag) •••" + String(text[valueEnd...])
+        result += String(text[searchStart...])
+        return result
+    }
+
+    private static func endOfShellValue(in text: String, startingAt start: String.Index) -> String.Index {
+        let first = text[start]
+        guard first == "\"" || first == "'" else {
+            return text[start...].firstIndex(where: \.isWhitespace) ?? text.endIndex
+        }
+
+        var index = text.index(after: start)
+        var escaped = false
+        while index < text.endIndex {
+            let character = text[index]
+            if character == first, !escaped {
+                return text.index(after: index)
+            }
+            escaped = character == "\\" && !escaped
+            if character != "\\" {
+                escaped = false
+            }
+            index = text.index(after: index)
+        }
+        return text.endIndex
     }
 }
 

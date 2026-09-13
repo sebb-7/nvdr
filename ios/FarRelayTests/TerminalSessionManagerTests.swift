@@ -381,14 +381,21 @@ final class TerminalSessionManagerTests: XCTestCase {
         XCTAssertTrue(session.hasUnseenOutput)
     }
 
-    func testConnectionFailurePresentsIssueAndAnnouncement() async throws {
+    func testConnectionFailurePublishesLifecycleEventWithoutPresentationState() async throws {
         let factory = UniqueFakeTerminalFactory(failure: .connect)
         let (manager, settings, g14) = try makeManager(hosts: ["G14"], factory: factory)
         let session = try await opened(manager, g14, settings: settings)
-        await waitUntil { manager.presentedIssue != nil }
-        XCTAssertEqual(manager.presentedIssue?.title, "Unable to connect to G14")
-        XCTAssertEqual(manager.lastInteractionFeedback?.kind, .error)
-        XCTAssertEqual(manager.lastConnectionAnnouncement?.text.hasPrefix("Connection failed:"), true)
+        await waitUntil {
+            if case .failed = manager.lastLifecycleEvent?.currentState {
+                return true
+            }
+            return false
+        }
+        XCTAssertEqual(manager.lastLifecycleEvent?.sessionID, session.id)
+        if case .failed = manager.lastLifecycleEvent?.currentState {
+        } else {
+            XCTFail("Expected a failed lifecycle event")
+        }
         if case .failed = session.host.state {
         } else {
             XCTFail("Expected failed session")

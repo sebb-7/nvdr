@@ -272,8 +272,8 @@ Defaults migrate safely for existing installations: **Haptic feedback** is on,
 **Sound cues** are off. The two toggles live under Settings → Interaction
 Feedback and persist independently. Feedback is sparse: Send, Run Again,
 Control Keys, Copy, Open Snapshot, pin/rename/move/close, terminal
-connected/failed (emitted by `TerminalSessionManager`, not the presentation
-model), and NVDA ready/failed. Incoming terminal lines, cursor motion,
+connected/failed (delivered by `RootView` from manager lifecycle events), and
+NVDA ready/failed. Incoming terminal lines, cursor motion,
 VoiceOver focus moves, and New Output markers do not vibrate or play sounds.
 
 ## Terminal conversation actions and native input
@@ -431,9 +431,12 @@ active does. Opening the terminal clears the marker; VoiceOver focus on the row
 does not. Closing removes the session and the marker.
 
 The manager exposes capabilities (`canPin`, `canRetry`, `canMoveUp`, …) and the
-UI only surfaces currently valid VoiceOver Actions. Connection lifecycle
-announcements and final-failure `UserFacingIssue` alerts also live at this
-presentation boundary, not inside SSH transport.
+UI only surfaces currently valid VoiceOver Actions. It publishes typed terminal
+lifecycle changes, but does not create alert copy or post accessibility
+announcements. `RootView`, which owns app-level presentation and feedback,
+maps those changes to concise announcements, semantic feedback delivery, and
+final-failure `UserFacingIssue` alerts. SSH transport remains unaware of all
+three presentation concerns.
 
 That host still owns exactly one SSH connection, PTY, `SSHTerminalSession`, and
 `TerminalPresentationModel`. The manager does not persist sessions across app

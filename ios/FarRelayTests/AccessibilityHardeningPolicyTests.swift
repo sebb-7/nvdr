@@ -232,6 +232,18 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         XCTAssertFalse(diagnostic.localizedStandardContains("passwordValue"))
     }
 
+    func testDiagnosticsRedactEverySupportedShellArgumentForm() {
+        let diagnostic = RemoteLaunchDiagnostics.redact(
+            "farrelay --channel=first --password 'second value' --passphrase=third --channel fourth"
+        )
+
+        XCTAssertFalse(diagnostic.localizedStandardContains("first"))
+        XCTAssertFalse(diagnostic.localizedStandardContains("second value"))
+        XCTAssertFalse(diagnostic.localizedStandardContains("third"))
+        XCTAssertFalse(diagnostic.localizedStandardContains("fourth"))
+        XCTAssertEqual(diagnostic, "farrelay --channel=••• --password ••• --passphrase=••• --channel •••")
+    }
+
     func testDeleteComputerConfirmationKeepsActiveTerminals() {
         XCTAssertEqual(
             HostProfileDeletionPolicy.confirmationMessage(computerName: "G14", activeTerminalCount: 0),

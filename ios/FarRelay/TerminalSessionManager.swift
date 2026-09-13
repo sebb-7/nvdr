@@ -1,6 +1,28 @@
 import Foundation
 import Observation
 
+/// A transport-state change observed for a manager-owned terminal. The manager
+/// publishes domain state only; the app shell decides how to announce, alert,
+/// or provide feedback for it.
+struct TerminalSessionLifecycleEvent: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let sessionID: UUID
+    let previousState: SSHTerminalHostState
+    let currentState: SSHTerminalHostState
+
+    init(
+        id: UUID = UUID(),
+        sessionID: UUID,
+        previousState: SSHTerminalHostState,
+        currentState: SSHTerminalHostState
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.previousState = previousState
+        self.currentState = currentState
+    }
+}
+
 /// App-owned collection of live terminal sessions. Each session has its own
 /// `SSHTerminalHost` / SSH / PTY / presentation stack. Navigation and tab
 /// lifetime do not close sessions; only an explicit close does.
@@ -22,9 +44,8 @@ final class TerminalSessionManager {
     /// hidden or arbitrary session.
     private(set) var presentedSessionID: UUID?
     private(set) var isTerminalInteractionActive = false
-    private(set) var lastConnectionAnnouncement: ConnectionAnnouncement?
-    private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
-    private(set) var presentedIssue: UserFacingIssue?
+    private(set) var lastLifecycleEvent: TerminalSessionLifecycleEvent?
+    private(set) var lastSessionActionFeedback: InteractionFeedbackRequest?
 
     private let connectionFactory: any SSHTerminalHostConnectionFactory
     private var titleSequence: [UUID: Int] = [:]
@@ -161,7 +182,6 @@ final class TerminalSessionManager {
         promoteHost(original.hostProfileID)
         attach(replacement)
         requestFeedback(.selectionAccepted)
-        presentedIssue = nil
         let profile = settings.hostProfiles.first { $0.id == original.hostProfileID } ?? original.profileSnapshot
         await replacement.host.start(settings: settings, profile: profile)
         return replacement
@@ -174,9 +194,6 @@ final class TerminalSessionManager {
         sessions.removeAll { $0.id == id }
         if presentedSessionID == id {
             presentedSessionID = nil
-        }
-        if presentedIssue?.retry == .terminal(id) {
-            presentedIssue = nil
         }
         if sessions.filter({ $0.hostProfileID == session.hostProfileID }).isEmpty {
             titleSequence[session.hostProfileID] = 0
@@ -220,22 +237,6 @@ final class TerminalSessionManager {
         let isViewingThisTerminal = isTerminalInteractionActive && presentedSessionID == sessionID
         if !isViewingThisTerminal {
             session.applyHasUnseenOutput(true)
-        }
-    }
-
-    func dismissPresentedIssue() {
-        presentedIssue = nil
-    }
-
-    func retryPresentedIssue(_ issue: UserFacingIssue, settings: AppSettings) async {
-        presentedIssue = nil
-        switch issue.retry {
-        case .terminal(let id):
-            _ = await retry(id, settings: settings)
-        case .nvda:
-            break
-        case nil:
-            break
         }
     }
 
@@ -290,34 +291,11 @@ final class TerminalSessionManager {
         to new: SSHTerminalHostState
     ) {
         guard let session = session(id: sessionID) else { return }
-        let computerName = session.profileSnapshot.displayName
-        if let text = ConnectionAnnouncementPolicy.terminalAnnouncement(
-            from: old,
-            to: new,
-            computerName: computerName
-        ) {
-            lastConnectionAnnouncement = ConnectionAnnouncement(text: text)
-        }
-        switch new {
-        case .connected:
-            requestFeedback(.success)
-        case .failed(let message):
-            requestFeedback(.error)
-            presentedIssue = RemoteLaunchDiagnostics.terminalFailureIssue(
-                computerName: computerName,
-                reason: message,
-                diagnosticText: RemoteLaunchDiagnostics.diagnosticText(
-                    computerName: computerName,
-                    address: session.profileSnapshot.address,
-                    port: session.profileSnapshot.port,
-                    username: session.profileSnapshot.username,
-                    reason: message
-                ),
-                sessionID: sessionID
-            )
-        default:
-            break
-        }
+        lastLifecycleEvent = TerminalSessionLifecycleEvent(
+            sessionID: sessionID,
+            previousState: old,
+            currentState: new
+        )
     }
 
     private func move(_ id: UUID, offset: Int) {
@@ -362,6 +340,6 @@ final class TerminalSessionManager {
     }
 
     private func requestFeedback(_ kind: InteractionFeedbackKind) {
-        lastInteractionFeedback = InteractionFeedbackRequest(kind: kind)
+        lastSessionActionFeedback = InteractionFeedbackRequest(kind: kind)
     }
 }

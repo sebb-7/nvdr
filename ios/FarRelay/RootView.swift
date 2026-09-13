@@ -8,6 +8,7 @@ struct RootView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @State private var selectedTab: AppShellTab = .home
     @State private var showingSettings = false
+    @State private var terminalIssue: UserFacingIssue?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -28,26 +29,59 @@ struct RootView: View {
             if newTab != .home { bridge.suspendInputForInactiveContext() }
             terminals.setTerminalInteractionActive(false)
         }
-        .onChange(of: terminals.lastConnectionAnnouncement?.id) { _, _ in
-            guard isVoiceOverEnabled, let text = terminals.lastConnectionAnnouncement?.text else { return }
-            AccessibilityNotification.Announcement(text).post()
+        .onChange(of: terminals.lastLifecycleEvent?.id) { _, _ in
+            handleTerminalLifecycleEvent()
         }
-        .onChange(of: terminals.lastInteractionFeedback?.id) { _, _ in
-            if let request = terminals.lastInteractionFeedback {
+        .onChange(of: terminals.lastSessionActionFeedback?.id) { _, _ in
+            if let request = terminals.lastSessionActionFeedback {
                 interactionFeedback.play(request.kind)
             }
         }
-        .userFacingIssueAlert(
-            Binding(
-                get: { terminals.presentedIssue },
-                set: { if $0 == nil { terminals.dismissPresentedIssue() } }
-            ),
-            onRetry: { issue in
-                Task { await terminals.retryPresentedIssue(issue, settings: settings) }
-            }
-        )
+        .userFacingIssueAlert($terminalIssue, onRetry: retryTerminalIssue)
         .sheet(isPresented: $showingSettings) { SettingsView() }
         .interactionHaptics(interactionFeedback, enabled: settings.hapticFeedbackEnabled)
+    }
+
+    private func handleTerminalLifecycleEvent() {
+        guard let event = terminals.lastLifecycleEvent,
+              let session = terminals.session(id: event.sessionID) else {
+            return
+        }
+        let profile = session.profileSnapshot
+        if isVoiceOverEnabled,
+           let text = ConnectionAnnouncementPolicy.terminalAnnouncement(
+            from: event.previousState,
+            to: event.currentState,
+            computerName: profile.displayName
+           ) {
+            AccessibilityNotification.Announcement(text).post()
+        }
+        switch event.currentState {
+        case .connected:
+            interactionFeedback.play(.success)
+        case .failed(let reason):
+            interactionFeedback.play(.error)
+            terminalIssue = RemoteLaunchDiagnostics.terminalFailureIssue(
+                computerName: profile.displayName,
+                reason: reason,
+                diagnosticText: RemoteLaunchDiagnostics.diagnosticText(
+                    computerName: profile.displayName,
+                    address: profile.address,
+                    port: profile.port,
+                    username: profile.username,
+                    reason: reason
+                ),
+                sessionID: session.id
+            )
+        default:
+            break
+        }
+    }
+
+    private func retryTerminalIssue(_ issue: UserFacingIssue) {
+        terminalIssue = nil
+        guard case .terminal(let sessionID) = issue.retry else { return }
+        Task { _ = await terminals.retry(sessionID, settings: settings) }
     }
 }
 

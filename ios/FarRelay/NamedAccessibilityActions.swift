@@ -68,7 +68,7 @@ private struct NamedAccessibilityActionsModifier<Action>: ViewModifier {
                 .accessibilityAction(named: name(actions[4])) { perform(actions[4]) }
                 .accessibilityAction(named: name(actions[5])) { perform(actions[5]) }
                 .accessibilityAction(named: name(actions[6])) { perform(actions[6]) }
-        default:
+        case 8:
             content
                 .accessibilityAction(named: name(actions[0])) { perform(actions[0]) }
                 .accessibilityAction(named: name(actions[1])) { perform(actions[1]) }
@@ -78,6 +78,8 @@ private struct NamedAccessibilityActionsModifier<Action>: ViewModifier {
                 .accessibilityAction(named: name(actions[5])) { perform(actions[5]) }
                 .accessibilityAction(named: name(actions[6])) { perform(actions[6]) }
                 .accessibilityAction(named: name(actions[7])) { perform(actions[7]) }
+        default:
+            preconditionFailure("A focused object cannot expose more than eight named accessibility actions.")
         }
     }
 }
