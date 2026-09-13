@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// User-facing lifecycle information for an interactive terminal.
-public enum TerminalPresentationSessionState: Equatable, Sendable {
+enum TerminalPresentationSessionState: Equatable, Sendable {
     case idle
     case connecting
     case connected
@@ -10,7 +10,7 @@ public enum TerminalPresentationSessionState: Equatable, Sendable {
     case failed(String)
     case closed
 
-    public var accessibilityLabel: String {
+    var accessibilityLabel: String {
         switch self {
         case .idle:
             "Terminal ready to connect."
@@ -31,7 +31,7 @@ public enum TerminalPresentationSessionState: Equatable, Sendable {
 /// The presentation-facing terminal capability. This deliberately excludes
 /// SSH transport, terminal-parser, and UI implementation details.
 @MainActor
-public protocol TerminalPresentationSession: AnyObject {
+protocol TerminalPresentationSession: AnyObject {
     var terminalPresentationSnapshot: TerminalSnapshot { get }
     var terminalPresentationState: TerminalPresentationSessionState { get }
     func observeTerminalPresentationUpdates(
@@ -49,18 +49,18 @@ private struct CompletedLineIngest {
 /// UI-facing accessible conversation state derived from terminal semantics.
 @Observable
 @MainActor
-public final class TerminalPresentationModel {
-    public private(set) var sessionState: TerminalPresentationSessionState
-    public private(set) var accessibleSnapshot: AccessibleTerminalSnapshot?
-    public private(set) var conversationEntries: [AccessibleConversationEntry] = []
-    public private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
-    public private(set) var lastInputError: String?
-    public private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
+final class TerminalPresentationModel {
+    private(set) var sessionState: TerminalPresentationSessionState
+    private(set) var accessibleSnapshot: AccessibleTerminalSnapshot?
+    private(set) var conversationEntries: [AccessibleConversationEntry] = []
+    private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
+    private(set) var lastInputError: String?
+    private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
     private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
     var onIncomingConversationContent: (@MainActor () -> Void)?
-    public private(set) var shellPromptContext: String?
-    public var inputText = ""
-    public var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
+    private(set) var shellPromptContext: String?
+    var inputText = ""
+    var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
 
     private var accessibilityModel = TerminalAccessibilityModel()
     private var session: (any TerminalPresentationSession)?
@@ -75,14 +75,14 @@ public final class TerminalPresentationModel {
     private var liveOutputContext = LiveOutputAnnouncementContext()
     private var focusedConversationEntryID: UUID?
 
-    public init(session: (any TerminalPresentationSession)? = nil) {
+    init(session: (any TerminalPresentationSession)? = nil) {
         self.session = session
         sessionState = session?.terminalPresentationState ?? .idle
     }
 
     /// Starts a new terminal lifetime. A coordinator calls this before it has
     /// a live session to attach, so old history cannot bleed into a new shell.
-    public func beginConnecting() {
+    func beginConnecting() {
         session = nil
         updateSessionState(.connecting)
         resetPresentation()
@@ -90,14 +90,14 @@ public final class TerminalPresentationModel {
 
     /// Updates feature-level lifecycle state before a terminal session exists
     /// or after its transport has been released.
-    public func setSessionState(_ state: TerminalPresentationSessionState) {
+    func setSessionState(_ state: TerminalPresentationSessionState) {
         updateSessionState(state)
     }
 
     /// Attaches a terminal session owned by a higher-level feature coordinator.
     /// Snapshot updates arrive through the terminal's existing semantic boundary,
     /// rather than by polling terminal text from the SwiftUI view.
-    public func attach(_ session: any TerminalPresentationSession) {
+    func attach(_ session: any TerminalPresentationSession) {
         self.session = session
         resetPresentation()
         let generation = observationGeneration
@@ -108,7 +108,7 @@ public final class TerminalPresentationModel {
         refresh()
     }
 
-    public func refresh() {
+    func refresh() {
         guard let session else { return }
         _ = process(
             session.terminalPresentationSnapshot,
@@ -118,7 +118,7 @@ public final class TerminalPresentationModel {
 
     /// Consumes semantic terminal updates without reparsing terminal bytes.
     @discardableResult
-    public func process(
+    func process(
         _ terminalSnapshot: TerminalSnapshot,
         sessionState: TerminalPresentationSessionState
     ) -> TerminalAccessibilityUpdate {
@@ -146,20 +146,20 @@ public final class TerminalPresentationModel {
     }
 
     /// Sends text unchanged as UTF-8, followed by the terminal Return byte.
-    public func submitInput(_ text: String) async {
+    func submitInput(_ text: String) async {
         await sendCommand(text)
     }
 
-    public func submitInputText() async {
+    func submitInputText() async {
         await submitInput(inputText)
     }
 
-    public func clearInput() {
+    func clearInput() {
         inputText = ""
     }
 
     /// Repeats an outbound command through the same byte-exact terminal path.
-    public func runAgain(commandID: UUID) async {
+    func runAgain(commandID: UUID) async {
         guard let command = conversationEntries.first(where: { $0.id == commandID && $0.isCommand }) else {
             return
         }
@@ -167,7 +167,7 @@ public final class TerminalPresentationModel {
     }
 
     /// Invokes one configured control through the existing terminal session.
-    public func send(control: TerminalControlKey) async {
+    func send(control: TerminalControlKey) async {
         guard let session else {
             lastInputError = "Terminal is not connected."
             requestFeedback(.error)
@@ -192,7 +192,7 @@ public final class TerminalPresentationModel {
 
     /// Resolves a configured control by its stable action ID. List position and
     /// display name are deliberately not part of invocation.
-    public func send(controlID: String, from controls: [TerminalControlKey]) async {
+    func send(controlID: String, from controls: [TerminalControlKey]) async {
         guard let control = controls.first(where: { $0.id == controlID }) else {
             lastInputError = "This Control Key is no longer available."
             requestFeedback(.error)
@@ -201,7 +201,7 @@ public final class TerminalPresentationModel {
         await send(control: control)
     }
 
-    public func performCopy(for entryID: UUID) -> Bool {
+    func performCopy(for entryID: UUID) -> Bool {
         guard let entry = conversationEntries.first(where: { $0.id == entryID }) else {
             return false
         }
@@ -210,14 +210,14 @@ public final class TerminalPresentationModel {
         return true
     }
 
-    public func performCopyAll(from snapshot: AccessibleConversationSnapshot) {
+    func performCopyAll(from snapshot: AccessibleConversationSnapshot) {
         copyToClipboard(ConversationAccessibilityActionPolicy.copyAllText(for: snapshot))
         requestFeedback(.copied)
     }
 
     /// User-facing Snapshot capture. Unlike `captureSnapshot(for:)`, this
     /// records interaction feedback for an explicit Open Snapshot action.
-    public func performOpenSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
+    func performOpenSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
         guard let snapshot = captureSnapshot(for: entryID) else { return nil }
         requestFeedback(.selectionAccepted)
         return snapshot
@@ -268,7 +268,7 @@ public final class TerminalPresentationModel {
 
     /// Presentation does not infer geometry. A caller with explicit terminal
     /// dimensions may request the existing local-then-remote resize behavior.
-    public func resize(columns: Int, rows: Int) async {
+    func resize(columns: Int, rows: Int) async {
         guard let session else {
             lastInputError = "Terminal is not connected."
             requestFeedback(.error)
@@ -286,41 +286,41 @@ public final class TerminalPresentationModel {
 
     /// Keeps transcript labels content-first; heading semantics are applied by
     /// the native SwiftUI command entry view.
-    public func accessibilityLabel(for entry: AccessibleConversationEntry) -> String {
+    func accessibilityLabel(for entry: AccessibleConversationEntry) -> String {
         entry.presentationText
     }
 
-    public func accessibilityActions(for entry: AccessibleConversationEntry) -> [ConversationAccessibilityAction] {
+    func accessibilityActions(for entry: AccessibleConversationEntry) -> [ConversationAccessibilityAction] {
         ConversationAccessibilityActionPolicy.actions(for: entry)
     }
 
-    public func inputAccessibilityActions() -> [ConversationAccessibilityAction] {
+    func inputAccessibilityActions() -> [ConversationAccessibilityAction] {
         ConversationAccessibilityActionPolicy.inputActions(inputText: inputText)
     }
 
-    public func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
+    func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
         liveOutputContext.isVoiceOverEnabled = isEnabled
         refreshLiveOutputContext()
     }
 
-    public func setLiveOutputFocusedConversationEntryID(_ entryID: UUID?) {
+    func setLiveOutputFocusedConversationEntryID(_ entryID: UUID?) {
         focusedConversationEntryID = entryID
         refreshLiveOutputContext()
     }
 
-    public func setLiveOutputInputFocused(_ isFocused: Bool) {
+    func setLiveOutputInputFocused(_ isFocused: Bool) {
         liveOutputContext.isInputFocused = isFocused
         refreshLiveOutputContext()
     }
 
-    public func setLiveOutputSnapshotInspecting(_ isInspecting: Bool) {
+    func setLiveOutputSnapshotInspecting(_ isInspecting: Bool) {
         liveOutputContext.isSnapshotInspecting = isInspecting
         refreshLiveOutputContext()
     }
 
     /// Freezes one incoming conversation entry for stable, document-like
     /// inspection. This never changes the live terminal conversation.
-    public func captureSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
+    func captureSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
         guard let entry = conversationEntries.first(where: { $0.id == entryID }),
               entry.role == .incomingContent else {
             return nil

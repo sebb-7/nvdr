@@ -1,11 +1,11 @@
 import Foundation
 
 /// One provider-neutral, informational accessibility announcement.
-public struct LiveOutputAnnouncement: Identifiable, Equatable, Sendable {
-    public let id: UUID
-    public let text: String
+struct LiveOutputAnnouncement: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let text: String
 
-    public init(id: UUID = UUID(), text: String) {
+    init(id: UUID = UUID(), text: String) {
         self.id = id
         self.text = text
     }
@@ -13,23 +13,23 @@ public struct LiveOutputAnnouncement: Identifiable, Equatable, Sendable {
 
 /// Conditions under which automatic live output may inform without interrupting
 /// a person who is reading history, entering input, or inspecting a Snapshot.
-public struct LiveOutputAnnouncementContext: Equatable, Sendable {
-    public var isVoiceOverEnabled = false
-    public var isReadingHistory = false
-    public var isInputFocused = false
-    public var isSnapshotInspecting = false
+struct LiveOutputAnnouncementContext: Equatable, Sendable {
+    var isVoiceOverEnabled = false
+    var isReadingHistory = false
+    var isInputFocused = false
+    var isSnapshotInspecting = false
 
-    public var permitsAnnouncements: Bool {
+    var permitsAnnouncements: Bool {
         isVoiceOverEnabled && !isReadingHistory && !isInputFocused && !isSnapshotInspecting
     }
 }
 
-public struct LiveOutputAnnouncementSchedule: Equatable, Sendable {
-    public let token: UUID
-    public let delay: Duration
+struct LiveOutputAnnouncementSchedule: Equatable, Sendable {
+    let token: UUID
+    let delay: Duration
 }
 
-public enum LiveOutputAnnouncementPolicyEffect: Equatable, Sendable {
+enum LiveOutputAnnouncementPolicyEffect: Equatable, Sendable {
     case announce(LiveOutputAnnouncement)
     case schedule(LiveOutputAnnouncementSchedule)
     case cancelScheduled
@@ -38,10 +38,10 @@ public enum LiveOutputAnnouncementPolicyEffect: Equatable, Sendable {
 /// Semantic coalescing policy for live conversation output. It deliberately
 /// has no terminal-parser, SSH, SwiftUI, or VoiceOver dependency.
 @MainActor
-public final class LiveOutputAnnouncementPolicy {
+final class LiveOutputAnnouncementPolicy {
     /// Long enough to avoid byte-by-byte chatter while remaining responsive
     /// for ordinary interactive terminal output.
-    public static let defaultQuietInterval: Duration = .milliseconds(450)
+    static let defaultQuietInterval: Duration = .milliseconds(450)
 
     private struct PendingStreaming {
         let token: UUID
@@ -53,11 +53,11 @@ public final class LiveOutputAnnouncementPolicy {
     private var pendingStreaming: PendingStreaming?
     private var lastHandledTextByEntryID: [UUID: String] = [:]
 
-    public init(quietInterval: Duration = LiveOutputAnnouncementPolicy.defaultQuietInterval) {
+    init(quietInterval: Duration = LiveOutputAnnouncementPolicy.defaultQuietInterval) {
         self.quietInterval = quietInterval
     }
 
-    public func completed(
+    func completed(
         _ entries: [AccessibleConversationEntry],
         context: LiveOutputAnnouncementContext
     ) -> [LiveOutputAnnouncementPolicyEffect] {
@@ -85,7 +85,7 @@ public final class LiveOutputAnnouncementPolicy {
         return effects
     }
 
-    public func streaming(
+    func streaming(
         _ entry: AccessibleConversationEntry,
         context: LiveOutputAnnouncementContext
     ) -> [LiveOutputAnnouncementPolicyEffect] {
@@ -102,7 +102,7 @@ public final class LiveOutputAnnouncementPolicy {
         return effects
     }
 
-    public func settle(
+    func settle(
         token: UUID,
         context: LiveOutputAnnouncementContext
     ) -> [LiveOutputAnnouncementPolicyEffect] {
@@ -114,15 +114,15 @@ public final class LiveOutputAnnouncementPolicy {
         return [.announce(LiveOutputAnnouncement(text: pendingStreaming.text))]
     }
 
-    public func updateContext(_ context: LiveOutputAnnouncementContext) -> [LiveOutputAnnouncementPolicyEffect] {
+    func updateContext(_ context: LiveOutputAnnouncementContext) -> [LiveOutputAnnouncementPolicyEffect] {
         context.permitsAnnouncements ? [] : cancelPendingIfNeeded()
     }
 
-    public func cancelPending() -> [LiveOutputAnnouncementPolicyEffect] {
+    func cancelPending() -> [LiveOutputAnnouncementPolicyEffect] {
         cancelPendingIfNeeded()
     }
 
-    public func reset() -> [LiveOutputAnnouncementPolicyEffect] {
+    func reset() -> [LiveOutputAnnouncementPolicyEffect] {
         lastHandledTextByEntryID = [:]
         return cancelPendingIfNeeded()
     }
