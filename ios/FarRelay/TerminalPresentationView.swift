@@ -3,6 +3,7 @@ import SwiftUI
 /// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(InteractionFeedback.self) private var interactionFeedback
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
@@ -53,6 +54,11 @@ struct TerminalPresentationView: View {
             guard isVoiceOverEnabled, let announcement = presentation.liveOutputAnnouncement else { return }
             LiveOutputAnnouncementDelivery.deliver(announcement)
         }
+        .onChange(of: presentation.lastInteractionFeedback?.id) { _, _ in
+            if let request = presentation.lastInteractionFeedback {
+                interactionFeedback.play(request.kind)
+            }
+        }
     }
 }
 
@@ -97,36 +103,61 @@ private struct TerminalConversationEntryView: View {
 
     var body: some View {
         if entry.isCommand {
-            Text(entry.text)
+            Text(entry.presentationText)
                 .textSelection(.enabled)
                 .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                 .accessibilityHeading(.h3)
                 .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-                .accessibilityAction(named: "Run Again") {
-                    Task {
-                        await presentation.runAgain(commandID: entry.id)
-                    }
+                .conversationAccessibilityActions(presentation.accessibilityActions(for: entry)) { action in
+                    perform(action)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("terminal-command-\(entry.id)")
         } else {
             VStack(alignment: .leading) {
-                Text(entry.text)
+                Text(entry.presentationText)
                     .textSelection(.enabled)
                     .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                     .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
+                    .conversationAccessibilityActions(presentation.accessibilityActions(for: entry)) { action in
+                        perform(action)
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if entry.role == .incomingContent {
                     Button("Open Snapshot", systemImage: "doc.text") {
-                        guard let snapshot = presentation.captureSnapshot(for: entry.id) else { return }
-                        openSnapshot(snapshot)
+                        openSnapshotIfAvailable()
                     }
                     .accessibilityIdentifier("terminal-open-snapshot-\(entry.id)")
                 }
             }
             .accessibilityIdentifier("terminal-content-\(entry.id)")
         }
+    }
+
+    private func perform(_ action: ConversationAccessibilityAction) {
+        switch action {
+        case .copy:
+            copyEntry()
+        case .runAgain:
+            Task {
+                await presentation.runAgain(commandID: entry.id)
+            }
+        case .openSnapshot:
+            openSnapshotIfAvailable()
+        case .sendCommand, .clearInput, .copyAll:
+            break
+        }
+    }
+
+    private func copyEntry() {
+        guard presentation.performCopy(for: entry.id) else { return }
+        AccessibilityNotification.Announcement("Copied").post()
+    }
+
+    private func openSnapshotIfAvailable() {
+        guard let snapshot = presentation.performOpenSnapshot(for: entry.id) else { return }
+        openSnapshot(snapshot)
     }
 }
 
@@ -137,6 +168,11 @@ private struct TerminalPresentationStatusView: View {
         VStack(alignment: .leading) {
             Text(presentation.sessionState.accessibilityLabel)
                 .accessibilityIdentifier("terminal-session-state")
+            if let shellPromptContext = presentation.shellPromptContext {
+                Text(shellPromptContext)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Shell prompt context: \(shellPromptContext)")
+            }
             if presentation.accessibleSnapshot?.isAlternateScreen == true {
                 Text("Alternate screen active")
                     .foregroundStyle(.secondary)
@@ -160,6 +196,7 @@ private struct TerminalInputControls: View {
     let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
+    @FocusState private var isInputEditing: Bool
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -167,19 +204,27 @@ private struct TerminalInputControls: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.send)
+                .focused($isInputEditing)
                 .onSubmit {
-                    Task {
-                        await presentation.submitInputText()
+                    sendFromInput()
+                }
+                .conversationAccessibilityActions(presentation.inputAccessibilityActions()) { action in
+                    switch action {
+                    case .sendCommand:
+                        sendFromInput()
+                    case .clearInput:
+                        presentation.clearInput()
+                    default:
+                        break
                     }
                 }
+                .accessibilityLabel("Terminal input")
                 .accessibilityIdentifier("terminal-input")
                 .accessibilityFocused(voiceOverFocus, equals: .input)
 
             HStack {
                 Button("Send", systemImage: "arrow.up.circle") {
-                    Task {
-                        await presentation.submitInputText()
-                    }
+                    sendFromInput()
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("terminal-send")
@@ -201,5 +246,47 @@ private struct TerminalInputControls: View {
             }
         }
         .padding()
+    }
+
+    private func sendFromInput() {
+        let retainEditingFocus = isInputEditing
+        Task {
+            await presentation.submitInputText()
+            if retainEditingFocus, presentation.lastInputError == nil {
+                isInputEditing = true
+            }
+        }
+    }
+}
+
+private extension View {
+    func conversationAccessibilityActions(
+        _ actions: [ConversationAccessibilityAction],
+        perform: @escaping (ConversationAccessibilityAction) -> Void
+    ) -> some View {
+        modifier(ConversationAccessibilityActionsModifier(actions: actions, perform: perform))
+    }
+}
+
+private struct ConversationAccessibilityActionsModifier: ViewModifier {
+    let actions: [ConversationAccessibilityAction]
+    let perform: (ConversationAccessibilityAction) -> Void
+
+    func body(content: Content) -> some View {
+        switch actions.count {
+        case 0:
+            content
+        case 1:
+            content.accessibilityAction(named: actions[0].name) { perform(actions[0]) }
+        case 2:
+            content
+                .accessibilityAction(named: actions[0].name) { perform(actions[0]) }
+                .accessibilityAction(named: actions[1].name) { perform(actions[1]) }
+        default:
+            content
+                .accessibilityAction(named: actions[0].name) { perform(actions[0]) }
+                .accessibilityAction(named: actions[1].name) { perform(actions[1]) }
+                .accessibilityAction(named: actions[2].name) { perform(actions[2]) }
+        }
     }
 }

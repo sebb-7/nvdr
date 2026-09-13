@@ -350,6 +350,151 @@ final class TerminalPresentationModelTests: XCTestCase {
             model.lastInputError,
             TerminalControlChordError.ambiguousControlShift.explanation
         )
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
+    }
+
+    func testSuccessfulSendClearsInputAndFailedSendPreservesIt() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        model.inputText = "git status"
+        await model.submitInputText()
+        XCTAssertEqual(model.inputText, "")
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .selectionAccepted)
+
+        session.sendError = TerminalSendFailure()
+        model.inputText = "git push"
+        await model.submitInputText()
+        XCTAssertEqual(model.inputText, "git push")
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["git status"])
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
+    }
+
+    func testUnicodeInputIsByteExactUTF8WithoutExtraNewlines() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        let command = "echo café 日本語 🌍"
+
+        await model.submitInput(command)
+
+        XCTAssertEqual(session.sentBytes, [Data(command.utf8), Data([0x0D])])
+        XCTAssertEqual(model.conversationEntries.map(\.text), [command])
+    }
+
+    func testRepeatedCommandsCanBeSentSequentially() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        await model.submitInput("pwd")
+        await model.submitInput("ls")
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["pwd", "ls"])
+        XCTAssertEqual(
+            session.sentBytes,
+            [Data("pwd".utf8), Data([0x0D]), Data("ls".utf8), Data([0x0D])]
+        )
+    }
+
+    func testIncomingOutputDoesNotChangeInputText() {
+        let model = TerminalPresentationModel()
+        model.inputText = "still typing"
+        model.setLiveOutputInputFocused(true)
+        model.setLiveOutputVoiceOverEnabled(true)
+        _ = model.process(snapshot(revision: 0, viewport: ["", ""], cursorRow: 0), sessionState: .connected)
+        _ = model.process(
+            snapshot(revision: 1, viewport: ["remote output", ""], cursorRow: 1),
+            sessionState: .connected
+        )
+        XCTAssertEqual(model.inputText, "still typing")
+        XCTAssertNil(model.liveOutputAnnouncement)
+    }
+
+    func testDisconnectedControlKeyRequestsErrorFeedback() async {
+        let model = TerminalPresentationModel()
+        await model.send(control: TerminalControlKey(chord: .escape))
+        XCTAssertEqual(model.lastInputError, "Terminal is not connected.")
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
+    }
+
+    func testRunAgainFailureDoesNotDuplicateCommandAndRequestsError() async throws {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        await model.submitInput("ls")
+        let original = try XCTUnwrap(model.conversationEntries.first)
+        session.sendError = TerminalSendFailure()
+        await model.runAgain(commandID: original.id)
+        XCTAssertEqual(model.conversationEntries.map(\.text), ["ls"])
+        XCTAssertEqual(model.conversationEntries.map(\.id), [original.id])
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
+    }
+
+    func testCopyUsesCompleteLogicalTextAndOpenSnapshotKeepsFullContent() throws {
+        let model = TerminalPresentationModel()
+        var copied: [String] = []
+        model.copyToClipboard = { copied.append($0) }
+        _ = model.process(snapshot(
+            revision: 1,
+            viewport: ["first\nsecond", ""],
+            cursorRow: 1
+        ), sessionState: .connected)
+        let entry = try XCTUnwrap(model.conversationEntries.first)
+
+        XCTAssertEqual(
+            model.accessibilityActions(for: entry),
+            [.copy, .openSnapshot]
+        )
+        XCTAssertTrue(model.performCopy(for: entry.id))
+        XCTAssertEqual(copied, ["first\nsecond"])
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .copied)
+
+        let snapshot = try XCTUnwrap(model.performOpenSnapshot(for: entry.id))
+        XCTAssertEqual(snapshot.text, "first\nsecond")
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .selectionAccepted)
+    }
+
+    func testCommandActionsExposeCopyAndRunAgain() async throws {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        var copied: [String] = []
+        model.copyToClipboard = { copied.append($0) }
+        await model.submitInput("echo FarRelay")
+        let command = try XCTUnwrap(model.conversationEntries.first)
+        XCTAssertEqual(model.accessibilityActions(for: command), [.copy, .runAgain])
+        XCTAssertTrue(model.performCopy(for: command.id))
+        XCTAssertEqual(copied, ["echo FarRelay"])
+        XCTAssertNil(model.captureSnapshot(for: command.id))
+    }
+
+    func testClearInputAndSendAccessibilityPolicy() {
+        let model = TerminalPresentationModel()
+        XCTAssertEqual(model.inputAccessibilityActions(), [.sendCommand])
+        model.inputText = "pwd"
+        XCTAssertEqual(model.inputAccessibilityActions(), [.sendCommand, .clearInput])
+        model.clearInput()
+        XCTAssertEqual(model.inputText, "")
+        XCTAssertEqual(model.inputAccessibilityActions(), [.sendCommand])
+    }
+
+    func testConnectionStateChangesRequestSparseFeedback() {
+        let model = TerminalPresentationModel()
+        model.setSessionState(.connecting)
+        XCTAssertNil(model.lastInteractionFeedback)
+        model.setSessionState(.connected)
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .success)
+        model.setSessionState(.failed("no route"))
+        XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
     }
 
     private func snapshot(
@@ -358,46 +503,11 @@ final class TerminalPresentationModelTests: XCTestCase {
         cursorRow: Int,
         isAlternateScreen: Bool = false
     ) -> TerminalSnapshot {
-        TerminalSnapshot(
+        TerminalPresentationFixtures.snapshot(
             revision: revision,
-            dimensions: TerminalDimensions(columns: 20, rows: viewport.count),
-            cursor: TerminalCursor(column: 0, row: cursorRow),
-            viewport: viewport.map { TerminalLineSnapshot(text: $0, isWrappedContinuation: false) },
-            scrollback: [],
-            isAlternateScreen: isAlternateScreen,
-            semanticPromptRows: [],
-            shellIntegrationMarks: []
+            viewport: viewport,
+            cursorRow: cursorRow,
+            isAlternateScreen: isAlternateScreen
         )
-    }
-}
-
-@MainActor
-private final class FakeTerminalPresentationSession: TerminalPresentationSession {
-    var terminalPresentationSnapshot: TerminalSnapshot
-    var terminalPresentationState: TerminalPresentationSessionState
-    private(set) var sentBytes: [Data] = []
-    private var observer: (@MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void)?
-
-    init(state: TerminalPresentationSessionState, snapshot: TerminalSnapshot) {
-        terminalPresentationState = state
-        terminalPresentationSnapshot = snapshot
-    }
-
-    func observeTerminalPresentationUpdates(
-        _ observer: @escaping @MainActor (TerminalSnapshot, TerminalPresentationSessionState) -> Void
-    ) {
-        self.observer = observer
-    }
-
-    func sendTerminalInput(_ bytes: Data) async throws {
-        sentBytes.append(bytes)
-    }
-
-    func resizeTerminal(columns: Int, rows: Int) async throws {}
-
-    func publish(_ snapshot: TerminalSnapshot, state: TerminalPresentationSessionState) {
-        terminalPresentationSnapshot = snapshot
-        terminalPresentationState = state
-        observer?(snapshot, state)
     }
 }

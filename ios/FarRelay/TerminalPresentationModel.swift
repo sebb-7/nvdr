@@ -41,6 +41,11 @@ public protocol TerminalPresentationSession: AnyObject {
     func resizeTerminal(columns: Int, rows: Int) async throws
 }
 
+private struct CompletedLineIngest {
+    var finalizedEntries: [AccessibleConversationEntry] = []
+    var openGroup: AccessibleConversationEntry?
+}
+
 /// UI-facing accessible conversation state derived from terminal semantics.
 @Observable
 @MainActor
@@ -51,11 +56,18 @@ public final class TerminalPresentationModel {
     public private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     public private(set) var lastInputError: String?
     public private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
+    public private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
+    public private(set) var shellPromptContext: String?
     public var inputText = ""
+    public var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
 
     private var accessibilityModel = TerminalAccessibilityModel()
     private var session: (any TerminalPresentationSession)?
     private var streamingEntryID: UUID?
+    private var openOutputEntryID: UUID?
+    private var openGroupPartialLine: String?
+    private var lastOutboundCommandText: String?
+    private var announcedLargeOutputIDs: Set<UUID> = []
     private var observationGeneration = 0
     private let liveOutputPolicy = LiveOutputAnnouncementPolicy()
     private var liveOutputAnnouncementTask: Task<Void, Never>?
@@ -71,14 +83,14 @@ public final class TerminalPresentationModel {
     /// a live session to attach, so old history cannot bleed into a new shell.
     public func beginConnecting() {
         session = nil
-        sessionState = .connecting
+        updateSessionState(.connecting)
         resetPresentation()
     }
 
     /// Updates feature-level lifecycle state before a terminal session exists
     /// or after its transport has been released.
     public func setSessionState(_ state: TerminalPresentationSessionState) {
-        sessionState = state
+        updateSessionState(state)
     }
 
     /// Attaches a terminal session owned by a higher-level feature coordinator.
@@ -109,7 +121,7 @@ public final class TerminalPresentationModel {
         _ terminalSnapshot: TerminalSnapshot,
         sessionState: TerminalPresentationSessionState
     ) -> TerminalAccessibilityUpdate {
-        self.sessionState = sessionState
+        updateSessionState(sessionState)
         let establishesBaseline = accessibilityModel.accessibleSnapshot == nil
         let update = accessibilityModel.process(terminalSnapshot)
         accessibleSnapshot = update.snapshot
@@ -117,6 +129,8 @@ public final class TerminalPresentationModel {
         if update.snapshot.isAlternateScreen {
             alternateScreenLines = usefulLines(in: update.snapshot)
             streamingEntryID = nil
+            openOutputEntryID = nil
+            openGroupPartialLine = nil
             applyLiveOutputEffects(liveOutputPolicy.cancelPending())
             return update
         }
@@ -139,6 +153,10 @@ public final class TerminalPresentationModel {
         await submitInput(inputText)
     }
 
+    public func clearInput() {
+        inputText = ""
+    }
+
     /// Repeats an outbound command through the same byte-exact terminal path.
     public func runAgain(commandID: UUID) async {
         guard let command = conversationEntries.first(where: { $0.id == commandID && $0.isCommand }) else {
@@ -151,18 +169,22 @@ public final class TerminalPresentationModel {
     public func send(control: TerminalControlKey) async {
         guard let session else {
             lastInputError = "Terminal is not connected."
+            requestFeedback(.error)
             return
         }
         switch TerminalControlChordEncoder.encode(control.chord) {
         case .failure(let error):
             lastInputError = error.explanation
+            requestFeedback(.error)
             return
         case .success(let bytes):
             do {
                 try await session.sendTerminalInput(bytes)
                 lastInputError = nil
+                requestFeedback(.selectionAccepted)
             } catch {
                 lastInputError = error.localizedDescription
+                requestFeedback(.error)
             }
         }
     }
@@ -172,9 +194,32 @@ public final class TerminalPresentationModel {
     public func send(controlID: String, from controls: [TerminalControlKey]) async {
         guard let control = controls.first(where: { $0.id == controlID }) else {
             lastInputError = "This Control Key is no longer available."
+            requestFeedback(.error)
             return
         }
         await send(control: control)
+    }
+
+    public func performCopy(for entryID: UUID) -> Bool {
+        guard let entry = conversationEntries.first(where: { $0.id == entryID }) else {
+            return false
+        }
+        copyToClipboard(ConversationAccessibilityActionPolicy.copyText(for: entry))
+        requestFeedback(.copied)
+        return true
+    }
+
+    public func performCopyAll(from snapshot: AccessibleConversationSnapshot) {
+        copyToClipboard(ConversationAccessibilityActionPolicy.copyAllText(for: snapshot))
+        requestFeedback(.copied)
+    }
+
+    /// User-facing Snapshot capture. Unlike `captureSnapshot(for:)`, this
+    /// records interaction feedback for an explicit Open Snapshot action.
+    public func performOpenSnapshot(for entryID: UUID) -> AccessibleConversationSnapshot? {
+        guard let snapshot = captureSnapshot(for: entryID) else { return nil }
+        requestFeedback(.selectionAccepted)
+        return snapshot
     }
 
     private func sendCommand(_ text: String) async {
@@ -184,18 +229,23 @@ public final class TerminalPresentationModel {
             returnBytes = bytes
         case .failure(let error):
             lastInputError = error.explanation
+            requestFeedback(.error)
             return
         }
 
         guard let session else {
             lastInputError = "Terminal is not connected."
+            requestFeedback(.error)
             return
         }
+        finalizeOpenOutputGroupForNewCommand()
+        let previousOutbound = lastOutboundCommandText
         let entry = text.isEmpty
             ? nil
             : AccessibleConversationEntry(text: text, role: .outboundCommand)
         if let entry {
             conversationEntries.append(entry)
+            lastOutboundCommandText = text
         }
         do {
             if !text.isEmpty {
@@ -204,11 +254,14 @@ public final class TerminalPresentationModel {
             try await session.sendTerminalInput(returnBytes)
             inputText = ""
             lastInputError = nil
+            requestFeedback(.selectionAccepted)
         } catch {
             if let entry {
                 conversationEntries.removeAll { $0.id == entry.id }
             }
+            lastOutboundCommandText = previousOutbound
             lastInputError = error.localizedDescription
+            requestFeedback(.error)
         }
     }
 
@@ -217,6 +270,7 @@ public final class TerminalPresentationModel {
     public func resize(columns: Int, rows: Int) async {
         guard let session else {
             lastInputError = "Terminal is not connected."
+            requestFeedback(.error)
             return
         }
         do {
@@ -225,13 +279,22 @@ public final class TerminalPresentationModel {
             refresh()
         } catch {
             lastInputError = error.localizedDescription
+            requestFeedback(.error)
         }
     }
 
     /// Keeps transcript labels content-first; heading semantics are applied by
     /// the native SwiftUI command entry view.
     public func accessibilityLabel(for entry: AccessibleConversationEntry) -> String {
-        entry.text
+        entry.presentationText
+    }
+
+    public func accessibilityActions(for entry: AccessibleConversationEntry) -> [ConversationAccessibilityAction] {
+        ConversationAccessibilityActionPolicy.actions(for: entry)
+    }
+
+    public func inputAccessibilityActions() -> [ConversationAccessibilityAction] {
+        ConversationAccessibilityActionPolicy.inputActions(inputText: inputText)
     }
 
     public func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
@@ -265,12 +328,11 @@ public final class TerminalPresentationModel {
     }
 
     private func seedConversation(from snapshot: AccessibleTerminalSnapshot) {
-        for line in usefulLines(in: snapshot) {
-            let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
-            conversationEntries.append(entry)
-            if line.containsCursor {
-                streamingEntryID = entry.id
-            }
+        let lines = usefulLines(in: snapshot)
+        let completed = lines.filter { !$0.containsCursor }
+        _ = ingestCompletedLines(completed)
+        if let current = lines.first(where: \.containsCursor) {
+            _ = ingestCurrentLine(current)
         }
     }
 
@@ -278,12 +340,15 @@ public final class TerminalPresentationModel {
         for event in events {
             switch event {
             case .completedLinesAppended(let lines):
-                applyLiveOutputEffects(liveOutputPolicy.completed(
-                    appendCompleted(lines), context: currentLiveOutputContext()
-                ))
+                let ingested = ingestCompletedLines(lines)
+                var finalized = ingested.finalizedEntries
+                if let openGroup = ingested.openGroup {
+                    finalized.append(openGroup)
+                }
+                announceFinalized(finalized)
             case .currentLineChanged(let line):
-                if let entry = updateStreamingContent(with: line) {
-                    applyLiveOutputEffects(liveOutputPolicy.streaming(entry, context: currentLiveOutputContext()))
+                if let entry = ingestCurrentLine(line) {
+                    announceStreamingIfNeeded(entry)
                 } else {
                     applyLiveOutputEffects(liveOutputPolicy.cancelPending())
                 }
@@ -291,6 +356,8 @@ public final class TerminalPresentationModel {
                 // Repaints and alternate-screen transitions are display state,
                 // not append-only conversation history.
                 streamingEntryID = nil
+                openOutputEntryID = nil
+                openGroupPartialLine = nil
                 applyLiveOutputEffects(liveOutputPolicy.cancelPending())
             case .cursorMoved, .shellIntegrationMarksAppeared:
                 break
@@ -298,21 +365,108 @@ public final class TerminalPresentationModel {
         }
     }
 
-    private func appendCompleted(_ lines: [AccessibleTerminalLine]) -> [AccessibleConversationEntry] {
-        var completedEntries: [AccessibleConversationEntry] = []
+    private func ingestCompletedLines(_ lines: [AccessibleTerminalLine]) -> CompletedLineIngest {
+        var result = CompletedLineIngest()
         for line in lines where isUseful(line) {
-            if let streamingEntryID,
-               let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }),
-               conversationEntries[index].text == line.text {
-                self.streamingEntryID = nil
-                completedEntries.append(conversationEntries[index])
+            if isProvenCommandEcho(line) {
                 continue
             }
-            let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
-            conversationEntries.append(entry)
-            completedEntries.append(entry)
+            if isPromptOnly(line) {
+                shellPromptContext = line.text
+                result.openGroup = nil
+                if let finalized = finalizeOpenOutputGroup() {
+                    result.finalizedEntries.append(finalized)
+                }
+                continue
+            }
+            if hasOutputSemantics(line) {
+                result.openGroup = appendCompletedOutput(line.text)
+                continue
+            }
+            if let finalized = finalizeOpenOutputGroup() {
+                result.finalizedEntries.append(finalized)
+            }
+            result.openGroup = nil
+            result.finalizedEntries.append(contentsOf: appendFallbackCompleted(line))
         }
-        return completedEntries
+        return result
+    }
+
+    private func ingestCurrentLine(_ line: AccessibleTerminalLine) -> AccessibleConversationEntry? {
+        guard isUseful(line) else {
+            streamingEntryID = nil
+            return nil
+        }
+        if isProvenCommandEcho(line) {
+            return nil
+        }
+        if isPromptOnly(line) {
+            shellPromptContext = line.text
+            _ = finalizeOpenOutputGroup()
+            return nil
+        }
+        if hasOutputSemantics(line) {
+            return applyCurrentOutputLine(line.text)
+        }
+        if openOutputEntryID != nil {
+            _ = finalizeOpenOutputGroup()
+        }
+        return updateStreamingContent(with: line)
+    }
+
+    private func appendCompletedOutput(_ text: String) -> AccessibleConversationEntry {
+        if openGroupPartialLine == text {
+            openGroupPartialLine = nil
+            if let openOutputEntryID,
+               let index = conversationEntries.firstIndex(where: { $0.id == openOutputEntryID }) {
+                return conversationEntries[index]
+            }
+        }
+        return appendOutputLine(text)
+    }
+
+    private func applyCurrentOutputLine(_ text: String) -> AccessibleConversationEntry {
+        if let openOutputEntryID,
+           let index = conversationEntries.firstIndex(where: { $0.id == openOutputEntryID }) {
+            let base = baseTextRemovingPartial(conversationEntries[index].text)
+            conversationEntries[index].text = base.isEmpty ? text : base + "\n" + text
+            openGroupPartialLine = text
+            streamingEntryID = openOutputEntryID
+            return conversationEntries[index]
+        }
+        let entry = appendOutputLine(text)
+        openGroupPartialLine = text
+        return entry
+    }
+
+    private func appendOutputLine(_ text: String) -> AccessibleConversationEntry {
+        if let openOutputEntryID,
+           let index = conversationEntries.firstIndex(where: { $0.id == openOutputEntryID }) {
+            if conversationEntries[index].text.isEmpty {
+                conversationEntries[index].text = text
+            } else {
+                conversationEntries[index].text += "\n" + text
+            }
+            streamingEntryID = openOutputEntryID
+            return conversationEntries[index]
+        }
+        let entry = AccessibleConversationEntry(text: text, role: .incomingContent)
+        conversationEntries.append(entry)
+        openOutputEntryID = entry.id
+        streamingEntryID = entry.id
+        return entry
+    }
+
+    private func appendFallbackCompleted(_ line: AccessibleTerminalLine) -> [AccessibleConversationEntry] {
+        if let streamingEntryID,
+           let index = conversationEntries.firstIndex(where: { $0.id == streamingEntryID }),
+           conversationEntries[index].text == line.text {
+            self.streamingEntryID = nil
+            return [conversationEntries[index]]
+        }
+        let entry = AccessibleConversationEntry(text: line.text, role: .incomingContent)
+        conversationEntries.append(entry)
+        return [entry]
     }
 
     private func updateStreamingContent(with line: AccessibleTerminalLine) -> AccessibleConversationEntry? {
@@ -333,12 +487,107 @@ public final class TerminalPresentationModel {
         return entry
     }
 
+    @discardableResult
+    private func finalizeOpenOutputGroup() -> AccessibleConversationEntry? {
+        guard let id = openOutputEntryID,
+              let entry = conversationEntries.first(where: { $0.id == id }) else {
+            openOutputEntryID = nil
+            openGroupPartialLine = nil
+            return nil
+        }
+        openOutputEntryID = nil
+        openGroupPartialLine = nil
+        if streamingEntryID == id {
+            streamingEntryID = nil
+        }
+        return entry
+    }
+
+    private func finalizeOpenOutputGroupForNewCommand() {
+        if let finalized = finalizeOpenOutputGroup() {
+            announceFinalized([finalized])
+        }
+    }
+
+    private func baseTextRemovingPartial(_ text: String) -> String {
+        guard let openGroupPartialLine else { return text }
+        if text == openGroupPartialLine {
+            return ""
+        }
+        let suffix = "\n" + openGroupPartialLine
+        if text.hasSuffix(suffix) {
+            return String(text.dropLast(suffix.count))
+        }
+        return text
+    }
+
+    private func hasOutputSemantics(_ line: AccessibleTerminalLine) -> Bool {
+        line.shellSemanticContent.contains(.output)
+    }
+
+    private func isPromptOnly(_ line: AccessibleTerminalLine) -> Bool {
+        let content = line.shellSemanticContent
+        guard !content.isEmpty else { return false }
+        return content.allSatisfy { item in
+            if case .prompt = item { return true }
+            return false
+        }
+    }
+
+    private func isProvenCommandEcho(_ line: AccessibleTerminalLine) -> Bool {
+        guard let lastOutboundCommandText,
+              line.text == lastOutboundCommandText,
+              line.shellSemanticContent.contains(.input),
+              !line.shellSemanticContent.contains(.output) else {
+            return false
+        }
+        return true
+    }
+
+    private func announceStreamingIfNeeded(_ entry: AccessibleConversationEntry) {
+        guard shouldAnnounce(entry) else { return }
+        applyLiveOutputEffects(liveOutputPolicy.streaming(entry, context: currentLiveOutputContext()))
+    }
+
+    private func announceFinalized(_ entries: [AccessibleConversationEntry]) {
+        let announceable = entries.filter(shouldAnnounce)
+        guard !announceable.isEmpty else { return }
+        applyLiveOutputEffects(liveOutputPolicy.completed(announceable, context: currentLiveOutputContext()))
+    }
+
+    private func shouldAnnounce(_ entry: AccessibleConversationEntry) -> Bool {
+        guard entry.isCompactLargeOutput else { return true }
+        if announcedLargeOutputIDs.contains(entry.id) {
+            return false
+        }
+        announcedLargeOutputIDs.insert(entry.id)
+        return true
+    }
+
     private func usefulLines(in snapshot: AccessibleTerminalSnapshot) -> [AccessibleTerminalLine] {
         snapshot.lines.filter(isUseful)
     }
 
     private func isUseful(_ line: AccessibleTerminalLine) -> Bool {
         !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func updateSessionState(_ state: TerminalPresentationSessionState) {
+        let previous = sessionState
+        sessionState = state
+        guard previous != state else { return }
+        switch state {
+        case .connected:
+            requestFeedback(.success)
+        case .failed:
+            requestFeedback(.error)
+        default:
+            break
+        }
+    }
+
+    private func requestFeedback(_ kind: InteractionFeedbackKind) {
+        lastInteractionFeedback = InteractionFeedbackRequest(kind: kind)
     }
 
     private func resetPresentation() {
@@ -348,7 +597,13 @@ public final class TerminalPresentationModel {
         conversationEntries = []
         alternateScreenLines = []
         streamingEntryID = nil
+        openOutputEntryID = nil
+        openGroupPartialLine = nil
+        lastOutboundCommandText = nil
+        shellPromptContext = nil
+        announcedLargeOutputIDs = []
         lastInputError = nil
+        lastInteractionFeedback = nil
         focusedConversationEntryID = nil
         liveOutputAnnouncement = nil
         applyLiveOutputEffects(liveOutputPolicy.reset())
