@@ -106,6 +106,23 @@ final class TerminalSessionManagerTests: XCTestCase {
         XCTAssertEqual(mac.host.state, .connected)
     }
 
+    func testProfileDisconnectClosesOnlyThatComputersTerminalSessions() async throws {
+        let (manager, settings, profiles) = try makeEnvironment(hosts: ["G14", "Mac mini"])
+        let first = try await opened(manager, profiles[0], settings: settings)
+        let second = try await opened(manager, profiles[0], settings: settings)
+        let other = try await opened(manager, profiles[1], settings: settings)
+        await waitUntil { first.host.state == .connected && second.host.state == .connected && other.host.state == .connected }
+        XCTAssertTrue(manager.hasActiveConnection(for: profiles[0].id))
+
+        await manager.closeAll(for: profiles[0].id)
+
+        XCTAssertNil(manager.session(id: first.id))
+        XCTAssertNil(manager.session(id: second.id))
+        XCTAssertNotNil(manager.session(id: other.id))
+        XCTAssertFalse(manager.hasActiveConnection(for: profiles[0].id))
+        XCTAssertTrue(manager.hasActiveConnection(for: profiles[1].id))
+    }
+
     func testSessionsRemainUntilExplicitClose() async throws {
         let (manager, settings, g14) = try makeManager(hosts: ["G14"])
         let session = try await opened(manager, g14, settings: settings)

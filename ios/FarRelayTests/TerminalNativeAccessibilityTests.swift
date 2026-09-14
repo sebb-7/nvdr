@@ -112,7 +112,8 @@ final class TerminalNativeAccessibilityTests: XCTestCase {
         )
 
         XCTAssertTrue(view.isAccessibilityElement)
-        XCTAssertTrue(view.accessibilityElementsHidden)
+        XCTAssertFalse(view.accessibilityElementsHidden)
+        XCTAssertFalse(view.subviews.first?.isAccessibilityElement ?? true)
         XCTAssertEqual(view.accessibilityLabel, "first line second line")
         XCTAssertFalse(view.accessibilityLabel?.contains("\n") == true)
         XCTAssertEqual(view.accessibilityCustomActions?.map(\.name), ["Copy", "Open Snapshot"])

@@ -71,6 +71,21 @@ final class TerminalSessionManager {
         sessions.filter { $0.hostProfileID == hostProfileID }.count
     }
 
+    /// Profile-level connection truth deliberately aggregates only live
+    /// manager-owned terminal transports for this profile. It does not infer
+    /// connection from another computer or from a stale transcript.
+    func hasActiveConnection(for hostProfileID: UUID) -> Bool {
+        sessions.contains { session in
+            guard session.hostProfileID == hostProfileID else { return false }
+            switch session.host.state {
+            case .connecting, .connected:
+                true
+            case .idle, .ended, .failed, .closed:
+                false
+            }
+        }
+    }
+
     func hostGroups(using profiles: [HostProfile]) -> [TerminalHostGroup] {
         hostAppearanceOrder.compactMap { hostID in
             let hostSessions = orderedSessions(for: hostID)
@@ -344,5 +359,15 @@ final class TerminalSessionManager {
 
     private func requestFeedback(_ kind: InteractionFeedbackKind) {
         lastSessionActionFeedback = InteractionFeedbackRequest(kind: kind)
+    }
+
+    /// Explicit computer Disconnect closes every terminal belonging to that
+    /// saved computer. Back navigation intentionally remains non-destructive;
+    /// only this operation and Close Terminal end manager-owned sessions.
+    func closeAll(for hostProfileID: UUID) async {
+        let ids = sessions.filter { $0.hostProfileID == hostProfileID }.map(\.id)
+        for id in ids {
+            await close(id)
+        }
     }
 }

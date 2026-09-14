@@ -10,6 +10,7 @@ struct NativeTerminalConversationRow: UIViewRepresentable {
     let actions: [ConversationAccessibilityAction]
     let onAction: (ConversationAccessibilityAction) -> Void
     let onAccessibilityFocusChanged: (Bool) -> Void
+    let onViewConfigured: (TerminalConversationRowView) -> Void = { _ in }
 
     func makeUIView(context: Context) -> TerminalConversationRowView {
         let view = TerminalConversationRowView()
@@ -18,7 +19,8 @@ struct NativeTerminalConversationRow: UIViewRepresentable {
             accessibilityText: accessibilityText,
             actions: actions,
             onAction: onAction,
-            onAccessibilityFocusChanged: onAccessibilityFocusChanged
+            onAccessibilityFocusChanged: onAccessibilityFocusChanged,
+            onViewConfigured: onViewConfigured
         )
         return view
     }
@@ -29,7 +31,8 @@ struct NativeTerminalConversationRow: UIViewRepresentable {
             accessibilityText: accessibilityText,
             actions: actions,
             onAction: onAction,
-            onAccessibilityFocusChanged: onAccessibilityFocusChanged
+            onAccessibilityFocusChanged: onAccessibilityFocusChanged,
+            onViewConfigured: onViewConfigured
         )
     }
 
@@ -55,7 +58,6 @@ final class TerminalConversationRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isAccessibilityElement = true
-        accessibilityElementsHidden = true
 
         visualLabel.numberOfLines = 0
         visualLabel.lineBreakMode = .byWordWrapping
@@ -79,7 +81,8 @@ final class TerminalConversationRowView: UIView {
         accessibilityText: String,
         actions: [ConversationAccessibilityAction],
         onAction: @escaping (ConversationAccessibilityAction) -> Void,
-        onAccessibilityFocusChanged: @escaping (Bool) -> Void
+        onAccessibilityFocusChanged: @escaping (Bool) -> Void,
+        onViewConfigured: @escaping (TerminalConversationRowView) -> Void
     ) {
         visualLabel.text = entry.presentationText
         accessibilityLabel = accessibilityText
@@ -95,6 +98,7 @@ final class TerminalConversationRowView: UIView {
         }
         self.onAction = onAction
         self.onAccessibilityFocusChanged = onAccessibilityFocusChanged
+        onViewConfigured(self)
     }
 
     override func accessibilityElementDidBecomeFocused() {

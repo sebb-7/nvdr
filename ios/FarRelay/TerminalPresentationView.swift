@@ -1,5 +1,30 @@
 import SwiftUI
+import UIKit
 import os
+import Observation
+
+@Observable
+@MainActor
+private final class TerminalConversationFocusTarget {
+    private weak var latestEntry: TerminalConversationRowView?
+
+    func register(_ view: TerminalConversationRowView) {
+        latestEntry = view
+    }
+
+    /// Keep the persistent UIKit editor intact while handing VoiceOver to a
+    /// stable transcript row through the public accessibility notification.
+    func browseOutput() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+        guard let latestEntry else { return }
+        UIAccessibility.post(notification: .layoutChanged, argument: latestEntry)
+    }
+}
 
 /// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
@@ -9,6 +34,7 @@ struct TerminalPresentationView: View {
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @State private var nativeInputBuffer = TerminalNativeInputBuffer()
+    @State private var conversationFocusTarget = TerminalConversationFocusTarget()
     @State private var isManagingControlKeys = false
 
     var body: some View {
@@ -16,14 +42,16 @@ struct TerminalPresentationView: View {
         VStack(spacing: 0) {
             TerminalConversationList(
                 presentation: presentation,
-                openSnapshot: openSnapshot
+                openSnapshot: openSnapshot,
+                focusTarget: conversationFocusTarget
             )
             TerminalPresentationStatusView(presentation: presentation)
             TerminalInputControls(
                 presentation: presentation,
                 inputBuffer: nativeInputBuffer,
                 controlKeys: settings.terminalControlKeys,
-                manageControlKeys: { isManagingControlKeys = true }
+                manageControlKeys: { isManagingControlKeys = true },
+                browseOutput: { conversationFocusTarget.browseOutput() }
             )
         }
         .navigationTitle("SSH Terminal")
@@ -59,6 +87,7 @@ struct TerminalPresentationView: View {
 private struct TerminalConversationList: View {
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
+    let focusTarget: TerminalConversationFocusTarget
 
     var body: some View {
         List {
@@ -73,7 +102,8 @@ private struct TerminalConversationList: View {
                     TerminalConversationEntryView(
                         entry: entry,
                         presentation: presentation,
-                        openSnapshot: openSnapshot
+                        openSnapshot: openSnapshot,
+                        focusTarget: focusTarget
                     )
                 }
             }
@@ -86,6 +116,7 @@ private struct TerminalConversationEntryView: View {
     let entry: AccessibleConversationEntry
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
+    let focusTarget: TerminalConversationFocusTarget
 
     var body: some View {
         NativeTerminalConversationRow(
@@ -97,9 +128,10 @@ private struct TerminalConversationEntryView: View {
                 if isFocused {
                     presentation.setLiveOutputFocusedConversationEntryID(entry.id)
                     presentation.setLiveOutputInputFocused(false)
-                } else {
-                    presentation.setLiveOutputFocusedConversationEntryID(nil)
                 }
+            },
+            onViewConfigured: { view in
+                focusTarget.register(view)
             }
         )
     }
@@ -164,6 +196,7 @@ private struct TerminalInputControls: View {
     let inputBuffer: TerminalNativeInputBuffer
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
+    let browseOutput: () -> Void
     var body: some View {
         VStack(alignment: .leading) {
             StableTerminalInputField(
@@ -174,6 +207,7 @@ private struct TerminalInputControls: View {
                     inputBuffer.clear()
                     presentation.clearInput()
                 },
+                onBrowseOutput: browseOutput,
                 onAccessibilityFocusChanged: { isFocused in
                     presentation.setLiveOutputFocusedConversationEntryID(nil)
                     presentation.setLiveOutputInputFocused(isFocused)
@@ -230,6 +264,7 @@ private struct StableTerminalInputField: UIViewRepresentable {
     let initialText: String
     let onSubmit: () -> Void
     let onClear: () -> Void
+    let onBrowseOutput: () -> Void
     let onAccessibilityFocusChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -269,6 +304,7 @@ private struct StableTerminalInputField: UIViewRepresentable {
         }
         field.onSubmit = onSubmit
         field.onClear = onClear
+        field.onBrowseOutput = onBrowseOutput
         field.configureAccessibilityActions()
         field.recordLifecycle("updateUIView-after-model-propagation")
     }
@@ -314,6 +350,7 @@ private final class NativeTerminalTextField: UITextField {
     var onAccessibilityFocusChanged: ((Bool) -> Void)?
     var onSubmit: (() -> Void)?
     var onClear: (() -> Void)?
+    var onBrowseOutput: (() -> Void)?
 
     #if DEBUG
     private static let lifecycleLogger = Logger(
@@ -339,6 +376,11 @@ private final class NativeTerminalTextField: UITextField {
             UIAccessibilityCustomAction(name: "Clear Input") { [weak self] _ in
                 self?.recordLifecycle("accessibilityClear-before-buffer-clear")
                 self?.onClear?()
+                return true
+            },
+            UIAccessibilityCustomAction(name: "Browse Output") { [weak self] _ in
+                self?.recordLifecycle("accessibilityBrowseOutput")
+                self?.onBrowseOutput?()
                 return true
             }
         ]

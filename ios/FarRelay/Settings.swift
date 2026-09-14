@@ -111,12 +111,14 @@ final class AppSettings {
 
     @discardableResult
     func saveProfile(_ profile: HostProfile, credentials: HostProfileCredentials) -> Bool {
-        guard case .success = profileCredentialPersistence.save(credentials, for: profile.id) else {
+        var normalizedProfile = profile
+        normalizedProfile.nvdaRemote = profile.nvdaRemote?.normalized()
+        guard case .success = profileCredentialPersistence.save(credentials, for: normalizedProfile.id) else {
             credentialStorageError = "Unable to save credentials for \(profile.displayName)."
             return false
         }
-        if let index = hostProfiles.firstIndex(where: { $0.id == profile.id }) { hostProfiles[index] = profile }
-        else { hostProfiles.append(profile) }
+        if let index = hostProfiles.firstIndex(where: { $0.id == normalizedProfile.id }) { hostProfiles[index] = normalizedProfile }
+        else { hostProfiles.append(normalizedProfile) }
         profileStore.save(hostProfiles)
         credentialStorageError = nil
         return true
@@ -151,7 +153,7 @@ final class AppSettings {
     /// This is deliberately the legacy NVDA IPC command. `farrelay-host` is a
     /// distinct structured host protocol command stored on HostProfile.
     func nvdaBridgeCommand(for profile: HostProfile) -> String? {
-        guard profile.isNVDARemoteEnabled, let capability = profile.nvdaRemote else { return nil }
+        guard profile.isNVDARemoteEnabled, let capability = profile.nvdaRemote?.normalized() else { return nil }
         var command = profile.nvdaBridgeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         if command.isEmpty { command = "farrelay" }
         var argv = [command, "--ipc", "--host", capability.relayHost, "--port", String(capability.relayPort), "--channel", capability.channel]

@@ -28,6 +28,8 @@ final class BridgeClient {
         case connecting
         case authenticating
         case reconnecting(attempt: Int)
+        case relayConnected
+        case waitingForNVDA
         case ready
         case nvdaNotConnected
         case disconnected(reason: String)
@@ -60,6 +62,7 @@ final class BridgeClient {
     private var inputReady = false
     private var inputState = SSHInputState()
     private var driverGeneration = 0
+    private(set) var activeProfileID: UUID?
     private let speech: SpeechOutput
 
     init(speech: SpeechOutput) {
@@ -70,6 +73,7 @@ final class BridgeClient {
         stop()
         driverGeneration += 1
         let generation = driverGeneration
+        activeProfileID = profile.id
         let host = profile.address
         let port = profile.port
         let user = profile.username
@@ -132,6 +136,7 @@ final class BridgeClient {
         inputState.reset()
         driver?.cancel()
         driver = nil
+        activeProfileID = nil
         Task { await activeSupervisor?.stop() }
         if case .idle = status { return }
         status = .disconnected(reason: "stopped")
@@ -144,6 +149,24 @@ final class BridgeClient {
         forwardingEnabled = false
     }
 
+    /// The bridge is scoped to one saved computer. Terminal sessions own their
+    /// own SSH transports, so profile-level UI composes this with the terminal
+    /// manager rather than treating either transport as a global connection.
+    func isConnectionActive(for profileID: UUID) -> Bool {
+        guard activeProfileID == profileID else { return false }
+        switch status {
+        case .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected:
+            true
+        case .idle, .disconnected, .failed:
+            false
+        }
+    }
+
+    func stop(for profileID: UUID) {
+        guard activeProfileID == profileID else { return }
+        stop()
+    }
+
     /// Send an IPC command to the bridge. Silently dropped if not connected —
     /// matches the add-on's behavior (it logs a warning and moves on).
     func send(_ command: IPCCommand) {
@@ -151,7 +174,7 @@ final class BridgeClient {
     }
 
     func sendKey(vk: UInt16, pressed: Bool) {
-        guard forwardingEnabled, inputReady, let commandContinuation else { return }
+        guard forwardingEnabled, status == .ready, inputReady, let commandContinuation else { return }
         guard let command = inputState.command(forKey: vk, pressed: pressed) else { return }
         commandContinuation.yield(command)
     }
@@ -159,7 +182,7 @@ final class BridgeClient {
     /// Read-only input readiness for semantic adapters. This never changes
     /// forwarding state or attempts to establish the NVDA input channel.
     var isInputForwardingReady: Bool {
-        forwardingEnabled && inputReady
+        forwardingEnabled && status == .ready && inputReady
     }
 
     private func register(
@@ -427,7 +450,7 @@ final class BridgeClient {
             if let mapped = Self.map(state: s) {
                 await setStatus(mapped)
             }
-            if s == .disconnected || s == .quit || s == .nvdaNotConnected {
+            if s == .disconnected || s == .quit || s == .nvdaNotConnected || s == .waitingForNVDA {
                 await turnForwardingOff()
             }
         case .error(let msg):
@@ -452,6 +475,8 @@ final class BridgeClient {
     nonisolated private static func map(state: BridgeState) -> Status? {
         switch state {
         case .connecting: return .connecting
+        case .relayConnected: return .relayConnected
+        case .waitingForNVDA: return .waitingForNVDA
         case .ready: return .ready
         case .nvdaNotConnected: return .nvdaNotConnected
         case .disconnected: return .disconnected(reason: "relay")

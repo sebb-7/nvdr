@@ -72,6 +72,32 @@ final class HostProfileTests: XCTestCase {
         XCTAssertEqual(reloaded.hostProfiles, [profile])
     }
 
+    func testSavingProfileNormalizesRelayConfigurationWithoutExposingChannel() throws {
+        let defaults = try makeDefaults()
+        let credentials = TestCredentialStore()
+        let settings = AppSettings(defaults: defaults, credentialStore: credentials)
+        let profile = HostProfile(
+            address: "relay.example",
+            username: "reader",
+            platform: .windows,
+            nvdaRemote: NVDARemoteCapability(
+                isEnabled: true,
+                relayHost: " relay.example \n",
+                channel: "123456789 \n",
+                fingerprint: " abcd \n"
+            )
+        )
+
+        XCTAssertTrue(settings.saveProfile(profile, credentials: HostProfileCredentials(password: "pw")))
+        let saved = try XCTUnwrap(settings.hostProfiles.only)
+        XCTAssertEqual(saved.nvdaRemote?.relayHost, "relay.example")
+        XCTAssertEqual(saved.nvdaRemote?.channel, "123456789")
+        XCTAssertEqual(saved.nvdaRemote?.fingerprint, "abcd")
+        let command = try XCTUnwrap(settings.nvdaBridgeCommand(for: saved))
+        XCTAssertTrue(command.contains("--channel 123456789"))
+        XCTAssertFalse(command.contains("123456789 "))
+    }
+
     func testBuild5MigrationPreservesCompletePasswordAndNVDAConfiguration() throws {
         let defaults = try makeDefaults()
         defaults.set("build5.example.test", forKey: "farrelay.sshHost")
@@ -418,6 +444,22 @@ final class HostProfileTests: XCTestCase {
         bridge.suspendInputForInactiveContext()
         XCTAssertFalse(bridge.forwardingEnabled)
         XCTAssertFalse(bridge.isInputForwardingReady)
+    }
+
+    func testIPCParserKeepsRelayAndNVDAReadinessDistinct() {
+        XCTAssertEqual(IPCParser.parse("state relay_connected"), .state(.relayConnected))
+        XCTAssertEqual(IPCParser.parse("state waiting_for_nvda"), .state(.waitingForNVDA))
+        XCTAssertEqual(IPCParser.parse("state ready"), .state(.ready))
+    }
+
+    func testFailedProfileSaveDoesNotPersistAProfile() throws {
+        let defaults = try makeDefaults()
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore(failWrites: true))
+        let profile = HostProfile(displayName: "Unsaved", address: "host", username: "user")
+
+        XCTAssertFalse(settings.saveProfile(profile, credentials: HostProfileCredentials(password: "pw")))
+        XCTAssertTrue(settings.hostProfiles.isEmpty)
+        XCTAssertNotNil(settings.credentialStorageError)
     }
 
     private func makeDefaults() throws -> UserDefaults {

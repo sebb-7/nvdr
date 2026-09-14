@@ -3,11 +3,13 @@ import SwiftUI
 struct HostProfileEditorView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(TerminalSessionManager.self) private var terminals
+    @Environment(BridgeClient.self) private var bridge
     @Environment(\.dismiss) private var dismiss
     @State private var draft: HostProfile
     @State private var credentials = HostProfileCredentials()
     @State private var saveFailed = false
     @State private var openedTerminal: TerminalSessionRoute?
+    @State private var confirmingDisconnect = false
 
     init(profile: HostProfile?) {
         _draft = State(initialValue: profile ?? HostProfile())
@@ -17,6 +19,18 @@ struct HostProfileEditorView: View {
         Form {
             if isSavedComputer {
                 Section("Actions") {
+                    Button(isComputerConnected ? "Disconnect" : "Connect", systemImage: "network") {
+                        if isComputerConnected {
+                            if terminals.activeSessionCount(for: draft.id) > 0 {
+                                confirmingDisconnect = true
+                            } else {
+                                disconnectComputer()
+                            }
+                        } else {
+                            connectComputer()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
                     Button("New Terminal", systemImage: "terminal") {
                         guard let profile = settings.hostProfiles.first(where: { $0.id == draft.id }) else { return }
                         Task {
@@ -110,14 +124,64 @@ struct HostProfileEditorView: View {
                 Button("Save") {
                     let isNew = !isSavedComputer
                     saveFailed = !settings.saveProfile(draft, credentials: credentials)
-                    if !saveFailed, isNew { dismiss() }
+                    if !saveFailed {
+                        if !isNew {
+                            AccessibilityNotification.Announcement("Computer saved").post()
+                        }
+                        dismiss()
+                    }
                 }
             }
+        }
+        .alert(
+            "Disconnect \(draft.displayName)?",
+            isPresented: $confirmingDisconnect
+        ) {
+            Button("Disconnect Computer", role: .destructive) {
+                disconnectComputer()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(disconnectConfirmationMessage)
         }
         .task { credentials = settings.credentials(for: draft) ?? HostProfileCredentials() }
     }
 
     private var isSavedComputer: Bool {
         settings.hostProfiles.contains { $0.id == draft.id }
+    }
+
+    private var isComputerConnected: Bool {
+        bridge.isConnectionActive(for: draft.id) || terminals.hasActiveConnection(for: draft.id)
+    }
+
+    private var disconnectConfirmationMessage: String {
+        let terminalCount = terminals.activeSessionCount(for: draft.id)
+        if terminalCount == 1 {
+            "This closes 1 active terminal and the NVDA Remote bridge for this computer."
+        } else {
+            "This closes \(terminalCount) active terminals and the NVDA Remote bridge for this computer."
+        }
+    }
+
+    private func connectComputer() {
+        guard let profile = settings.hostProfiles.first(where: { $0.id == draft.id }) else { return }
+        if profile.isNVDARemoteEnabled {
+            bridge.start(settings: settings, profile: profile)
+        } else {
+            Task {
+                if let session = await terminals.openTerminal(for: profile, settings: settings) {
+                    openedTerminal = TerminalSessionRoute(id: session.id)
+                }
+            }
+        }
+    }
+
+    private func disconnectComputer() {
+        let profileID = draft.id
+        bridge.stop(for: profileID)
+        Task {
+            await terminals.closeAll(for: profileID)
+        }
     }
 }

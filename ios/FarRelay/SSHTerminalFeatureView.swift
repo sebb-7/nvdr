@@ -17,6 +17,10 @@ struct SSHTerminalFeatureView: View {
         .navigationDestination(item: $snapshot) { snapshot in
             OutputSnapshotView(snapshot: snapshot)
         }
+        // A terminal is a full destination inside a root tab. Hiding the
+        // platform tab bar here keeps it out of the accessibility hierarchy;
+        // SwiftUI restores it automatically when this destination is popped.
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             session.host.presentation.setLiveOutputSnapshotInspecting(snapshot != nil)
             manager.present(session.id)

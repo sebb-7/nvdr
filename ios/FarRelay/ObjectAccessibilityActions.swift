@@ -126,13 +126,13 @@ enum ConnectionAnnouncementPolicy {
             }
         case .ready:
             return "Connected to \(computerName)"
-        case .nvdaNotConnected:
-            return nil
+        case .waitingForNVDA, .nvdaNotConnected:
+            return "Waiting for NVDA on \(computerName)"
         case .reconnecting:
             return nil
         case .failed:
             return "NVDA connection failed"
-        case .authenticating, .idle, .disconnected:
+        case .relayConnected, .authenticating, .idle, .disconnected:
             return nil
         }
     }
@@ -142,6 +142,8 @@ enum ConnectionAnnouncementPolicy {
         case (.reconnecting, .reconnecting),
              (.connecting, .connecting),
              (.authenticating, .authenticating),
+             (.relayConnected, .relayConnected),
+             (.waitingForNVDA, .waitingForNVDA),
              (.ready, .ready),
              (.nvdaNotConnected, .nvdaNotConnected),
              (.failed, .failed),

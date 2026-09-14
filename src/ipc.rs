@@ -27,8 +27,9 @@
 //! - `speak <text>` — speech text. Embedded `\n` / `\r` are replaced with
 //!   spaces so the contract of "one event per line" holds.
 //! - `cancel` — slave asked us to interrupt local speech.
-//! - `state <name>` — lifecycle: `connecting`, `ready` (channel_joined seen),
-//!   `nvda_not_connected`, `disconnected`, `quit`.
+//! - `state <name>` — lifecycle: `connecting`, `relay_connected`,
+//!   `waiting_for_nvda`, `ready`, `disconnected`, `quit`. `ready` is emitted
+//!   only while the joined channel contains an NVDA *slave* peer.
 //! - `error <message>` — non-fatal error worth surfacing to the controller.
 //!
 //! Everything else (parse warnings, connect attempts, backoff timing) goes to
@@ -38,6 +39,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -62,6 +65,113 @@ enum SessionOutcome {
     Quit,
     Dropped(String),
     Fatal(anyhow::Error),
+}
+
+/// The relay does not make joining a channel equivalent to having an NVDA
+/// endpoint. Keep the membership supplied by the protocol separate from the
+/// transport lifetime so a channel with no peers (or masters only) can never
+/// accept keyboard input.
+#[derive(Debug, Default)]
+struct ChannelMembership {
+    peers: Vec<Value>,
+    joined: bool,
+    nvda_declared_unavailable: bool,
+}
+
+impl ChannelMembership {
+    fn replace(&mut self, peers: Vec<Value>) {
+        self.peers = peers;
+        self.joined = true;
+        self.nvda_declared_unavailable = false;
+    }
+
+    fn joined(&mut self, peer: Option<Value>) {
+        if let Some(peer) = peer {
+            self.remove_matching(&peer);
+            if peer_connection_type(&peer) == Some("slave") {
+                // A later successful slave join supersedes an earlier relay
+                // `nvda_not_connected` hint.
+                self.nvda_declared_unavailable = false;
+            }
+            self.peers.push(peer);
+        }
+    }
+
+    fn left(&mut self, peer: Option<Value>) {
+        if let Some(peer) = peer {
+            self.remove_matching(&peer);
+        }
+    }
+
+    fn nvda_not_connected(&mut self) {
+        self.nvda_declared_unavailable = true;
+    }
+
+    fn slave_count(&self) -> usize {
+        self.peers
+            .iter()
+            .filter(|peer| peer_connection_type(peer) == Some("slave"))
+            .count()
+    }
+
+    fn master_count(&self) -> usize {
+        self.peers
+            .iter()
+            .filter(|peer| peer_connection_type(peer) == Some("master"))
+            .count()
+    }
+
+    fn is_forwarding_ready(&self) -> bool {
+        self.joined && !self.nvda_declared_unavailable && self.slave_count() > 0
+    }
+
+    fn remove_matching(&mut self, peer: &Value) {
+        let key = peer_identity(peer);
+        self.peers
+            .retain(|candidate| match (&key, peer_identity(candidate)) {
+                (Some(expected), Some(actual)) => expected != &actual,
+                _ => candidate != peer,
+            });
+    }
+}
+
+fn peer_connection_type(peer: &Value) -> Option<&str> {
+    peer.get("connection_type").and_then(Value::as_str)
+}
+
+/// Relay implementations have used both `id` and `client_id`; retain the
+/// full object fallback for older implementations. This never leaves the
+/// process or enters user-facing diagnostics.
+fn peer_identity(peer: &Value) -> Option<String> {
+    ["id", "client_id", "clientId"]
+        .iter()
+        .find_map(|key| peer.get(*key))
+        .map(Value::to_string)
+}
+
+fn channel_fingerprint(channel: &str) -> String {
+    let digest = Sha256::digest(channel.as_bytes());
+    digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn emit_membership_state(membership: &ChannelMembership, channel: &str, host: &str, port: u16) {
+    let state = if membership.is_forwarding_ready() {
+        "ready"
+    } else {
+        "waiting_for_nvda"
+    };
+    emit_state(state);
+    eprintln!(
+        "farrelay-ipc: relay={host}:{port} joined={} peers={} slaves={} other_masters={} channel_sha256={}",
+        membership.joined,
+        membership.peers.len(),
+        membership.slave_count(),
+        membership.master_count(),
+        channel_fingerprint(channel),
+    );
 }
 
 pub async fn run(args: crate::Args) -> Result<()> {
@@ -113,7 +223,7 @@ pub async fn run(args: crate::Args) -> Result<()> {
             }
         };
 
-        match session(conn, &channel, nvda_vk).await {
+        match session(conn, &channel, &host, port, nvda_vk).await {
             SessionOutcome::Quit => {
                 emit_state("quit");
                 return Ok(());
@@ -132,7 +242,13 @@ pub async fn run(args: crate::Args) -> Result<()> {
     }
 }
 
-async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> SessionOutcome {
+async fn session(
+    conn: transport::TlsConn,
+    channel: &str,
+    host: &str,
+    port: u16,
+    nvda_vk: u16,
+) -> SessionOutcome {
     let (reader, writer) = tokio::io::split(conn);
     let writer = Arc::new(Mutex::new(writer));
 
@@ -147,7 +263,7 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
     let stdin_task = tokio::spawn(stdin_loop(cmd_tx, nvda_vk));
 
     let mut held: Vec<u16> = Vec::new();
-    let mut joined = false;
+    let mut membership = ChannelMembership::default();
 
     let outcome = loop {
         tokio::select! {
@@ -161,9 +277,37 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
                     emit_error("version_mismatch: relay rejected protocol v2");
                     break SessionOutcome::Fatal(anyhow!("version mismatch"));
                 }
-                if !joined && matches!(msg, Inbound::ChannelJoined { .. }) {
-                    joined = true;
-                    emit_state("ready");
+                let was_forwarding_ready = membership.is_forwarding_ready();
+                match &msg {
+                    Inbound::ChannelJoined { clients, .. } => {
+                        membership.replace(clients.clone());
+                        emit_state("relay_connected");
+                        emit_membership_state(&membership, channel, host, port);
+                    }
+                    Inbound::ClientJoined { client, .. } => {
+                        membership.joined(client.clone());
+                        if membership.joined {
+                            emit_membership_state(&membership, channel, host, port);
+                        }
+                    }
+                    Inbound::ClientLeft { client, .. } => {
+                        membership.left(client.clone());
+                        if membership.joined {
+                            emit_membership_state(&membership, channel, host, port);
+                        }
+                    }
+                    Inbound::NvdaNotConnected => {
+                        membership.nvda_not_connected();
+                        emit_membership_state(&membership, channel, host, port);
+                    }
+                    _ => {}
+                }
+                if was_forwarding_ready && !membership.is_forwarding_ready() {
+                    // Losing the final slave is a forwarding boundary, not
+                    // merely a cosmetic state change. Release modifiers while
+                    // the relay writer still exists, then forget local state.
+                    crate::release_held(&writer, &held).await;
+                    held.clear();
                 }
                 emit_inbound(&msg);
             }
@@ -174,6 +318,10 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
                 };
                 match cmd {
                     Cmd::Key(vk, pressed) => {
+                        if !membership.is_forwarding_ready() {
+                            eprintln!("farrelay-ipc: key suppressed while waiting for NVDA");
+                            continue;
+                        }
                         eprintln!("farrelay-ipc: relay key vk={vk} pressed={pressed}");
                         let ts = [Transition { vk, pressed }];
                         crate::update_held(&mut held, &ts);
@@ -182,12 +330,20 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
                         }
                     }
                     Cmd::Combo(ts) => {
+                        if !membership.is_forwarding_ready() {
+                            eprintln!("farrelay-ipc: combo suppressed while waiting for NVDA");
+                            continue;
+                        }
                         crate::update_held(&mut held, &ts);
                         if let Err(e) = crate::send_keys(&writer, &ts).await {
                             break SessionOutcome::Dropped(format!("send combo: {e}"));
                         }
                     }
                     Cmd::Type(text) => {
+                        if !membership.is_forwarding_ready() {
+                            eprintln!("farrelay-ipc: type suppressed while waiting for NVDA");
+                            continue;
+                        }
                         if let Err(e) = crate::send(&writer, &Outbound::SetClipboardText { text: &text }).await {
                             break SessionOutcome::Dropped(format!("set_clipboard_text: {e}"));
                         }
@@ -198,6 +354,10 @@ async fn session(conn: transport::TlsConn, channel: &str, nvda_vk: u16) -> Sessi
                         }
                     }
                     Cmd::Sas => {
+                        if !membership.is_forwarding_ready() {
+                            eprintln!("farrelay-ipc: SAS suppressed while waiting for NVDA");
+                            continue;
+                        }
                         if let Err(e) = crate::send(&writer, &Outbound::SendSas).await {
                             break SessionOutcome::Dropped(format!("sas: {e}"));
                         }
@@ -340,7 +500,9 @@ fn emit_inbound(msg: &Inbound) {
             }
         }
         Inbound::Cancel => emit_line("cancel"),
-        Inbound::NvdaNotConnected => emit_state("nvda_not_connected"),
+        // Membership has already emitted `waiting_for_nvda`. Do not emit the
+        // legacy state after it or a controller could briefly re-enable input.
+        Inbound::NvdaNotConnected => {}
         Inbound::Error { error } => {
             emit_error(error.as_deref().unwrap_or("(unspecified)"));
         }
@@ -377,4 +539,66 @@ fn emit_line(s: &str) {
     let _ = out.write_all(s.as_bytes());
     let _ = out.write_all(b"\n");
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn master(id: u64) -> Value {
+        json!({"id": id, "connection_type": "master"})
+    }
+    fn slave(id: u64) -> Value {
+        json!({"id": id, "connection_type": "slave"})
+    }
+
+    #[test]
+    fn empty_or_master_only_channel_waits_for_nvda() {
+        let mut membership = ChannelMembership::default();
+        membership.replace(vec![]);
+        assert!(!membership.is_forwarding_ready());
+        membership.replace(vec![master(1), master(2)]);
+        assert!(!membership.is_forwarding_ready());
+        assert_eq!(membership.master_count(), 2);
+    }
+
+    #[test]
+    fn slave_membership_transitions_are_forwarding_safe() {
+        let mut membership = ChannelMembership::default();
+        membership.replace(vec![slave(1)]);
+        assert!(membership.is_forwarding_ready());
+        membership.joined(Some(slave(2)));
+        membership.left(Some(slave(1)));
+        assert!(membership.is_forwarding_ready());
+        membership.left(Some(slave(2)));
+        assert!(!membership.is_forwarding_ready());
+    }
+
+    #[test]
+    fn late_slave_join_and_nvda_not_connected_are_handled_safely() {
+        let mut membership = ChannelMembership::default();
+        membership.replace(vec![]);
+        membership.nvda_not_connected();
+        assert!(!membership.is_forwarding_ready());
+        membership.joined(Some(slave(3)));
+        assert!(membership.is_forwarding_ready());
+    }
+
+    #[test]
+    fn fresh_connection_membership_cannot_inherit_old_slaves() {
+        let mut old_generation = ChannelMembership::default();
+        old_generation.replace(vec![slave(9)]);
+        assert!(old_generation.is_forwarding_ready());
+        let new_generation = ChannelMembership::default();
+        assert!(!new_generation.is_forwarding_ready());
+    }
+
+    #[test]
+    fn channel_fingerprint_is_deterministic_and_does_not_echo_channel() {
+        let fingerprint = channel_fingerprint("123456789");
+        assert_eq!(fingerprint, channel_fingerprint("123456789"));
+        assert_ne!(fingerprint, channel_fingerprint("123456789 "));
+        assert!(!fingerprint.contains("123456789"));
+    }
 }

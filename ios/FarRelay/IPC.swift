@@ -16,6 +16,8 @@ enum IPCEvent: Sendable, Equatable {
 
 enum BridgeState: String, Sendable {
     case connecting
+    case relayConnected = "relay_connected"
+    case waitingForNVDA = "waiting_for_nvda"
     case ready
     case nvdaNotConnected = "nvda_not_connected"
     case disconnected

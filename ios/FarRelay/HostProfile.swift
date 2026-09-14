@@ -42,6 +42,18 @@ struct NVDARemoteCapability: Codable, Equatable, Sendable {
         self.fingerprint = fingerprint
         self.insecure = insecure
     }
+
+    /// Relay host names and channel secrets are opaque protocol values, but
+    /// copy/paste commonly adds a trailing newline. Normalize only surrounding
+    /// whitespace before persistence and command construction; the channel is
+    /// never logged or included in user-facing diagnostics.
+    func normalized() -> Self {
+        var copy = self
+        copy.relayHost = relayHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.channel = channel.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.fingerprint = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        return copy
+    }
 }
 
 /// A saved SSH computer. This is intentionally transport-neutral metadata:
