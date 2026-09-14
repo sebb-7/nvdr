@@ -370,8 +370,9 @@ private final class NativeTerminalTextField: UITextField {
 
     func recordLifecycle(_ event: String) {
         #if DEBUG
+        let textLength = (text ?? "").count
         Self.lifecycleLogger.debug(
-            "event=\(event, privacy: .public) firstResponder=\(self.isFirstResponder, privacy: .public) windowAttached=\(self.window != nil, privacy: .public) textLength=\((self.text ?? \"\").count, privacy: .public)"
+            "event=\(event, privacy: .public) firstResponder=\(isFirstResponder, privacy: .public) windowAttached=\(window != nil, privacy: .public) textLength=\(textLength, privacy: .public)"
         )
         #endif
     }
