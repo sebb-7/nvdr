@@ -98,7 +98,7 @@ final class TerminalConversationRowView: UIView {
         actions: [ConversationAccessibilityAction],
         onAction: @escaping (ConversationAccessibilityAction) -> Void,
         onAccessibilityFocusChanged: @escaping (Bool) -> Void,
-        onViewConfigured: @escaping (TerminalConversationRowView) -> Void
+        onViewConfigured: @escaping (TerminalConversationRowView) -> Void = { _ in }
     ) {
         visualLabel.text = entry.presentationText
         accessibilityLabel = accessibilityText
