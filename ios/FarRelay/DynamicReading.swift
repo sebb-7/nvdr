@@ -73,7 +73,7 @@ final class DynamicReadingQueue {
         deliveredTextByEntry.removeAll()
     }
 
-    private func drain() -> [DynamicReadingAnnouncement] {
+    func drain() -> [DynamicReadingAnnouncement] {
         let announcements = order.compactMap { entryID -> DynamicReadingAnnouncement? in
             guard let item = pending.removeValue(forKey: entryID) else { return nil }
             deliveredTextByEntry[entryID] = item.text

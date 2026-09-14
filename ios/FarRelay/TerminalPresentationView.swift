@@ -220,7 +220,7 @@ private struct TerminalPresentationStatusView: View {
 private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
-    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
+    var voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
     @FocusState.Binding var isInputEditing: Bool
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
@@ -280,13 +280,13 @@ private struct TerminalInputControls: View {
 
     private func sendFromInput() {
         isInputEditing = true
-        voiceOverFocus = .input
+        voiceOverFocus.wrappedValue = .input
         Task {
             await presentation.submitInputText()
             // The user explicitly started an editing session. Preserve both
             // native responder and VoiceOver editing focus after either result.
             isInputEditing = true
-            voiceOverFocus = .input
+            voiceOverFocus.wrappedValue = .input
         }
     }
 }
