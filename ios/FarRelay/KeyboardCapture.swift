@@ -117,7 +117,8 @@ final class CaptureView: UIView {
 
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
         guard let bridge, bridge.forwardingEnabled,
-              let vk = ReservedKeyForwardingPolicy.vk(forInput: command.input) else { return }
+              let input = command.input,
+              let vk = ReservedKeyForwardingPolicy.vk(forInput: input) else { return }
         // UIKeyCommand has no key-up callback. It emits one deterministic tap;
         // suppress a matching raw delivery if UIKit also sends one.
         priorityCommandKeysAwaitingRawRelease.insert(vk)
