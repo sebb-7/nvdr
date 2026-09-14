@@ -10,7 +10,23 @@ struct NativeTerminalConversationRow: UIViewRepresentable {
     let actions: [ConversationAccessibilityAction]
     let onAction: (ConversationAccessibilityAction) -> Void
     let onAccessibilityFocusChanged: (Bool) -> Void
-    let onViewConfigured: (TerminalConversationRowView) -> Void = { _ in }
+    let onViewConfigured: (TerminalConversationRowView) -> Void
+
+    init(
+        entry: AccessibleConversationEntry,
+        accessibilityText: String,
+        actions: [ConversationAccessibilityAction],
+        onAction: @escaping (ConversationAccessibilityAction) -> Void,
+        onAccessibilityFocusChanged: @escaping (Bool) -> Void,
+        onViewConfigured: @escaping (TerminalConversationRowView) -> Void = { _ in }
+    ) {
+        self.entry = entry
+        self.accessibilityText = accessibilityText
+        self.actions = actions
+        self.onAction = onAction
+        self.onAccessibilityFocusChanged = onAccessibilityFocusChanged
+        self.onViewConfigured = onViewConfigured
+    }
 
     func makeUIView(context: Context) -> TerminalConversationRowView {
         let view = TerminalConversationRowView()
