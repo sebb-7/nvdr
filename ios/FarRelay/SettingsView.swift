@@ -46,6 +46,25 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("VoiceOver Actions") {
+                    Toggle("Edit/Rename Computer", isOn: computerActionBinding(.editComputer))
+                    Toggle("Delete Computer", isOn: computerActionBinding(.deleteComputer))
+                    Toggle("Pin/Unpin Terminal", isOn: terminalActionBinding(.pinUnpin))
+                    Toggle("Rename Terminal", isOn: terminalActionBinding(.rename))
+                    Toggle("Retry Terminal", isOn: terminalActionBinding(.retry))
+                    Toggle("Move Terminal Up", isOn: terminalActionBinding(.moveUp))
+                    Toggle("Move Terminal Down", isOn: terminalActionBinding(.moveDown))
+                    Toggle("Close Terminal", isOn: terminalActionBinding(.close))
+                    Toggle("Copy Commands", isOn: commandActionBinding(.copy))
+                    Toggle("Run Again", isOn: commandActionBinding(.runAgain))
+                    Toggle("Copy Responses", isOn: outputActionBinding(.copy))
+                    Toggle("Open Snapshot", isOn: outputActionBinding(.openSnapshot))
+                    Toggle("Dynamic Reading", isOn: $settings.dynamicReadingEnabled)
+                    Text("Primary activation and essential controls are always available. These settings only streamline optional rotor actions.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Settings")
             .task {
@@ -64,6 +83,46 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func computerActionBinding(_ action: VoiceOverActionPreferences.ComputerAction) -> Binding<Bool> {
+        Binding(
+            get: { settings.voiceOverActionPreferences.computerActions.contains(action) },
+            set: { enabled in
+                if enabled { settings.voiceOverActionPreferences.computerActions.insert(action) }
+                else { settings.voiceOverActionPreferences.computerActions.remove(action) }
+            }
+        )
+    }
+
+    private func terminalActionBinding(_ action: VoiceOverActionPreferences.TerminalAction) -> Binding<Bool> {
+        Binding(
+            get: { settings.voiceOverActionPreferences.terminalActions.contains(action) },
+            set: { enabled in
+                if enabled { settings.voiceOverActionPreferences.terminalActions.insert(action) }
+                else { settings.voiceOverActionPreferences.terminalActions.remove(action) }
+            }
+        )
+    }
+
+    private func commandActionBinding(_ action: VoiceOverActionPreferences.ConversationCommandAction) -> Binding<Bool> {
+        Binding(
+            get: { settings.voiceOverActionPreferences.conversationCommandActions.contains(action) },
+            set: { enabled in
+                if enabled { settings.voiceOverActionPreferences.conversationCommandActions.insert(action) }
+                else { settings.voiceOverActionPreferences.conversationCommandActions.remove(action) }
+            }
+        )
+    }
+
+    private func outputActionBinding(_ action: VoiceOverActionPreferences.ConversationOutputAction) -> Binding<Bool> {
+        Binding(
+            get: { settings.voiceOverActionPreferences.conversationOutputActions.contains(action) },
+            set: { enabled in
+                if enabled { settings.voiceOverActionPreferences.conversationOutputActions.insert(action) }
+                else { settings.voiceOverActionPreferences.conversationOutputActions.remove(action) }
+            }
+        )
     }
 }
 

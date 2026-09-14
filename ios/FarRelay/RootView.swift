@@ -173,7 +173,7 @@ private struct HomeTabView: View {
                                 }
                             }
                             .namedAccessibilityActions(
-                                HostProfileActionPolicy.actions(for: profile),
+                                HostProfileActionPolicy.actions(for: profile, preferences: settings.voiceOverActionPreferences),
                                 name: \.name
                             ) { action in
                                 perform(action, for: profile)
@@ -415,7 +415,7 @@ private struct TerminalSessionRow: View {
         .accessibilityLabel(session.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
         .namedAccessibilityActions(
-            manager.accessibilityActions(for: session.id),
+        manager.accessibilityActions(for: session.id, preferences: settings.voiceOverActionPreferences),
             name: \.name
         ) { action in
             perform(action)

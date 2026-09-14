@@ -33,12 +33,12 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         )
     }
 
-    func testComputerRowActionsIncludeNVDAOnlyWhenEnabledOnWindows() {
+    func testComputerRowActionsNeverDuplicateRemoteControl() {
         var windows = HostProfile(displayName: "G14", platform: .windows)
         windows.nvdaRemote = NVDARemoteCapability(isEnabled: true, channel: "secret-channel")
         XCTAssertEqual(
             HostProfileActionPolicy.actions(for: windows),
-            [.newTerminal, .nvdaRemote, .edit, .delete]
+            [.newTerminal, .edit, .delete]
         )
 
         var linux = HostProfile(displayName: "Box", platform: .linux)

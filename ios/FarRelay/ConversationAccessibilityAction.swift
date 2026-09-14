@@ -14,12 +14,17 @@ enum ConversationAccessibilityAction: String, Equatable, Hashable, CaseIterable,
 
 /// Testable policy for which Actions-rotor items a conversation surface exposes.
 enum ConversationAccessibilityActionPolicy {
-    static func actions(for entry: AccessibleConversationEntry) -> [ConversationAccessibilityAction] {
+    static func actions(
+        for entry: AccessibleConversationEntry,
+        preferences: VoiceOverActionPreferences = .defaults
+    ) -> [ConversationAccessibilityAction] {
         switch entry.role {
         case .outboundCommand:
-            [.copy, .runAgain]
+            (preferences.conversationCommandActions.contains(.copy) ? [.copy] : [])
+                + (preferences.conversationCommandActions.contains(.runAgain) ? [.runAgain] : [])
         case .incomingContent:
-            [.copy, .openSnapshot]
+            (preferences.conversationOutputActions.contains(.copy) ? [.copy] : [])
+                + (preferences.conversationOutputActions.contains(.openSnapshot) ? [.openSnapshot] : [])
         case .system:
             [.copy]
         }

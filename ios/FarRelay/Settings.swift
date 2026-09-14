@@ -37,6 +37,8 @@ final class AppSettings {
     var voiceIdentifier: String?
     var hapticFeedbackEnabled: Bool
     var soundCuesEnabled: Bool
+    var dynamicReadingEnabled: Bool
+    var voiceOverActionPreferences: VoiceOverActionPreferences
     private(set) var terminalControlKeys: [TerminalControlKey]
     private(set) var hostProfiles: [HostProfile] = []
     private(set) var credentialStorageError: String? = nil
@@ -61,6 +63,13 @@ final class AppSettings {
         voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
         hapticFeedbackEnabled = defaults.object(forKey: Keys.hapticFeedbackEnabled) as? Bool ?? true
         soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? false
+        dynamicReadingEnabled = defaults.object(forKey: Keys.dynamicReadingEnabled) as? Bool ?? true
+        if let data = defaults.data(forKey: Keys.voiceOverActionPreferences),
+           let stored = try? JSONDecoder().decode(VoiceOverActionPreferences.self, from: data) {
+            voiceOverActionPreferences = stored
+        } else {
+            voiceOverActionPreferences = .defaults
+        }
         switch terminalControlKeyStore.load() {
         case .uninitialized:
             terminalControlKeys = TerminalControlKey.defaultControls
@@ -93,6 +102,10 @@ final class AppSettings {
         else { defaults.removeObject(forKey: Keys.voiceIdentifier) }
         defaults.set(hapticFeedbackEnabled, forKey: Keys.hapticFeedbackEnabled)
         defaults.set(soundCuesEnabled, forKey: Keys.soundCuesEnabled)
+        defaults.set(dynamicReadingEnabled, forKey: Keys.dynamicReadingEnabled)
+        if let data = try? JSONEncoder().encode(voiceOverActionPreferences) {
+            defaults.set(data, forKey: Keys.voiceOverActionPreferences)
+        }
         terminalControlKeyStore.save(terminalControlKeys)
     }
 
@@ -240,6 +253,8 @@ final class AppSettings {
         static let voiceIdentifier = "farrelay.voiceIdentifier"
         static let hapticFeedbackEnabled = "farrelay.hapticFeedbackEnabled"
         static let soundCuesEnabled = "farrelay.soundCuesEnabled"
+        static let dynamicReadingEnabled = "farrelay.dynamicReadingEnabled"
+        static let voiceOverActionPreferences = "farrelay.voiceOverActionPreferences"
         static let terminalControlKeys = "farrelay.terminalControlKeys"
         static let legacySSHHost = "farrelay.sshHost"
         static let legacySSHPort = "farrelay.sshPort"

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Presents a manager-owned terminal. The manager owns lifetime; Back, tab
 /// changes, and Snapshots must not close the session.
@@ -26,6 +27,13 @@ struct SSHTerminalFeatureView: View {
         }
         .onDisappear {
             if snapshot == nil {
+                session.host.presentation.endEditingSession()
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil,
+                    from: nil,
+                    for: nil
+                )
                 manager.clearPresentedSession(if: session.id)
                 manager.setTerminalInteractionActive(false)
             }

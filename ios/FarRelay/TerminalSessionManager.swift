@@ -111,8 +111,11 @@ final class TerminalSessionManager {
         )
     }
 
-    func accessibilityActions(for id: UUID) -> [TerminalSessionAccessibilityAction] {
-        TerminalSessionActionPolicy.actions(for: capabilities(for: id))
+    func accessibilityActions(
+        for id: UUID,
+        preferences: VoiceOverActionPreferences = .defaults
+    ) -> [TerminalSessionAccessibilityAction] {
+        TerminalSessionActionPolicy.actions(for: capabilities(for: id), preferences: preferences)
     }
 
     /// Creates a new independent terminal for a saved computer. Returns nil when

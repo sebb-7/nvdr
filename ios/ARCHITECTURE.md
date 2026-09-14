@@ -226,20 +226,32 @@ Previous Line, Next Line, and Return to Live controls. Presentation does not
 infer geometry: a higher-level owner may explicitly request rows and columns
 through the existing local-engine-then-remote-PTY resize path.
 
-Live output informs without hijacking. `LiveOutputAnnouncementPolicy` is a
-provider-neutral semantic policy: completed output is eligible immediately,
-while mutable current-line output uses a centralized 450 ms quiet window. Each
-new mutation replaces and cancels the prior pending token; completion cancels a
-matching token and records the final text so it is not announced twice. Initial
-terminal history is seeded into the conversation but never sent to this policy.
+Live output informs without hijacking. `DynamicReadingQueue` is the shared,
+provider-neutral queue for streaming announcements. It coalesces updates to
+one logical entry, preserves FIFO order for unrelated entries, and cancels all
+pending work when a session lifetime ends. Active terminal input does not
+discard meaningful output; only Dynamic Reading being disabled, history
+inspection, or Snapshot inspection suppresses delivery. UIKit delivery uses
+the public VoiceOver announcement notification boundary and never moves focus.
+Initial terminal history is seeded into the conversation but never queued.
 
 SwiftUI is only the delivery and focus boundary. It observes VoiceOver focus
-with `AccessibilityFocusState` without programmatically setting focus, and
-uses the VoiceOver environment value to avoid delivery when VoiceOver is off.
-Focus on older conversation content, the terminal input, or an Output Snapshot
-suppresses live output and cancels pending work; suppressed output remains in
-the conversation without being replayed later. Cursor movement, reflow, screen
+with `AccessibilityFocusState`, keeps the native terminal text field as the
+owner of editing, and uses the VoiceOver environment value to avoid delivery
+when VoiceOver is off. Output never takes responder or accessibility focus.
+Leaving the terminal resigns the native responder and dismisses the software
+keyboard while preserving typed text. Cursor movement, reflow, screen
 replacement, and alternate-screen repaint do not become live announcements.
+Focus ownership is explicit: `KeyboardCapture` owns first responder only for
+the NVDA Remote raw-key surface; a terminal `TextField` owns it while editing;
+Dynamic Reading is announcement-only and never becomes a focus target.
+
+UIKit's public `UIKeyCommand` and `UIResponder` press APIs are used as the
+strongest available Remote Control forwarding attempt. VoiceOver may consume
+hardware arrows and Escape before an app responder receives them; public iOS
+APIs provide no supported override for that case. Forwarding is never enabled
+globally, and turning it off immediately restores normal local navigation.
+Physical VoiceOver validation remains required.
 Terminal Control Keys are a small, global data-driven collection rather than a
 hardcoded presentation enum. Each `TerminalControlKey` owns a stable
 terminal-scoped action ID, a user-editable label, and a semantic

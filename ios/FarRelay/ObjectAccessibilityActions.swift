@@ -25,27 +25,32 @@ struct TerminalSessionCapabilities: Equatable, Sendable {
 }
 
 enum TerminalSessionActionPolicy {
-    static func actions(for capabilities: TerminalSessionCapabilities) -> [TerminalSessionAccessibilityAction] {
+    static func actions(
+        for capabilities: TerminalSessionCapabilities,
+        preferences: VoiceOverActionPreferences = .defaults
+    ) -> [TerminalSessionAccessibilityAction] {
         // The row itself is a Button, so normal activation already opens it.
         var actions: [TerminalSessionAccessibilityAction] = []
-        if capabilities.canUnpin {
-            actions.append(.unpin)
-        } else if capabilities.canPin {
-            actions.append(.pin)
+        if preferences.terminalActions.contains(.pinUnpin) {
+            if capabilities.canUnpin {
+                actions.append(.unpin)
+            } else if capabilities.canPin {
+                actions.append(.pin)
+            }
         }
-        if capabilities.canRename {
+        if capabilities.canRename && preferences.terminalActions.contains(.rename) {
             actions.append(.rename)
         }
-        if capabilities.canRetry {
+        if capabilities.canRetry && preferences.terminalActions.contains(.retry) {
             actions.append(.retry)
         }
-        if capabilities.canMoveUp {
+        if capabilities.canMoveUp && preferences.terminalActions.contains(.moveUp) {
             actions.append(.moveUp)
         }
-        if capabilities.canMoveDown {
+        if capabilities.canMoveDown && preferences.terminalActions.contains(.moveDown) {
             actions.append(.moveDown)
         }
-        if capabilities.canClose {
+        if capabilities.canClose && preferences.terminalActions.contains(.close) {
             actions.append(.close)
         }
         return actions
@@ -63,12 +68,13 @@ enum HostProfileAccessibilityAction: String, Equatable, Hashable, Sendable {
 }
 
 enum HostProfileActionPolicy {
-    static func actions(for profile: HostProfile) -> [HostProfileAccessibilityAction] {
+    static func actions(
+        for profile: HostProfile,
+        preferences: VoiceOverActionPreferences = .defaults
+    ) -> [HostProfileAccessibilityAction] {
         var actions: [HostProfileAccessibilityAction] = [.newTerminal]
-        if profile.isNVDARemoteEnabled {
-            actions.append(.nvdaRemote)
-        }
-        actions.append(contentsOf: [.edit, .delete])
+        if preferences.computerActions.contains(.editComputer) { actions.append(.edit) }
+        if preferences.computerActions.contains(.deleteComputer) { actions.append(.delete) }
         return actions
     }
 }

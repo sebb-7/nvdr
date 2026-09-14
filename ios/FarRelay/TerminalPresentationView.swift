@@ -35,9 +35,18 @@ struct TerminalPresentationView: View {
         }
         .onAppear {
             presentation.setLiveOutputVoiceOverEnabled(isVoiceOverEnabled)
+            presentation.setDynamicReadingEnabled(settings.dynamicReadingEnabled)
+            presentation.setVoiceOverActionPreferences(settings.voiceOverActionPreferences)
+            deliverPendingDynamicReadingAnnouncements()
         }
         .onChange(of: isVoiceOverEnabled) { _, isEnabled in
             presentation.setLiveOutputVoiceOverEnabled(isEnabled)
+        }
+        .onChange(of: settings.dynamicReadingEnabled) { _, isEnabled in
+            presentation.setDynamicReadingEnabled(isEnabled)
+        }
+        .onChange(of: settings.voiceOverActionPreferences) { _, preferences in
+            presentation.setVoiceOverActionPreferences(preferences)
         }
         .onChange(of: voiceOverFocus) { _, focus in
             switch focus {
@@ -57,11 +66,19 @@ struct TerminalPresentationView: View {
             guard isVoiceOverEnabled, let announcement = presentation.liveOutputAnnouncement else { return }
             LiveOutputAnnouncementDelivery.deliver(announcement)
         }
+        .onChange(of: presentation.pendingDynamicReadingAnnouncements.count) { _, _ in
+            deliverPendingDynamicReadingAnnouncements()
+        }
         .onChange(of: presentation.lastInteractionFeedback?.id) { _, _ in
             if let request = presentation.lastInteractionFeedback {
                 interactionFeedback.play(request.kind)
             }
         }
+    }
+
+    private func deliverPendingDynamicReadingAnnouncements() {
+        guard isVoiceOverEnabled else { return }
+        LiveOutputAnnouncementDelivery.deliver(presentation.consumeDynamicReadingAnnouncements())
     }
 }
 
@@ -239,6 +256,7 @@ private struct TerminalInputControls: View {
                     sendFromInput()
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(presentation.isSubmittingInput)
                 .accessibilityIdentifier("terminal-send")
 
                 Menu("Control Keys", systemImage: "keyboard") {
@@ -261,12 +279,14 @@ private struct TerminalInputControls: View {
     }
 
     private func sendFromInput() {
-        let retainEditingFocus = isInputEditing
+        isInputEditing = true
+        voiceOverFocus = .input
         Task {
             await presentation.submitInputText()
-            if retainEditingFocus, presentation.lastInputError == nil {
-                isInputEditing = true
-            }
+            // The user explicitly started an editing session. Preserve both
+            // native responder and VoiceOver editing focus after either result.
+            isInputEditing = true
+            voiceOverFocus = .input
         }
     }
 }

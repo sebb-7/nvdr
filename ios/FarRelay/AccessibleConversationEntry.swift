@@ -46,6 +46,14 @@ struct AccessibleConversationEntry: Identifiable, Equatable, Sendable {
         return "Large output, \(logicalLineCount) lines. Open Snapshot."
     }
 
+    /// One semantic conversation entry should be read continuously. Keep the
+    /// raw value untouched for Copy/Snapshot, but flatten terminal line
+    /// boundaries for VoiceOver's accessible label.
+    var accessibilityText: String {
+        guard role == .incomingContent else { return text }
+        return Self.normalizedAccessibilityText(text)
+    }
+
     /// Live VoiceOver announcement text. Large incoming blocks never speak
     /// the full payload automatically.
     var liveAnnouncementText: String {
@@ -56,5 +64,14 @@ struct AccessibleConversationEntry: Identifiable, Equatable, Sendable {
     static func logicalLineCount(in text: String) -> Int {
         if text.isEmpty { return 0 }
         return text.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    static func normalizedAccessibilityText(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
     }
 }

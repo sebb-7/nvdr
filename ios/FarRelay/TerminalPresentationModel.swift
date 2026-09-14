@@ -56,10 +56,12 @@ final class TerminalPresentationModel {
     private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     private(set) var lastInputError: String?
     private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
+    private(set) var pendingDynamicReadingAnnouncements: [DynamicReadingAnnouncement] = []
     private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
     var onIncomingConversationContent: (@MainActor () -> Void)?
     private(set) var shellPromptContext: String?
     var inputText = ""
+    private(set) var isSubmittingInput = false
     var copyToClipboard: @MainActor (String) -> Void = { AppClipboard.copy($0) }
 
     private var accessibilityModel = TerminalAccessibilityModel()
@@ -74,6 +76,10 @@ final class TerminalPresentationModel {
     private var liveOutputAnnouncementTask: Task<Void, Never>?
     private var liveOutputContext = LiveOutputAnnouncementContext()
     private var focusedConversationEntryID: UUID?
+    private var sessionID = UUID()
+    private var dynamicReadingContext = DynamicReadingContext()
+    private let dynamicReadingQueue = DynamicReadingQueue()
+    private var voiceOverActionPreferences = VoiceOverActionPreferences.defaults
 
     init(session: (any TerminalPresentationSession)? = nil) {
         self.session = session
@@ -151,7 +157,7 @@ final class TerminalPresentationModel {
     }
 
     func submitInputText() async {
-        await submitInput(inputText)
+        await sendCommand(inputText)
     }
 
     func clearInput() {
@@ -224,6 +230,9 @@ final class TerminalPresentationModel {
     }
 
     private func sendCommand(_ text: String) async {
+        guard !isSubmittingInput else { return }
+        isSubmittingInput = true
+        defer { isSubmittingInput = false }
         let returnBytes: Data
         switch TerminalControlChordEncoder.encode(.returnKey) {
         case .success(let bytes):
@@ -287,11 +296,11 @@ final class TerminalPresentationModel {
     /// Keeps transcript labels content-first; heading semantics are applied by
     /// the native SwiftUI command entry view.
     func accessibilityLabel(for entry: AccessibleConversationEntry) -> String {
-        entry.presentationText
+        entry.isCompactLargeOutput ? entry.presentationText : entry.accessibilityText
     }
 
     func accessibilityActions(for entry: AccessibleConversationEntry) -> [ConversationAccessibilityAction] {
-        ConversationAccessibilityActionPolicy.actions(for: entry)
+        ConversationAccessibilityActionPolicy.actions(for: entry, preferences: voiceOverActionPreferences)
     }
 
     func inputAccessibilityActions() -> [ConversationAccessibilityAction] {
@@ -300,7 +309,29 @@ final class TerminalPresentationModel {
 
     func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
         liveOutputContext.isVoiceOverEnabled = isEnabled
+        dynamicReadingContext.isVoiceOverEnabled = isEnabled
         refreshLiveOutputContext()
+    }
+
+    func setDynamicReadingEnabled(_ isEnabled: Bool) {
+        dynamicReadingContext.enabled = isEnabled
+        if !isEnabled { pendingDynamicReadingAnnouncements.removeAll() }
+    }
+
+    func setVoiceOverActionPreferences(_ preferences: VoiceOverActionPreferences) {
+        voiceOverActionPreferences = preferences
+    }
+
+    func consumeDynamicReadingAnnouncements() -> [DynamicReadingAnnouncement] {
+        let announcements = pendingDynamicReadingAnnouncements
+        pendingDynamicReadingAnnouncements.removeAll()
+        return announcements
+    }
+
+    /// Ends editing without discarding the user's text.
+    func endEditingSession() {
+        focusedConversationEntryID = nil
+        liveOutputContext.isInputFocused = false
     }
 
     func setLiveOutputFocusedConversationEntryID(_ entryID: UUID?) {
@@ -536,11 +567,18 @@ final class TerminalPresentationModel {
 
     private func isPromptOnly(_ line: AccessibleTerminalLine) -> Bool {
         let content = line.shellSemanticContent
-        guard !content.isEmpty else { return false }
-        return content.allSatisfy { item in
-            if case .prompt = item { return true }
-            return false
+        if !content.isEmpty {
+            return content.allSatisfy { item in
+                if case .prompt = item { return true }
+                return false
+            }
         }
+        // No-OSC shells do not provide semantic marks. Recognize only the
+        // narrow, conventional prompt suffix so it stays context instead of
+        // becoming the primary spoken response; raw terminal text is intact.
+        let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count < 160 else { return false }
+        return trimmed.range(of: #"^[^\r\n]+\s[>$#]$"#, options: .regularExpression) != nil
     }
 
     private func isProvenCommandEcho(_ line: AccessibleTerminalLine) -> Bool {
@@ -554,14 +592,20 @@ final class TerminalPresentationModel {
     }
 
     private func announceStreamingIfNeeded(_ entry: AccessibleConversationEntry) {
-        guard shouldAnnounce(entry) else { return }
-        applyLiveOutputEffects(liveOutputPolicy.streaming(entry, context: currentLiveOutputContext()))
+        // Mutable current lines are coalesced into the finalized semantic
+        // response. This avoids byte/line chatter without timing sleeps.
     }
 
     private func announceFinalized(_ entries: [AccessibleConversationEntry]) {
-        let announceable = entries.filter(shouldAnnounce)
-        guard !announceable.isEmpty else { return }
-        applyLiveOutputEffects(liveOutputPolicy.completed(announceable, context: currentLiveOutputContext()))
+        for entry in entries where shouldAnnounce(entry) {
+            dynamicReadingQueue.enqueue(
+                entryID: entry.id,
+                sessionID: sessionID,
+                text: entry.liveAnnouncementText,
+                context: currentDynamicReadingContext()
+            )
+        }
+        pendingDynamicReadingAnnouncements.append(contentsOf: dynamicReadingQueue.drain())
     }
 
     private func shouldAnnounce(_ entry: AccessibleConversationEntry) -> Bool {
@@ -605,11 +649,22 @@ final class TerminalPresentationModel {
         lastInteractionFeedback = nil
         focusedConversationEntryID = nil
         liveOutputAnnouncement = nil
+        pendingDynamicReadingAnnouncements.removeAll()
+        sessionID = UUID()
+        dynamicReadingQueue.reset()
         applyLiveOutputEffects(liveOutputPolicy.reset())
     }
 
     private func currentLiveOutputContext() -> LiveOutputAnnouncementContext {
         var context = liveOutputContext
+        let latestIncomingID = conversationEntries.last(where: { $0.role == .incomingContent })?.id
+        context.isReadingHistory = focusedConversationEntryID != nil
+            && focusedConversationEntryID != latestIncomingID
+        return context
+    }
+
+    private func currentDynamicReadingContext() -> DynamicReadingContext {
+        var context = dynamicReadingContext
         let latestIncomingID = conversationEntries.last(where: { $0.role == .incomingContent })?.id
         context.isReadingHistory = focusedConversationEntryID != nil
             && focusedConversationEntryID != latestIncomingID
