@@ -207,7 +207,7 @@ private struct TerminalPresentationStatusView: View {
 private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
-    @FocusState.Binding var isInputEditing: Bool
+    @Binding var isInputEditing: Bool
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
     var body: some View {
