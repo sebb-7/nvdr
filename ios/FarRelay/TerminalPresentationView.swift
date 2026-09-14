@@ -8,7 +8,7 @@ struct TerminalPresentationView: View {
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
-    @FocusState private var isInputEditing: Bool
+    @State private var isInputEditing = false
     @State private var isManagingControlKeys = false
 
     var body: some View {
@@ -212,33 +212,26 @@ private struct TerminalInputControls: View {
     let manageControlKeys: () -> Void
     var body: some View {
         VStack(alignment: .leading) {
-            // A terminal command is one line. A multiline SwiftUI field turns
-            // Braille Screen Input's Return into text insertion instead of
-            // the submit action, which makes repeated BSI sends unreliable.
-            TextField("Terminal input", text: $inputText)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .lineLimit(1)
-                .submitLabel(.send)
-                .focused($isInputEditing)
-                .onSubmit {
+            StableTerminalInputField(
+                text: $inputText,
+                isEditing: $isInputEditing,
+                onSubmit: sendFromInput
+            )
+            .namedAccessibilityActions(
+                presentation.inputAccessibilityActions(),
+                name: \.name
+            ) { action in
+                switch action {
+                case .sendCommand:
                     sendFromInput()
+                case .clearInput:
+                    presentation.clearInput()
+                default:
+                    break
                 }
-                .namedAccessibilityActions(
-                    presentation.inputAccessibilityActions(),
-                    name: \.name
-                ) { action in
-                    switch action {
-                    case .sendCommand:
-                        sendFromInput()
-                    case .clearInput:
-                        presentation.clearInput()
-                    default:
-                        break
-                    }
-                }
-                .accessibilityLabel("Terminal input")
-                .accessibilityIdentifier("terminal-input")
+            }
+            .accessibilityLabel("Terminal input")
+            .accessibilityIdentifier("terminal-input")
 
             HStack {
                 Button("Send", systemImage: "arrow.up.circle") {
@@ -275,6 +268,76 @@ private struct TerminalInputControls: View {
             // the field after every Send breaks Braille Screen Input and causes
             // VoiceOver to leave the text editor between repeated commands.
             isInputEditing = true
+        }
+    }
+}
+
+/// A single persistent UIKit editor is more reliable for Braille Screen
+/// Input than a SwiftUI TextField whose identity and focus can be recreated
+/// while terminal output is arriving. Binding updates are one-way guarded so
+/// caret/selection state remains owned by UITextField during editing.
+private struct StableTerminalInputField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isEditing: Bool
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField(frame: .zero)
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.textChanged(_:)), for: .editingChanged)
+        field.borderStyle = .roundedRect
+        field.returnKeyType = .send
+        field.autocapitalizationType = .none
+        field.autocorrectionType = .no
+        field.spellCheckingType = .no
+        field.smartQuotesType = .no
+        field.smartDashesType = .no
+        field.smartInsertDeleteType = .no
+        field.enablesReturnKeyAutomatically = false
+        field.accessibilityLabel = "Terminal input"
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if field.text != text {
+            field.text = text
+        }
+        if isEditing, !field.isFirstResponder {
+            field.becomeFirstResponder()
+        } else if !isEditing, field.isFirstResponder {
+            field.resignFirstResponder()
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: StableTerminalInputField
+
+        init(_ parent: StableTerminalInputField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ field: UITextField) {
+            parent.text = field.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.isEditing = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            // Do not clear this during Send; SwiftUI may update the wrapper
+            // while the async terminal write is in flight.
+            if !textField.isFirstResponder {
+                parent.isEditing = false
+            }
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.onSubmit()
+            return false
         }
     }
 }

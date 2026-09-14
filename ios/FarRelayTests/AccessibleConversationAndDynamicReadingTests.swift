@@ -62,10 +62,10 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
         )
     }
 
-    func testDynamicReadingDeliveryBatchesInOrderThroughOneSink() async {
+    func testDynamicReadingDeliveryWaitsForAnnouncementCompletionInFIFOOrder() async {
         var delivered: [String] = []
-        let service = DynamicReadingDeliveryService(quietInterval: .milliseconds(1)) { text in
-            delivered.append(text)
+        let service = DynamicReadingDeliveryService { text in
+            delivered.append(text.string)
         }
         let sessionID = UUID()
         service.enqueue([
@@ -75,13 +75,16 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
 
         await Task.yield()
 
-        XCTAssertEqual(delivered, ["first second"])
+        XCTAssertEqual(delivered, ["first"])
+        service.announcementDidFinish(text: "first")
+        await Task.yield()
+        XCTAssertEqual(delivered, ["first", "second"])
     }
 
     func testDynamicReadingDeliveryCancelsStaleSessionBeforeWorkerRuns() async {
         var delivered: [String] = []
-        let service = DynamicReadingDeliveryService(quietInterval: .milliseconds(1)) { text in
-            delivered.append(text)
+        let service = DynamicReadingDeliveryService { text in
+            delivered.append(text.string)
         }
         let oldSession = UUID()
         service.enqueue([
