@@ -14,6 +14,7 @@ final class DynamicReadingDeliveryService {
     private var pending: [DynamicReadingAnnouncement] = []
     private var active: DynamicReadingAnnouncement?
     private var finishObserver: NSObjectProtocol?
+    private var startTask: Task<Void, Never>?
 
     init(
         sink: @escaping Sink
@@ -38,7 +39,7 @@ final class DynamicReadingDeliveryService {
     func enqueue(_ announcements: [DynamicReadingAnnouncement]) {
         guard !announcements.isEmpty else { return }
         pending.append(contentsOf: announcements)
-        deliverNextIfIdle()
+        scheduleStartIfNeeded()
     }
 
     func cancel(sessionID: UUID) {
@@ -49,13 +50,18 @@ final class DynamicReadingDeliveryService {
             // session cannot be blocked behind stale state; the speech
             // attribute keeps any newly posted item behind system speech.
             active = nil
-            deliverNextIfIdle()
+            scheduleStartIfNeeded()
+        } else if pending.isEmpty {
+            startTask?.cancel()
+            startTask = nil
         }
     }
 
     func reset() {
         pending.removeAll()
         active = nil
+        startTask?.cancel()
+        startTask = nil
     }
 
     /// Testable seam for the UIKit finish notification and useful when a
@@ -64,7 +70,20 @@ final class DynamicReadingDeliveryService {
         guard let active else { return }
         guard text == nil || text == active.text else { return }
         self.active = nil
-        deliverNextIfIdle()
+        scheduleStartIfNeeded()
+    }
+
+    private func scheduleStartIfNeeded() {
+        guard active == nil, startTask == nil, !pending.isEmpty else { return }
+        // Give same-turn session/context cancellation a chance before the
+        // first UIKit post. This is also the boundary that prevents a stale
+        // terminal update from escaping during a SwiftUI reconstruction.
+        startTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            self?.startTask = nil
+            self?.deliverNextIfIdle()
+        }
     }
 
     private func deliverNextIfIdle() {

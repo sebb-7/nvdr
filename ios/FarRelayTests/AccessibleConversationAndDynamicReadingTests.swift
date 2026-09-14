@@ -74,6 +74,7 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
         ])
 
         await Task.yield()
+        await Task.yield()
 
         XCTAssertEqual(delivered, ["first"])
         service.announcementDidFinish(text: "first")
