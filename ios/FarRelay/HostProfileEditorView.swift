@@ -158,9 +158,9 @@ struct HostProfileEditorView: View {
     private var disconnectConfirmationMessage: String {
         let terminalCount = terminals.activeSessionCount(for: draft.id)
         if terminalCount == 1 {
-            "This closes 1 active terminal and the NVDA Remote bridge for this computer."
+            return "This closes 1 active terminal and the NVDA Remote bridge for this computer."
         } else {
-            "This closes \(terminalCount) active terminals and the NVDA Remote bridge for this computer."
+            return "This closes \(terminalCount) active terminals and the NVDA Remote bridge for this computer."
         }
     }
 

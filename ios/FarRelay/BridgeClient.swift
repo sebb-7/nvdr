@@ -154,7 +154,7 @@ final class BridgeClient {
     /// manager rather than treating either transport as a global connection.
     func isConnectionActive(for profileID: UUID) -> Bool {
         guard activeProfileID == profileID else { return false }
-        switch status {
+        return switch status {
         case .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected:
             true
         case .idle, .disconnected, .failed:
