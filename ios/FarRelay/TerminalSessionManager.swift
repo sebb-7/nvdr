@@ -77,7 +77,7 @@ final class TerminalSessionManager {
     func hasActiveConnection(for hostProfileID: UUID) -> Bool {
         sessions.contains { session in
             guard session.hostProfileID == hostProfileID else { return false }
-            switch session.host.state {
+            return switch session.host.state {
             case .connecting, .connected:
                 true
             case .idle, .ended, .failed, .closed:
