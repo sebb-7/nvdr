@@ -95,7 +95,8 @@ final class HostProfileTests: XCTestCase {
         XCTAssertEqual(saved.nvdaRemote?.fingerprint, "abcd")
         let command = try XCTUnwrap(settings.nvdaBridgeCommand(for: saved))
         XCTAssertTrue(command.contains("--channel 123456789"))
-        XCTAssertFalse(command.contains("123456789 "))
+        XCTAssertTrue(command.contains("--channel 123456789 --fingerprint abcd"))
+        XCTAssertFalse(command.contains("\n"))
     }
 
     func testBuild5MigrationPreservesCompletePasswordAndNVDAConfiguration() throws {
