@@ -73,12 +73,11 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
             DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
         ])
 
-        await Task.yield()
-        await Task.yield()
+        await service.waitUntilActiveForTesting()
 
         XCTAssertEqual(delivered, ["first"])
         service.announcementDidFinish(text: "first", successful: true)
-        await Task.yield()
+        await service.waitUntilActiveForTesting()
         XCTAssertEqual(delivered, ["first", "second"])
     }
 
@@ -92,8 +91,7 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
             DynamicReadingAnnouncement(sessionID: sessionID, text: "first"),
             DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
         ])
-        await Task.yield()
-        await Task.yield()
+        await service.waitUntilActiveForTesting()
 
         service.announcementDidFinish(text: "first", successful: false)
         XCTAssertEqual(delivered, ["first"])
@@ -111,8 +109,7 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
             DynamicReadingAnnouncement(sessionID: sessionID, text: "first"),
             DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
         ])
-        await Task.yield()
-        await Task.yield()
+        await service.waitUntilActiveForTesting()
 
         service.announcementDidFinish(text: "other app", successful: true)
         XCTAssertEqual(delivered, ["first"])

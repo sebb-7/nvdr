@@ -41,6 +41,14 @@ final class DynamicReadingDeliveryService {
     var pendingCount: Int { pending.count }
     var activeText: String? { active?.text }
 
+    /// Deterministic test seam for the run-loop boundary before the first
+    /// UIKit post. Production callers should use completion notifications.
+    func waitUntilActiveForTesting() async {
+        while active == nil, !pending.isEmpty {
+            await Task.yield()
+        }
+    }
+
     func enqueue(_ announcements: [DynamicReadingAnnouncement]) {
         guard !announcements.isEmpty else { return }
         pending.append(contentsOf: announcements)
