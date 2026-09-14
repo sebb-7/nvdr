@@ -8,7 +8,7 @@ struct TerminalPresentationView: View {
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
-    @State private var isInputEditing = false
+    @State private var inputEditingState: TerminalInputEditingState = .browsing
     @State private var isManagingControlKeys = false
 
     var body: some View {
@@ -23,9 +23,13 @@ struct TerminalPresentationView: View {
             TerminalInputControls(
                 presentation: presentation,
                 inputText: $presentation.inputText,
-                isInputEditing: $isInputEditing,
+                isInputEditing: Binding(
+                    get: { inputEditingState.isEditing },
+                    set: { inputEditingState = $0 ? .editing : .browsing }
+                ),
                 controlKeys: settings.terminalControlKeys,
-                manageControlKeys: { isManagingControlKeys = true }
+                manageControlKeys: { isManagingControlKeys = true },
+                voiceOverFocus: $voiceOverFocus
             )
         }
         .navigationTitle("SSH Terminal")
@@ -54,7 +58,7 @@ struct TerminalPresentationView: View {
             case .input:
                 presentation.setLiveOutputFocusedConversationEntryID(nil)
                 presentation.setLiveOutputInputFocused(true)
-                isInputEditing = true
+                inputEditingState.activateInput()
             case nil:
                 presentation.setLiveOutputFocusedConversationEntryID(nil)
                 presentation.setLiveOutputInputFocused(false)
@@ -64,6 +68,10 @@ struct TerminalPresentationView: View {
             if let request = presentation.lastInteractionFeedback {
                 interactionFeedback.play(request.kind)
             }
+        }
+        .onDisappear {
+            inputEditingState.leaveTerminal()
+            presentation.endEditingSession()
         }
     }
 
@@ -110,8 +118,11 @@ private struct TerminalConversationEntryView: View {
 
     var body: some View {
         if entry.isCommand {
-            Text(entry.presentationText)
-                .textSelection(.enabled)
+            VStack(alignment: .leading) {
+                Text(entry.presentationText)
+                    .accessibilityHidden(true)
+            }
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(presentation.accessibilityLabel(for: entry))
                 .accessibilityHeading(.h3)
                 .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
@@ -126,15 +137,7 @@ private struct TerminalConversationEntryView: View {
         } else {
             VStack(alignment: .leading) {
                 Text(entry.presentationText)
-                    .textSelection(.enabled)
-                    .accessibilityLabel(presentation.accessibilityLabel(for: entry))
-                    .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-                    .namedAccessibilityActions(
-                        presentation.accessibilityActions(for: entry),
-                        name: \.name
-                    ) { action in
-                        perform(action)
-                    }
+                    .accessibilityHidden(true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if entry.role == .incomingContent {
@@ -144,6 +147,15 @@ private struct TerminalConversationEntryView: View {
                     .accessibilityHidden(true)
                     .accessibilityIdentifier("terminal-open-snapshot-\(entry.id)")
                 }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(presentation.accessibilityLabel(for: entry))
+            .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
+            .namedAccessibilityActions(
+                presentation.accessibilityActions(for: entry),
+                name: \.name
+            ) { action in
+                perform(action)
             }
             .accessibilityIdentifier("terminal-content-\(entry.id)")
         }
@@ -210,6 +222,7 @@ private struct TerminalInputControls: View {
     @Binding var isInputEditing: Bool
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
+    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
     var body: some View {
         VStack(alignment: .leading) {
             StableTerminalInputField(
@@ -231,6 +244,7 @@ private struct TerminalInputControls: View {
                 }
             }
             .accessibilityLabel("Terminal input")
+            .accessibilityFocused(voiceOverFocus, equals: .input)
             .accessibilityIdentifier("terminal-input")
 
             HStack {

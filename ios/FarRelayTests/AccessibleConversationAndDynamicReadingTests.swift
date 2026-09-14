@@ -12,6 +12,16 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
         XCTAssertEqual(ConversationAccessibilityActionPolicy.copyText(for: entry), raw)
     }
 
+    func testAccessibleTextEliminatesEveryTerminalLineBoundaryAndRepeatedWhitespace() {
+        let raw = "one\r\ntwo\rthree\n\n four\t five"
+        let entry = AccessibleConversationEntry(text: raw, role: .incomingContent)
+
+        XCTAssertEqual(entry.accessibilityText, "one two three four five")
+        XCTAssertFalse(entry.accessibilityText.contains("\n"))
+        XCTAssertFalse(entry.accessibilityText.contains("\r"))
+        XCTAssertEqual(ConversationAccessibilityActionPolicy.copyText(for: entry), raw)
+    }
+
     func testDynamicReadingKeepsInputFocusedOutputEligible() {
         let queue = DynamicReadingQueue()
         let sessionID = UUID()

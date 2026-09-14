@@ -45,7 +45,7 @@ struct KeyboardCapture: UIViewRepresentable {
 final class CaptureView: UIView {
     var bridge: BridgeClient?
     var settings: AppSettings?
-    private var priorityCommandKeysAwaitingRawRelease: Set<UInt16> = []
+    private var priorityDuplicateGate = PriorityRawDuplicateGate()
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -92,11 +92,7 @@ final class CaptureView: UIView {
         for press in presses {
             guard let key = press.key else { continue }
             guard let vk = HIDToVK.vk(for: key, optionMapping: optionMap, commandMapping: commandMap) else { continue }
-            if pressed, priorityCommandKeysAwaitingRawRelease.contains(vk) {
-                claimed = true
-                continue
-            }
-            if !pressed, priorityCommandKeysAwaitingRawRelease.remove(vk) != nil {
+            if priorityDuplicateGate.suppressesRaw(vk: vk, pressed: pressed) {
                 claimed = true
                 continue
             }
@@ -112,8 +108,12 @@ final class CaptureView: UIView {
         // `wantsPriorityOverSystemBehavior` requests precedence; it does not
         // prove that VoiceOver will yield every reserved key on device.
         guard bridge?.forwardingEnabled == true else { return [] }
-        return ReservedKeyForwardingPolicy.inputs.map { input in
-            let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(handleReservedKeyCommand(_:)))
+        return ReservedKeyForwardingPolicy.registrations.map { registration in
+            let command = UIKeyCommand(
+                input: registration.input,
+                modifierFlags: ReservedKeyForwardingPolicy.modifierFlags(for: registration.modifiers),
+                action: #selector(handleReservedKeyCommand(_:))
+            )
             command.wantsPriorityOverSystemBehavior = true
             return command
         }
@@ -122,11 +122,18 @@ final class CaptureView: UIView {
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
         guard let bridge, bridge.forwardingEnabled,
               let input = command.input,
-              let vk = ReservedKeyForwardingPolicy.vk(forInput: input) else { return }
-        // UIKeyCommand has no key-up callback. It emits one deterministic tap;
-        // suppress a matching raw delivery if UIKit also sends one.
-        priorityCommandKeysAwaitingRawRelease.insert(vk)
-        bridge.sendKey(vk: vk, pressed: true)
-        bridge.sendKey(vk: vk, pressed: false)
+              let transitions = ReservedKeyForwardingPolicy.transitions(
+                for: input,
+                modifierFlags: command.modifierFlags,
+                optionMapping: settings?.optionMapping ?? .alt,
+                commandMapping: settings?.commandMapping ?? .alt
+              ) else { return }
+        // UIKeyCommand does not expose key-up callbacks. Reconstruct the full
+        // Windows chord as a deterministic tap, then suppress a matching raw
+        // path if UIKit happens to deliver both representations.
+        priorityDuplicateGate.recordPriorityTransitions(transitions)
+        for transition in transitions {
+            bridge.sendKey(vk: transition.vk, pressed: transition.pressed)
+        }
     }
 }

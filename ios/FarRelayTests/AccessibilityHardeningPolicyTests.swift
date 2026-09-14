@@ -231,13 +231,60 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         XCTAssertFalse(diagnostic.localizedStandardContains("passwordValue"))
     }
 
-    func testReservedVoiceOverKeysMapExactlyOnceThroughPriorityPolicy() {
+    func testReservedVoiceOverKeysAndPublicFunctionKeysMapThroughPriorityPolicy() {
         XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputUpArrow), VK.up)
         XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputDownArrow), VK.down)
         XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputLeftArrow), VK.left)
         XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputRightArrow), VK.right)
         XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputEscape), VK.escape)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.f1), VK.f1)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.f12), VK.f1 + 11)
         XCTAssertNil(ReservedKeyForwardingPolicy.vk(forInput: "x"))
+        XCTAssertEqual(ReservedKeyForwardingPolicy.registrations.count, 197)
+    }
+
+    func testPriorityFunctionChordReconstructsModifierDownKeyTapModifierUp() throws {
+        let transitions = try XCTUnwrap(ReservedKeyForwardingPolicy.transitions(
+            for: UIKeyCommand.f1,
+            modifierFlags: [.shift, .control],
+            optionMapping: .alt,
+            commandMapping: .win
+        ))
+
+        XCTAssertEqual(
+            transitions.map { "\($0.vk):\($0.pressed)" },
+            ["17:true", "16:true", "112:true", "112:false", "16:false", "17:false"]
+        )
+    }
+
+    func testPriorityChordUsesConfiguredOptionAndCommandMappings() throws {
+        let transitions = try XCTUnwrap(ReservedKeyForwardingPolicy.transitions(
+            for: UIKeyCommand.f1,
+            modifierFlags: [.alternate, .command],
+            optionMapping: .ctrl,
+            commandMapping: .win
+        ))
+
+        XCTAssertEqual(
+            transitions.map { "\($0.vk):\($0.pressed)" },
+            ["162:true", "91:true", "112:true", "112:false", "91:false", "162:false"]
+        )
+    }
+
+    func testPriorityDuplicateGateSuppressesMatchingRawChordWithoutStrandingReleases() {
+        var gate = PriorityRawDuplicateGate()
+        gate.recordPriorityTransitions([
+            (vk: VK.shift, pressed: true),
+            (vk: VK.f1, pressed: true),
+            (vk: VK.f1, pressed: false),
+            (vk: VK.shift, pressed: false)
+        ])
+
+        XCTAssertTrue(gate.suppressesRaw(vk: VK.lshift, pressed: true))
+        XCTAssertTrue(gate.suppressesRaw(vk: VK.f1, pressed: true))
+        XCTAssertTrue(gate.suppressesRaw(vk: VK.f1, pressed: false))
+        XCTAssertTrue(gate.suppressesRaw(vk: VK.lshift, pressed: false))
+        XCTAssertFalse(gate.suppressesRaw(vk: VK.f1, pressed: false))
     }
 
     func testDiagnosticsRedactEverySupportedShellArgumentForm() {

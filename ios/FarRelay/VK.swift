@@ -160,8 +160,55 @@ enum HIDToVK {
     }
 }
 
+/// The public UIKit priority-command surface used when VoiceOver or UIKit
+/// reserves a hardware key before the raw `UIPress` responder path sees it.
+/// UIKit publishes F1 through F12 (`UIKeyCommand.f1` … `.f12`), but not F13
+/// through F24. The latter therefore remain on the existing raw HID path.
 enum ReservedKeyForwardingPolicy {
-    static let inputs = [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow, UIKeyCommand.inputEscape]
+    enum Modifier: CaseIterable, Hashable {
+        case shift
+        case control
+        case alternate
+        case command
+    }
+
+    struct Registration: Hashable {
+        let input: String
+        let modifiers: Set<Modifier>
+    }
+
+    static let unmodifiedInputs = [
+        UIKeyCommand.inputUpArrow,
+        UIKeyCommand.inputDownArrow,
+        UIKeyCommand.inputLeftArrow,
+        UIKeyCommand.inputRightArrow,
+        UIKeyCommand.inputEscape
+    ]
+
+    static let functionInputs = [
+        UIKeyCommand.f1, UIKeyCommand.f2, UIKeyCommand.f3, UIKeyCommand.f4,
+        UIKeyCommand.f5, UIKeyCommand.f6, UIKeyCommand.f7, UIKeyCommand.f8,
+        UIKeyCommand.f9, UIKeyCommand.f10, UIKeyCommand.f11, UIKeyCommand.f12
+    ]
+
+    /// A UIKeyCommand matches an exact modifier set, so register every public
+    /// modifier combination for F-keys. This includes the NVDA-relevant
+    /// Shift/Control/Option/Command chords without guessing private inputs.
+    static let functionModifierSets: [Set<Modifier>] = [
+        [], [.shift], [.control], [.alternate], [.command],
+        [.shift, .control], [.shift, .alternate], [.shift, .command],
+        [.control, .alternate], [.control, .command], [.alternate, .command],
+        [.shift, .control, .alternate], [.shift, .control, .command],
+        [.shift, .alternate, .command], [.control, .alternate, .command],
+        [.shift, .control, .alternate, .command]
+    ]
+
+    static var registrations: [Registration] {
+        unmodifiedInputs.map { Registration(input: $0, modifiers: []) }
+            + functionInputs.flatMap { input in
+                functionModifierSets.map { Registration(input: input, modifiers: $0) }
+            }
+    }
 
     static func vk(forInput input: String) -> UInt16? {
         switch input {
@@ -170,7 +217,95 @@ enum ReservedKeyForwardingPolicy {
         case UIKeyCommand.inputLeftArrow: return VK.left
         case UIKeyCommand.inputRightArrow: return VK.right
         case UIKeyCommand.inputEscape: return VK.escape
-        default: return nil
+        default:
+            guard let index = functionInputs.firstIndex(of: input) else { return nil }
+            return VK.f1 + UInt16(index)
+        }
+    }
+
+    static func modifiers(for flags: UIKeyModifierFlags) -> Set<Modifier> {
+        var result: Set<Modifier> = []
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.alternate) { result.insert(.alternate) }
+        if flags.contains(.command) { result.insert(.command) }
+        return result
+    }
+
+    static func modifierFlags(for modifiers: Set<Modifier>) -> UIKeyModifierFlags {
+        modifiers.reduce(into: []) { flags, modifier in
+            switch modifier {
+            case .shift: flags.insert(.shift)
+            case .control: flags.insert(.control)
+            case .alternate: flags.insert(.alternate)
+            case .command: flags.insert(.command)
+            }
+        }
+    }
+
+    /// UIKeyCommand reports modifier families but not left/right physical
+    /// sides. The priority fallback intentionally uses the left VK for mapped
+    /// Option/Command; raw HID delivery still preserves actual side data.
+    static func modifierVKs(
+        for modifiers: Set<Modifier>,
+        optionMapping: ModifierMapping,
+        commandMapping: ModifierMapping
+    ) -> [UInt16] {
+        let order: [Modifier] = [.control, .alternate, .shift, .command]
+        return order.compactMap { modifier in
+            guard modifiers.contains(modifier) else { return nil }
+            switch modifier {
+            case .shift: VK.shift
+            case .control: VK.control
+            case .alternate: HIDToVK.remappedModifier(optionMapping, side: .left)
+            case .command: HIDToVK.remappedModifier(commandMapping, side: .left)
+            }
+        }
+    }
+
+    static func transitions(
+        for input: String,
+        modifierFlags: UIKeyModifierFlags,
+        optionMapping: ModifierMapping,
+        commandMapping: ModifierMapping
+    ) -> [(vk: UInt16, pressed: Bool)]? {
+        guard let key = vk(forInput: input) else { return nil }
+        let modifiers = modifierVKs(
+            for: modifiers(for: modifierFlags),
+            optionMapping: optionMapping,
+            commandMapping: commandMapping
+        )
+        return modifiers.map { ($0, true) }
+            + [(key, true), (key, false)]
+            + modifiers.reversed().map { ($0, false) }
+    }
+}
+
+/// Suppresses raw delivery only after a priority command has claimed the same
+/// physical transition. It is state-based rather than timer-based so a raw and
+/// UIKeyCommand double delivery cannot produce duplicate taps or stranded
+/// modifier releases.
+struct PriorityRawDuplicateGate {
+    private var pendingRawReleases: Set<UInt16> = []
+
+    mutating func recordPriorityTransitions(_ transitions: [(vk: UInt16, pressed: Bool)]) {
+        pendingRawReleases.formUnion(transitions.map { normalizedKey($0.vk) })
+    }
+
+    mutating func suppressesRaw(vk: UInt16, pressed: Bool) -> Bool {
+        let key = normalizedKey(vk)
+        guard pendingRawReleases.contains(key) else { return false }
+        if !pressed { pendingRawReleases.remove(key) }
+        return true
+    }
+
+    private func normalizedKey(_ vk: UInt16) -> UInt16 {
+        switch vk {
+        case VK.lshift, VK.rshift, VK.shift: VK.shift
+        case VK.lcontrol, VK.rcontrol, VK.control: VK.control
+        case VK.lmenu, VK.rmenu, VK.menu: VK.menu
+        case VK.lwin, VK.rwin: VK.lwin
+        default: vk
         }
     }
 }
