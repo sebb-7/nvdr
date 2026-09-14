@@ -72,19 +72,19 @@ struct NVDARemoteFeatureView: View {
     }
 
     private var isConnected: Bool {
-        switch bridge.status { case .ready, .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .nvdaNotConnected: true; default: false }
+        return switch bridge.status { case .ready, .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .nvdaNotConnected: true; default: false }
     }
     private var isConnectionActive: Bool {
-        switch bridge.status {
+        return switch bridge.status {
         case .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected: true
         default: false
         }
     }
     private var isForwardingAvailable: Bool {
-        switch bridge.status { case .ready: true; default: false }
+        return switch bridge.status { case .ready: true; default: false }
     }
     private var statusLabel: String {
-        switch bridge.status {
+        return switch bridge.status {
         case .idle: "Idle"; case .connecting: "Connecting"; case .authenticating: "Authenticating"; case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"; case .relayConnected: "Relay connected"; case .waitingForNVDA, .nvdaNotConnected: "Waiting for NVDA"; case .ready: "NVDA connected"; case .disconnected(let reason): "Disconnected (\(reason))"; case .failed(let message): "Failed: \(message)"
         }
     }
