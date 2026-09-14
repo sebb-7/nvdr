@@ -5,8 +5,10 @@ struct NVDARemoteFeatureView: View {
     @Environment(BridgeClient.self) private var bridge
     @Environment(InteractionFeedback.self) private var interactionFeedback
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
+    @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
     @State private var presentedIssue: UserFacingIssue?
+    @State private var reconnectAfterForeground = false
 
     var body: some View {
         Form {
@@ -29,6 +31,18 @@ struct NVDARemoteFeatureView: View {
         .overlay { KeyboardCapture(bridge: bridge, settings: settings).frame(height: 0) }
         .onChange(of: bridge.status) { old, new in
             handleStatusChange(from: old, to: new)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .inactive, .background:
+                reconnectAfterForeground = isConnectionActive
+                bridge.suspendInputForInactiveContext()
+            case .active where reconnectAfterForeground:
+                reconnectAfterForeground = false
+                bridge.start(settings: settings, profile: profile)
+            default:
+                break
+            }
         }
         .userFacingIssueAlert($presentedIssue) { _ in
             presentedIssue = nil
@@ -54,6 +68,12 @@ struct NVDARemoteFeatureView: View {
 
     private var isConnected: Bool {
         switch bridge.status { case .ready, .connecting, .authenticating, .reconnecting, .nvdaNotConnected: true; default: false }
+    }
+    private var isConnectionActive: Bool {
+        switch bridge.status {
+        case .connecting, .authenticating, .reconnecting, .ready, .nvdaNotConnected: true
+        default: false
+        }
     }
     private var isForwardingAvailable: Bool {
         switch bridge.status { case .ready, .nvdaNotConnected: true; default: false }

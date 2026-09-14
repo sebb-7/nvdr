@@ -45,6 +45,7 @@ struct KeyboardCapture: UIViewRepresentable {
 final class CaptureView: UIView {
     var bridge: BridgeClient?
     var settings: AppSettings?
+    private var priorityCommandKeysAwaitingRawRelease: Set<UInt16> = []
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -91,6 +92,14 @@ final class CaptureView: UIView {
         for press in presses {
             guard let key = press.key else { continue }
             guard let vk = HIDToVK.vk(for: key, optionMapping: optionMap, commandMapping: commandMap) else { continue }
+            if pressed, priorityCommandKeysAwaitingRawRelease.contains(vk) {
+                claimed = true
+                continue
+            }
+            if !pressed, priorityCommandKeysAwaitingRawRelease.remove(vk) != nil {
+                claimed = true
+                continue
+            }
             bridge.sendKey(vk: vk, pressed: pressed)
             claimed = true
         }
@@ -109,6 +118,9 @@ final class CaptureView: UIView {
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
         guard let bridge, bridge.forwardingEnabled,
               let vk = ReservedKeyForwardingPolicy.vk(forInput: command.input) else { return }
+        // UIKeyCommand has no key-up callback. It emits one deterministic tap;
+        // suppress a matching raw delivery if UIKit also sends one.
+        priorityCommandKeysAwaitingRawRelease.insert(vk)
         bridge.sendKey(vk: vk, pressed: true)
         bridge.sendKey(vk: vk, pressed: false)
     }

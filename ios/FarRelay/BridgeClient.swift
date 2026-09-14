@@ -88,6 +88,10 @@ final class BridgeClient {
             return
         }
 
+        // An explicit Connect/Retry is the user's request to resume remote
+        // input. Reconnection paths do not change this preference implicitly.
+        forwardingEnabled = true
+
         // Validate and summarize authentication up front so failures are
         // immediate and diagnostics still include the offered key fingerprint.
         let summary: SSHAuthenticationSummary
@@ -176,6 +180,7 @@ final class BridgeClient {
     }
 
     private func openCommandChannel() -> (UUID, AsyncStream<IPCCommand>) {
+        releaseRemoteKeysBeforeChannelClose()
         commandContinuation?.finish()
         let (stream, continuation) = AsyncStream<IPCCommand>.makeStream()
         let id = UUID()
@@ -194,6 +199,7 @@ final class BridgeClient {
 
     private func invalidateCommandChannel(id: UUID) {
         guard commandChannelID == id else { return }
+        releaseRemoteKeysBeforeChannelClose()
         inputReady = false
         inputState.reset()
         commandContinuation?.finish()
@@ -202,11 +208,25 @@ final class BridgeClient {
     }
 
     private func disconnectInputChannel() {
+        releaseRemoteKeysBeforeChannelClose()
         inputReady = false
         inputState.reset()
         commandContinuation?.finish()
         commandContinuation = nil
         commandChannelID = nil
+        forwardingEnabled = false
+    }
+
+    /// Send the protocol-level release before tearing down the stream. This
+    /// covers transport loss, reconnect replacement, and background-driven
+    /// suspension where UIKit may never deliver individual key-up events.
+    private func releaseRemoteKeysBeforeChannelClose() {
+        guard commandContinuation != nil else {
+            inputState.reset()
+            return
+        }
+        send(.releaseAll)
+        inputState.reset()
     }
 
     private func handleLifecycle(
