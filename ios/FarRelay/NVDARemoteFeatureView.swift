@@ -24,6 +24,22 @@ struct NVDARemoteFeatureView: View {
                 Toggle("Forward keystrokes to slave", isOn: forwardingBinding).disabled(!isForwardingAvailable)
                 Text(isForwardingAvailable ? "Turn this off to use the keyboard locally." : "Connect first.").font(.footnote).foregroundStyle(.secondary)
             }
+            if isVoiceOverEnabled, isForwardingAvailable {
+                Section("VoiceOver keyboard fallback") {
+                    Text("VoiceOver may keep arrows and Escape for its own navigation. Use these controls when a hardware key is intercepted.")
+                        .font(.footnote)
+                    HStack {
+                        remoteKeyButton("Left", systemImage: "arrow.left", vk: VK.left)
+                        remoteKeyButton("Up", systemImage: "arrow.up", vk: VK.up)
+                        remoteKeyButton("Down", systemImage: "arrow.down", vk: VK.down)
+                        remoteKeyButton("Right", systemImage: "arrow.right", vk: VK.right)
+                    }
+                    Button("Escape", systemImage: "escape") {
+                        sendRemoteTap(VK.escape)
+                    }
+                    .accessibilityIdentifier("remote-escape-fallback")
+                }
+            }
             Section("Last spoken") { Text(bridge.lastSpeech.isEmpty ? "—" : bridge.lastSpeech) }
             Section("Log") { ForEach(bridge.log.indices, id: \.self) { Text(bridge.log[$0]).font(.caption.monospaced()) } }
         }
@@ -82,6 +98,20 @@ struct NVDARemoteFeatureView: View {
         switch bridge.status {
         case .idle: "Idle"; case .connecting: "Connecting"; case .authenticating: "Authenticating"; case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"; case .ready: "Ready"; case .nvdaNotConnected: "Connected, no NVDA on channel"; case .disconnected(let reason): "Disconnected (\(reason))"; case .failed(let message): "Failed: \(message)"
         }
+    }
+
+    private func remoteKeyButton(_ label: String, systemImage: String, vk: UInt16) -> some View {
+        Button(label, systemImage: systemImage) {
+            sendRemoteTap(vk)
+        }
+        .labelStyle(.iconOnly)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("remote-\(label.lowercased())-fallback")
+    }
+
+    private func sendRemoteTap(_ vk: UInt16) {
+        bridge.sendKey(vk: vk, pressed: true)
+        bridge.sendKey(vk: vk, pressed: false)
     }
 
     private func handleStatusChange(from old: BridgeClient.Status, to new: BridgeClient.Status) {

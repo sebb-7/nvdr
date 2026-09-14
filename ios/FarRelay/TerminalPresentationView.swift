@@ -23,7 +23,6 @@ struct TerminalPresentationView: View {
             TerminalInputControls(
                 presentation: presentation,
                 inputText: $presentation.inputText,
-                voiceOverFocus: $voiceOverFocus,
                 isInputEditing: $isInputEditing,
                 controlKeys: settings.terminalControlKeys,
                 manageControlKeys: { isManagingControlKeys = true }
@@ -37,7 +36,6 @@ struct TerminalPresentationView: View {
             presentation.setLiveOutputVoiceOverEnabled(isVoiceOverEnabled)
             presentation.setDynamicReadingEnabled(settings.dynamicReadingEnabled)
             presentation.setVoiceOverActionPreferences(settings.voiceOverActionPreferences)
-            deliverPendingDynamicReadingAnnouncements()
         }
         .onChange(of: isVoiceOverEnabled) { _, isEnabled in
             presentation.setLiveOutputVoiceOverEnabled(isEnabled)
@@ -62,13 +60,6 @@ struct TerminalPresentationView: View {
                 presentation.setLiveOutputInputFocused(false)
             }
         }
-        .onChange(of: presentation.liveOutputAnnouncement?.id) { _, _ in
-            guard isVoiceOverEnabled, let announcement = presentation.liveOutputAnnouncement else { return }
-            LiveOutputAnnouncementDelivery.deliver(announcement)
-        }
-        .onChange(of: presentation.pendingDynamicReadingAnnouncements.count) { _, _ in
-            deliverPendingDynamicReadingAnnouncements()
-        }
         .onChange(of: presentation.lastInteractionFeedback?.id) { _, _ in
             if let request = presentation.lastInteractionFeedback {
                 interactionFeedback.play(request.kind)
@@ -76,10 +67,6 @@ struct TerminalPresentationView: View {
         }
     }
 
-    private func deliverPendingDynamicReadingAnnouncements() {
-        guard isVoiceOverEnabled else { return }
-        LiveOutputAnnouncementDelivery.deliver(presentation.consumeDynamicReadingAnnouncements())
-    }
 }
 
 private enum TerminalAccessibilityFocus: Hashable {
@@ -220,15 +207,18 @@ private struct TerminalPresentationStatusView: View {
 private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
-    var voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
     @FocusState.Binding var isInputEditing: Bool
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
     var body: some View {
         VStack(alignment: .leading) {
-            TextField("Terminal input", text: $inputText, axis: .vertical)
+            // A terminal command is one line. A multiline SwiftUI field turns
+            // Braille Screen Input's Return into text insertion instead of
+            // the submit action, which makes repeated BSI sends unreliable.
+            TextField("Terminal input", text: $inputText)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .lineLimit(1)
                 .submitLabel(.send)
                 .focused($isInputEditing)
                 .onSubmit {
@@ -249,7 +239,6 @@ private struct TerminalInputControls: View {
                 }
                 .accessibilityLabel("Terminal input")
                 .accessibilityIdentifier("terminal-input")
-                .accessibilityFocused(voiceOverFocus, equals: .input)
 
             HStack {
                 Button("Send", systemImage: "arrow.up.circle") {
@@ -280,13 +269,12 @@ private struct TerminalInputControls: View {
 
     private func sendFromInput() {
         isInputEditing = true
-        voiceOverFocus.wrappedValue = .input
         Task {
             await presentation.submitInputText()
-            // The user explicitly started an editing session. Preserve both
-            // native responder and VoiceOver editing focus after either result.
+            // Restore only native text editing focus. Moving VoiceOver focus to
+            // the field after every Send breaks Braille Screen Input and causes
+            // VoiceOver to leave the text editor between repeated commands.
             isInputEditing = true
-            voiceOverFocus.wrappedValue = .input
         }
     }
 }

@@ -107,7 +107,13 @@ final class CaptureView: UIView {
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        guard bridge?.forwardingEnabled == true else { return [] }
+        // VoiceOver owns the reserved arrow/Escape command path before UIKit
+        // gets a chance to dispatch UIKeyCommand. Keeping these commands
+        // registered while VoiceOver is running creates a misleading second
+        // path and can make forwarding state appear inconsistent. The view
+        // supplies explicit accessible fallback buttons for that case.
+        guard bridge?.forwardingEnabled == true,
+              !UIAccessibility.isVoiceOverRunning else { return [] }
         return ReservedKeyForwardingPolicy.inputs.map { input in
             let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(handleReservedKeyCommand(_:)))
             command.wantsPriorityOverSystemBehavior = true

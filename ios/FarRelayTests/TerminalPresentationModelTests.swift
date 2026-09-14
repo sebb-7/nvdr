@@ -372,6 +372,21 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
     }
 
+    func testMultilineInputIsRejectedAndPreserved() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        model.inputText = "first\nsecond"
+
+        await model.submitInputText()
+
+        XCTAssertEqual(model.inputText, "first\nsecond")
+        XCTAssertEqual(model.lastInputError, "Terminal commands must be one line.")
+        XCTAssertTrue(session.sentBytes.isEmpty)
+    }
+
     func testUnicodeInputIsByteExactUTF8WithoutExtraNewlines() async {
         let session = FakeTerminalPresentationSession(
             state: .connected,

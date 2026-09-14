@@ -62,6 +62,38 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
         )
     }
 
+    func testDynamicReadingDeliveryBatchesInOrderThroughOneSink() async {
+        var delivered: [String] = []
+        let service = DynamicReadingDeliveryService(quietInterval: .milliseconds(1)) { text in
+            delivered.append(text)
+        }
+        let sessionID = UUID()
+        service.enqueue([
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "first"),
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
+        ])
+
+        await Task.yield()
+
+        XCTAssertEqual(delivered, ["first second"])
+    }
+
+    func testDynamicReadingDeliveryCancelsStaleSessionBeforeWorkerRuns() async {
+        var delivered: [String] = []
+        let service = DynamicReadingDeliveryService(quietInterval: .milliseconds(1)) { text in
+            delivered.append(text)
+        }
+        let oldSession = UUID()
+        service.enqueue([
+            DynamicReadingAnnouncement(sessionID: oldSession, text: "stale")
+        ])
+        service.cancel(sessionID: oldSession)
+
+        await Task.yield()
+
+        XCTAssertTrue(delivered.isEmpty)
+    }
+
     func testVoiceOverActionPreferencesRoundTrip() throws {
         let preferences = VoiceOverActionPreferences(
             computerActions: [.editComputer],

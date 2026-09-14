@@ -56,7 +56,6 @@ final class TerminalPresentationModel {
     private(set) var alternateScreenLines: [AccessibleTerminalLine] = []
     private(set) var lastInputError: String?
     private(set) var liveOutputAnnouncement: LiveOutputAnnouncement?
-    private(set) var pendingDynamicReadingAnnouncements: [DynamicReadingAnnouncement] = []
     private(set) var lastInteractionFeedback: InteractionFeedbackRequest?
     var onIncomingConversationContent: (@MainActor () -> Void)?
     private(set) var shellPromptContext: String?
@@ -233,6 +232,11 @@ final class TerminalPresentationModel {
         guard !isSubmittingInput else { return }
         isSubmittingInput = true
         defer { isSubmittingInput = false }
+        guard !text.contains("\n"), !text.contains("\r") else {
+            lastInputError = "Terminal commands must be one line."
+            requestFeedback(.error)
+            return
+        }
         let returnBytes: Data
         switch TerminalControlChordEncoder.encode(.returnKey) {
         case .success(let bytes):
@@ -310,22 +314,21 @@ final class TerminalPresentationModel {
     func setLiveOutputVoiceOverEnabled(_ isEnabled: Bool) {
         liveOutputContext.isVoiceOverEnabled = isEnabled
         dynamicReadingContext.isVoiceOverEnabled = isEnabled
+        if !isEnabled {
+            LiveOutputAnnouncementDelivery.cancelDynamicReading(sessionID: sessionID)
+        }
         refreshLiveOutputContext()
     }
 
     func setDynamicReadingEnabled(_ isEnabled: Bool) {
         dynamicReadingContext.enabled = isEnabled
-        if !isEnabled { pendingDynamicReadingAnnouncements.removeAll() }
+        if !isEnabled {
+            LiveOutputAnnouncementDelivery.cancelDynamicReading(sessionID: sessionID)
+        }
     }
 
     func setVoiceOverActionPreferences(_ preferences: VoiceOverActionPreferences) {
         voiceOverActionPreferences = preferences
-    }
-
-    func consumeDynamicReadingAnnouncements() -> [DynamicReadingAnnouncement] {
-        let announcements = pendingDynamicReadingAnnouncements
-        pendingDynamicReadingAnnouncements.removeAll()
-        return announcements
     }
 
     /// Ends editing without discarding the user's text.
@@ -611,7 +614,7 @@ final class TerminalPresentationModel {
                 context: currentDynamicReadingContext()
             )
         }
-        pendingDynamicReadingAnnouncements.append(contentsOf: dynamicReadingQueue.drain())
+        LiveOutputAnnouncementDelivery.deliver(dynamicReadingQueue.drain())
     }
 
     private func shouldAnnounce(_ entry: AccessibleConversationEntry) -> Bool {
@@ -641,6 +644,7 @@ final class TerminalPresentationModel {
 
     private func resetPresentation() {
         observationGeneration &+= 1
+        LiveOutputAnnouncementDelivery.cancelDynamicReading(sessionID: sessionID)
         accessibilityModel = TerminalAccessibilityModel()
         accessibleSnapshot = nil
         conversationEntries = []
@@ -655,7 +659,6 @@ final class TerminalPresentationModel {
         lastInteractionFeedback = nil
         focusedConversationEntryID = nil
         liveOutputAnnouncement = nil
-        pendingDynamicReadingAnnouncements.removeAll()
         sessionID = UUID()
         dynamicReadingQueue.reset()
         applyLiveOutputEffects(liveOutputPolicy.reset())

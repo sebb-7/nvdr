@@ -57,7 +57,9 @@ struct AccessibleConversationEntry: Identifiable, Equatable, Sendable {
     /// Live VoiceOver announcement text. Large incoming blocks never speak
     /// the full payload automatically.
     var liveAnnouncementText: String {
-        guard isCompactLargeOutput else { return text }
+        guard isCompactLargeOutput else {
+            return role == .incomingContent ? accessibilityText : text
+        }
         return "Large output received, \(logicalLineCount) lines."
     }
 
