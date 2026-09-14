@@ -255,10 +255,10 @@ enum ReservedKeyForwardingPolicy {
         return order.compactMap { modifier in
             guard modifiers.contains(modifier) else { return nil }
             switch modifier {
-            case .shift: VK.shift
-            case .control: VK.control
-            case .alternate: HIDToVK.remappedModifier(optionMapping, side: .left)
-            case .command: HIDToVK.remappedModifier(commandMapping, side: .left)
+            case .shift: return VK.shift
+            case .control: return VK.control
+            case .alternate: return HIDToVK.remappedModifier(optionMapping, side: .left)
+            case .command: return HIDToVK.remappedModifier(commandMapping, side: .left)
             }
         }
     }
