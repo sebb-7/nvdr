@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 /// A VoiceOver-first accessible conversation surface for a terminal model.
 struct TerminalPresentationView: View {
@@ -7,8 +8,7 @@ struct TerminalPresentationView: View {
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
-    @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
-    @State private var inputEditingState: TerminalInputEditingState = .browsing
+    @State private var nativeInputBuffer = TerminalNativeInputBuffer()
     @State private var isManagingControlKeys = false
 
     var body: some View {
@@ -16,20 +16,14 @@ struct TerminalPresentationView: View {
         VStack(spacing: 0) {
             TerminalConversationList(
                 presentation: presentation,
-                openSnapshot: openSnapshot,
-                voiceOverFocus: $voiceOverFocus
+                openSnapshot: openSnapshot
             )
             TerminalPresentationStatusView(presentation: presentation)
             TerminalInputControls(
                 presentation: presentation,
-                inputText: $presentation.inputText,
-                isInputEditing: Binding(
-                    get: { inputEditingState.isEditing },
-                    set: { inputEditingState = $0 ? .editing : .browsing }
-                ),
+                inputBuffer: nativeInputBuffer,
                 controlKeys: settings.terminalControlKeys,
-                manageControlKeys: { isManagingControlKeys = true },
-                voiceOverFocus: $voiceOverFocus
+                manageControlKeys: { isManagingControlKeys = true }
             )
         }
         .navigationTitle("SSH Terminal")
@@ -50,42 +44,21 @@ struct TerminalPresentationView: View {
         .onChange(of: settings.voiceOverActionPreferences) { _, preferences in
             presentation.setVoiceOverActionPreferences(preferences)
         }
-        .onChange(of: voiceOverFocus) { _, focus in
-            switch focus {
-            case .conversation(let entryID):
-                presentation.setLiveOutputFocusedConversationEntryID(entryID)
-                presentation.setLiveOutputInputFocused(false)
-            case .input:
-                presentation.setLiveOutputFocusedConversationEntryID(nil)
-                presentation.setLiveOutputInputFocused(true)
-                inputEditingState.activateInput()
-            case nil:
-                presentation.setLiveOutputFocusedConversationEntryID(nil)
-                presentation.setLiveOutputInputFocused(false)
-            }
-        }
         .onChange(of: presentation.lastInteractionFeedback?.id) { _, _ in
             if let request = presentation.lastInteractionFeedback {
                 interactionFeedback.play(request.kind)
             }
         }
         .onDisappear {
-            inputEditingState.leaveTerminal()
             presentation.endEditingSession()
         }
     }
 
 }
 
-private enum TerminalAccessibilityFocus: Hashable {
-    case conversation(UUID)
-    case input
-}
-
 private struct TerminalConversationList: View {
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
-    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
 
     var body: some View {
         List {
@@ -100,8 +73,7 @@ private struct TerminalConversationList: View {
                     TerminalConversationEntryView(
                         entry: entry,
                         presentation: presentation,
-                        openSnapshot: openSnapshot,
-                        voiceOverFocus: voiceOverFocus
+                        openSnapshot: openSnapshot
                     )
                 }
             }
@@ -114,51 +86,22 @@ private struct TerminalConversationEntryView: View {
     let entry: AccessibleConversationEntry
     let presentation: TerminalPresentationModel
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
-    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
 
     var body: some View {
-        if entry.isCommand {
-            VStack(alignment: .leading) {
-                Text(entry.presentationText)
-                    .accessibilityHidden(true)
-            }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(presentation.accessibilityLabel(for: entry))
-                .accessibilityHeading(.h3)
-                .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-                .namedAccessibilityActions(
-                    presentation.accessibilityActions(for: entry),
-                    name: \.name
-                ) { action in
-                    perform(action)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("terminal-command-\(entry.id)")
-        } else {
-            VStack(alignment: .leading) {
-                Text(entry.presentationText)
-                    .accessibilityHidden(true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if entry.role == .incomingContent {
-                    Button("Open Snapshot", systemImage: "doc.text") {
-                        openSnapshotIfAvailable()
-                    }
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("terminal-open-snapshot-\(entry.id)")
+        NativeTerminalConversationRow(
+            entry: entry,
+            accessibilityText: presentation.accessibilityLabel(for: entry),
+            actions: presentation.accessibilityActions(for: entry),
+            onAction: perform,
+            onAccessibilityFocusChanged: { isFocused in
+                if isFocused {
+                    presentation.setLiveOutputFocusedConversationEntryID(entry.id)
+                    presentation.setLiveOutputInputFocused(false)
+                } else {
+                    presentation.setLiveOutputFocusedConversationEntryID(nil)
                 }
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(presentation.accessibilityLabel(for: entry))
-            .accessibilityFocused(voiceOverFocus, equals: .conversation(entry.id))
-            .namedAccessibilityActions(
-                presentation.accessibilityActions(for: entry),
-                name: \.name
-            ) { action in
-                perform(action)
-            }
-            .accessibilityIdentifier("terminal-content-\(entry.id)")
-        }
+        )
     }
 
     private func perform(_ action: ConversationAccessibilityAction) {
@@ -197,7 +140,7 @@ private struct TerminalPresentationStatusView: View {
             if let shellPromptContext = presentation.shellPromptContext {
                 Text(shellPromptContext)
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("Shell prompt context: \(shellPromptContext)")
+                    .accessibilityLabel("Shell prompt, \(shellPromptContext)")
             }
             if presentation.accessibleSnapshot?.isAlternateScreen == true {
                 Text("Alternate screen active")
@@ -218,34 +161,24 @@ private struct TerminalPresentationStatusView: View {
 
 private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
-    @Binding var inputText: String
-    @Binding var isInputEditing: Bool
+    let inputBuffer: TerminalNativeInputBuffer
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
-    let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
     var body: some View {
         VStack(alignment: .leading) {
             StableTerminalInputField(
-                text: $inputText,
-                isEditing: $isInputEditing,
-                onSubmit: sendFromInput
-            )
-            .namedAccessibilityActions(
-                presentation.inputAccessibilityActions(),
-                name: \.name
-            ) { action in
-                switch action {
-                case .sendCommand:
-                    sendFromInput()
-                case .clearInput:
+                inputBuffer: inputBuffer,
+                initialText: presentation.inputText,
+                onSubmit: sendFromInput,
+                onClear: {
+                    inputBuffer.clear()
                     presentation.clearInput()
-                default:
-                    break
+                },
+                onAccessibilityFocusChanged: { isFocused in
+                    presentation.setLiveOutputFocusedConversationEntryID(nil)
+                    presentation.setLiveOutputInputFocused(isFocused)
                 }
-            }
-            .accessibilityLabel("Terminal input")
-            .accessibilityFocused(voiceOverFocus, equals: .input)
-            .accessibilityIdentifier("terminal-input")
+            )
 
             HStack {
                 Button("Send", systemImage: "arrow.up.circle") {
@@ -275,30 +208,34 @@ private struct TerminalInputControls: View {
     }
 
     private func sendFromInput() {
-        isInputEditing = true
+        let text = inputBuffer.currentText
+        // Synchronize once at submission for retry/error presentation. Native
+        // editing never binds each Braille character through SwiftUI.
+        presentation.inputText = text
         Task {
-            await presentation.submitInputText()
-            // Restore only native text editing focus. Moving VoiceOver focus to
-            // the field after every Send breaks Braille Screen Input and causes
-            // VoiceOver to leave the text editor between repeated commands.
-            isInputEditing = true
+            await presentation.submitInput(text)
+            if presentation.lastInputError == nil {
+                inputBuffer.clear()
+            }
         }
     }
 }
 
 /// A single persistent UIKit editor is more reliable for Braille Screen
 /// Input than a SwiftUI TextField whose identity and focus can be recreated
-/// while terminal output is arriving. Binding updates are one-way guarded so
-/// caret/selection state remains owned by UITextField during editing.
+/// while terminal output is arriving. It owns its text, selection, marked
+/// input, first responder state, and accessibility identity during editing.
 private struct StableTerminalInputField: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var isEditing: Bool
+    let inputBuffer: TerminalNativeInputBuffer
+    let initialText: String
     let onSubmit: () -> Void
+    let onClear: () -> Void
+    let onAccessibilityFocusChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> UITextField {
-        let field = UITextField(frame: .zero)
+    func makeUIView(context: Context) -> NativeTerminalTextField {
+        let field = NativeTerminalTextField(frame: .zero)
         field.delegate = context.coordinator
         field.addTarget(context.coordinator, action: #selector(Coordinator.textChanged(_:)), for: .editingChanged)
         field.borderStyle = .roundedRect
@@ -311,19 +248,29 @@ private struct StableTerminalInputField: UIViewRepresentable {
         field.smartInsertDeleteType = .no
         field.enablesReturnKeyAutomatically = false
         field.accessibilityLabel = "Terminal input"
+        field.accessibilityIdentifier = "terminal-input"
         return field
     }
 
-    func updateUIView(_ field: UITextField, context: Context) {
+    func updateUIView(_ field: NativeTerminalTextField, context: Context) {
         context.coordinator.parent = self
-        if field.text != text {
-            field.text = text
+        field.recordLifecycle("updateUIView-before-model-propagation")
+        inputBuffer.attach(
+            editorID: field.editorID,
+            initialText: initialText,
+            writeNativeText: { [weak field] text in
+                guard let field, field.text != text else { return }
+                field.text = text
+            }
+        )
+        field.onAccessibilityFocusChanged = { isFocused in
+            inputBuffer.nativeAccessibilityFocusDidChange(isFocused)
+            onAccessibilityFocusChanged(isFocused)
         }
-        if isEditing, !field.isFirstResponder {
-            field.becomeFirstResponder()
-        } else if !isEditing, field.isFirstResponder {
-            field.resignFirstResponder()
-        }
+        field.onSubmit = onSubmit
+        field.onClear = onClear
+        field.configureAccessibilityActions()
+        field.recordLifecycle("updateUIView-after-model-propagation")
     }
 
     final class Coordinator: NSObject, UITextFieldDelegate {
@@ -334,25 +281,99 @@ private struct StableTerminalInputField: UIViewRepresentable {
         }
 
         @objc func textChanged(_ field: UITextField) {
-            parent.text = field.text ?? ""
+            guard let field = field as? NativeTerminalTextField else { return }
+            let text = field.text ?? ""
+            let eventPrefix = text.count == 1 ? "firstCharacter" : "subsequentCharacter"
+            field.recordLifecycle("\(eventPrefix)-before-native-buffer-sync")
+            parent.inputBuffer.nativeTextDidChange(text)
+            field.recordLifecycle("\(eventPrefix)-after-native-buffer-sync")
+            if text.count == 1 {
+                field.recordLifecycle("firstCharacter-before-next-character")
+            }
         }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
-            parent.isEditing = true
+            parent.inputBuffer.nativeEditingDidBegin()
+            (textField as? NativeTerminalTextField)?.recordLifecycle("textFieldDidBeginEditing")
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
-            // Do not clear this during Send; SwiftUI may update the wrapper
-            // while the async terminal write is in flight.
-            if !textField.isFirstResponder {
-                parent.isEditing = false
-            }
+            parent.inputBuffer.nativeEditingDidEnd()
+            (textField as? NativeTerminalTextField)?.recordLifecycle("textFieldDidEndEditing")
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
             parent.onSubmit()
             return false
         }
+    }
+}
+
+private final class NativeTerminalTextField: UITextField {
+    let editorID = UUID()
+    var onAccessibilityFocusChanged: ((Bool) -> Void)?
+    var onSubmit: (() -> Void)?
+    var onClear: (() -> Void)?
+
+    #if DEBUG
+    private static let lifecycleLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.sebb7.farrelay",
+        category: "TerminalNativeEditor"
+    )
+    #endif
+
+    override func accessibilityActivate() -> Bool {
+        recordLifecycle("accessibilityActivate-before")
+        let activated = becomeFirstResponder()
+        recordLifecycle("accessibilityActivate-after")
+        return activated
+    }
+
+    func configureAccessibilityActions() {
+        accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "Send Command") { [weak self] _ in
+                self?.recordLifecycle("accessibilitySend-before-submission")
+                self?.onSubmit?()
+                return true
+            },
+            UIAccessibilityCustomAction(name: "Clear Input") { [weak self] _ in
+                self?.recordLifecycle("accessibilityClear-before-buffer-clear")
+                self?.onClear?()
+                return true
+            }
+        ]
+    }
+
+    override func accessibilityElementDidBecomeFocused() {
+        super.accessibilityElementDidBecomeFocused()
+        onAccessibilityFocusChanged?(true)
+        recordLifecycle("accessibilityFocusGained")
+    }
+
+    override func accessibilityElementDidLoseFocus() {
+        super.accessibilityElementDidLoseFocus()
+        onAccessibilityFocusChanged?(false)
+        recordLifecycle("accessibilityFocusLost")
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let becameFirstResponder = super.becomeFirstResponder()
+        recordLifecycle("becomeFirstResponder")
+        return becameFirstResponder
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resignedFirstResponder = super.resignFirstResponder()
+        recordLifecycle("resignFirstResponder")
+        return resignedFirstResponder
+    }
+
+    func recordLifecycle(_ event: String) {
+        #if DEBUG
+        Self.lifecycleLogger.debug(
+            "event=\(event, privacy: .public) firstResponder=\(self.isFirstResponder, privacy: .public) windowAttached=\(self.window != nil, privacy: .public) textLength=\((self.text ?? \"\").count, privacy: .public)"
+        )
+        #endif
     }
 }
 
