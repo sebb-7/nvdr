@@ -60,8 +60,6 @@ final class DynamicReadingQueue {
         }
     }
 
-    func drain() -> [DynamicReadingAnnouncement] {
-
     func cancel(sessionID: UUID) {
         let ids = pending.values.filter { $0.sessionID == sessionID }.map(\.entryID)
         ids.forEach { pending.removeValue(forKey: $0) }
