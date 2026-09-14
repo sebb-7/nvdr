@@ -24,15 +24,11 @@ final class DynamicReadingDeliveryService {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            Task { @MainActor in
-                self?.handleFinish(notification)
+            let text = notification.userInfo?[UIAccessibility.announcementStringValueUserInfoKey]
+                as? String
+            Task { @MainActor [weak self] in
+                self?.announcementDidFinish(text: text)
             }
-        }
-    }
-
-    deinit {
-        if let finishObserver {
-            NotificationCenter.default.removeObserver(finishObserver)
         }
     }
 
@@ -69,12 +65,6 @@ final class DynamicReadingDeliveryService {
         guard text == nil || text == active.text else { return }
         self.active = nil
         deliverNextIfIdle()
-    }
-
-    private func handleFinish(_ notification: Notification) {
-        let text = notification.userInfo?[UIAccessibility.announcementStringValueUserInfoKey]
-            as? String
-        announcementDidFinish(text: text)
     }
 
     private func deliverNextIfIdle() {
