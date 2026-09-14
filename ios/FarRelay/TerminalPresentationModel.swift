@@ -261,11 +261,13 @@ final class TerminalPresentationModel {
             conversationEntries.append(entry)
             lastOutboundCommandText = text
         }
+        var payload = Data(text.utf8)
+        payload.append(returnBytes)
         do {
-            if !text.isEmpty {
-                try await session.sendTerminalInput(Data(text.utf8))
-            }
-            try await session.sendTerminalInput(returnBytes)
+            // One application-level submission. The SSH/PTY stack may
+            // fragment this payload internally, but FarRelay no longer has a
+            // body-success/Return-failure window that can duplicate retries.
+            try await session.sendTerminalInput(payload)
             inputText = ""
             lastInputError = nil
             requestFeedback(.selectionAccepted)

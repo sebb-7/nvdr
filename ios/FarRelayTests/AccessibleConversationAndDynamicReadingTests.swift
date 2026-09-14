@@ -77,9 +77,46 @@ final class AccessibleConversationAndDynamicReadingTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(delivered, ["first"])
-        service.announcementDidFinish(text: "first")
+        service.announcementDidFinish(text: "first", successful: true)
         await Task.yield()
         XCTAssertEqual(delivered, ["first", "second"])
+    }
+
+    func testInterruptedDynamicReadingStopsTheCurrentSequence() async {
+        var delivered: [String] = []
+        let service = DynamicReadingDeliveryService { text in
+            delivered.append(text.string)
+        }
+        let sessionID = UUID()
+        service.enqueue([
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "first"),
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
+        ])
+        await Task.yield()
+        await Task.yield()
+
+        service.announcementDidFinish(text: "first", successful: false)
+        XCTAssertEqual(delivered, ["first"])
+        XCTAssertEqual(service.pendingCount, 0)
+        XCTAssertNil(service.activeText)
+    }
+
+    func testUnrelatedAnnouncementFinishDoesNotAdvanceQueue() async {
+        var delivered: [String] = []
+        let service = DynamicReadingDeliveryService { text in
+            delivered.append(text.string)
+        }
+        let sessionID = UUID()
+        service.enqueue([
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "first"),
+            DynamicReadingAnnouncement(sessionID: sessionID, text: "second")
+        ])
+        await Task.yield()
+        await Task.yield()
+
+        service.announcementDidFinish(text: "other app", successful: true)
+        XCTAssertEqual(delivered, ["first"])
+        XCTAssertEqual(service.activeText, "first")
     }
 
     func testDynamicReadingDeliveryCancelsStaleSessionBeforeWorkerRuns() async {

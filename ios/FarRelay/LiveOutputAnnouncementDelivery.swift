@@ -5,7 +5,10 @@ import UIKit
 /// `announcementDidFinishNotification`, so the next item is not posted until
 /// VoiceOver reports that the current item finished. A timer cannot establish
 /// this boundary: speech duration varies with verbosity, language, and user
-/// speech rate.
+/// speech rate. UIKit's global completion notification has no app-issued
+/// announcement ID, so correlation is by the active announcement's exact
+/// string; an unrelated announcement with identical text is an explicit
+/// platform limitation and is ignored unless it matches that text.
 @MainActor
 final class DynamicReadingDeliveryService {
     typealias Sink = @MainActor (NSAttributedString) -> Void
@@ -27,8 +30,10 @@ final class DynamicReadingDeliveryService {
         ) { [weak self] notification in
             let text = notification.userInfo?[UIAccessibility.announcementStringValueUserInfoKey]
                 as? String
+            let successful = (notification.userInfo?[UIAccessibility.announcementWasSuccessfulUserInfoKey]
+                as? NSNumber)?.boolValue ?? false
             Task { @MainActor [weak self] in
-                self?.announcementDidFinish(text: text)
+                self?.announcementDidFinish(text: text, successful: successful)
             }
         }
     }
@@ -66,9 +71,18 @@ final class DynamicReadingDeliveryService {
 
     /// Testable seam for the UIKit finish notification and useful when a
     /// host-specific accessibility adapter forwards the same event.
-    func announcementDidFinish(text: String? = nil) {
+    func announcementDidFinish(text: String? = nil, successful: Bool = true) {
         guard let active else { return }
         guard text == nil || text == active.text else { return }
+        guard successful else {
+            // An interruption is the user's decision to stop automatic
+            // reading. Do not immediately speak the rest of the queue.
+            pending.removeAll()
+            startTask?.cancel()
+            startTask = nil
+            self.active = nil
+            return
+        }
         self.active = nil
         scheduleStartIfNeeded()
     }

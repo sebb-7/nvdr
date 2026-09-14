@@ -85,7 +85,7 @@ final class TerminalPresentationModelTests: XCTestCase {
 
         XCTAssertEqual(
             session.sentBytes,
-            [Data(command.utf8), Data([0x0D])]
+            [Data(command.utf8) + Data([0x0D])]
         )
         XCTAssertEqual(model.conversationEntries.map(\.text), [command])
         XCTAssertEqual(model.conversationEntries.map(\.role), [.outboundCommand])
@@ -109,8 +109,8 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(
             session.sentBytes,
             [
-                Data(command.utf8), Data([0x0D]),
-                Data(command.utf8), Data([0x0D])
+                Data(command.utf8) + Data([0x0D]),
+                Data(command.utf8) + Data([0x0D])
             ]
         )
         XCTAssertEqual(model.conversationEntries.map(\.text), [command, command])
@@ -372,6 +372,39 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.lastInteractionFeedback?.kind, .error)
     }
 
+    func testFailedLogicalSubmissionCanRetryWithoutDuplicatingCommandPayload() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+        model.inputText = "git status"
+        session.sendError = TerminalSendFailure()
+
+        await model.submitInputText()
+        XCTAssertEqual(model.inputText, "git status")
+        XCTAssertTrue(session.sentBytes.isEmpty)
+
+        session.sendError = nil
+        await model.submitInputText()
+
+        XCTAssertEqual(session.sentBytes, [Data("git status\r".utf8)])
+        XCTAssertEqual(model.inputText, "")
+    }
+
+    func testBlankSubmissionSendsOnlyOneReturnPayloadWithoutAddingHistory() async {
+        let session = FakeTerminalPresentationSession(
+            state: .connected,
+            snapshot: snapshot(revision: 1, viewport: ["", ""], cursorRow: 0)
+        )
+        let model = TerminalPresentationModel(session: session)
+
+        await model.submitInput("")
+
+        XCTAssertEqual(session.sentBytes, [Data([0x0D])])
+        XCTAssertTrue(model.conversationEntries.isEmpty)
+    }
+
     func testMultilineInputIsRejectedAndPreserved() async {
         let session = FakeTerminalPresentationSession(
             state: .connected,
@@ -397,7 +430,7 @@ final class TerminalPresentationModelTests: XCTestCase {
 
         await model.submitInput(command)
 
-        XCTAssertEqual(session.sentBytes, [Data(command.utf8), Data([0x0D])])
+        XCTAssertEqual(session.sentBytes, [Data(command.utf8) + Data([0x0D])])
         XCTAssertEqual(model.conversationEntries.map(\.text), [command])
     }
 
@@ -412,7 +445,7 @@ final class TerminalPresentationModelTests: XCTestCase {
         XCTAssertEqual(model.conversationEntries.map(\.text), ["pwd", "ls"])
         XCTAssertEqual(
             session.sentBytes,
-            [Data("pwd".utf8), Data([0x0D]), Data("ls".utf8), Data([0x0D])]
+            [Data("pwd".utf8) + Data([0x0D]), Data("ls".utf8) + Data([0x0D])]
         )
     }
 
