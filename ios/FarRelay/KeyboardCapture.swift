@@ -97,9 +97,19 @@ final class CaptureView: UIView {
         return claimed
     }
 
-    /// UIKit also offers `keyCommands` for Cmd-prefixed shortcuts. We don't
-    /// need that path because `pressesBegan` already gives us every key, but
-    /// returning an empty array prevents the system from synthesizing
-    /// menu-bar style shortcuts behind our back.
-    override var keyCommands: [UIKeyCommand]? { [] }
+    override var keyCommands: [UIKeyCommand]? {
+        guard bridge?.forwardingEnabled == true else { return [] }
+        return ReservedKeyForwardingPolicy.inputs.map { input in
+            let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(handleReservedKeyCommand(_:)))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+    }
+
+    @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
+        guard let bridge, bridge.forwardingEnabled,
+              let vk = ReservedKeyForwardingPolicy.vk(forInput: command.input) else { return }
+        bridge.sendKey(vk: vk, pressed: true)
+        bridge.sendKey(vk: vk, pressed: false)
+    }
 }

@@ -8,6 +8,7 @@ struct TerminalPresentationView: View {
     let openSnapshot: (AccessibleConversationSnapshot) -> Void
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @AccessibilityFocusState(for: .voiceOver) private var voiceOverFocus: TerminalAccessibilityFocus?
+    @FocusState private var isInputEditing: Bool
     @State private var isManagingControlKeys = false
 
     var body: some View {
@@ -23,6 +24,7 @@ struct TerminalPresentationView: View {
                 presentation: presentation,
                 inputText: $presentation.inputText,
                 voiceOverFocus: $voiceOverFocus,
+                isInputEditing: $isInputEditing,
                 controlKeys: settings.terminalControlKeys,
                 manageControlKeys: { isManagingControlKeys = true }
             )
@@ -45,6 +47,7 @@ struct TerminalPresentationView: View {
             case .input:
                 presentation.setLiveOutputFocusedConversationEntryID(nil)
                 presentation.setLiveOutputInputFocused(true)
+                isInputEditing = true
             case nil:
                 presentation.setLiveOutputFocusedConversationEntryID(nil)
                 presentation.setLiveOutputInputFocused(false)
@@ -134,6 +137,7 @@ private struct TerminalConversationEntryView: View {
                     Button("Open Snapshot", systemImage: "doc.text") {
                         openSnapshotIfAvailable()
                     }
+                    .accessibilityHidden(true)
                     .accessibilityIdentifier("terminal-open-snapshot-\(entry.id)")
                 }
             }
@@ -200,10 +204,9 @@ private struct TerminalInputControls: View {
     let presentation: TerminalPresentationModel
     @Binding var inputText: String
     let voiceOverFocus: AccessibilityFocusState<TerminalAccessibilityFocus?>.Binding
+    @FocusState.Binding var isInputEditing: Bool
     let controlKeys: [TerminalControlKey]
     let manageControlKeys: () -> Void
-    @FocusState private var isInputEditing: Bool
-
     var body: some View {
         VStack(alignment: .leading) {
             TextField("Terminal input", text: $inputText, axis: .vertical)

@@ -411,12 +411,12 @@ final class TerminalSessionManagerTests: XCTestCase {
         await waitUntil { session.host.state == .connected }
         XCTAssertEqual(
             manager.accessibilityActions(for: session.id),
-            [.open, .pin, .rename, .close]
+            [.pin, .rename, .close]
         )
         manager.pin(session.id)
         XCTAssertEqual(
             manager.accessibilityActions(for: session.id),
-            [.open, .unpin, .rename, .close]
+            [.unpin, .rename, .close]
         )
         XCTAssertEqual(session.accessibilityLabel, "Terminal 1, connected, pinned")
         manager.setTerminalInteractionActive(false)

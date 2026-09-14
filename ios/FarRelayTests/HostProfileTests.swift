@@ -225,10 +225,21 @@ final class HostProfileTests: XCTestCase {
     }
 
     func testAppShellTabsHaveStableRequiredOrder() {
-        XCTAssertEqual(AppShellTab.allCases, [.home, .terminals, .agents, .assistant])
-        XCTAssertEqual(AppShellTab.allCases.map(\.rawValue), ["home", "terminals", "agents", "assistant"])
+        XCTAssertEqual(AppShellTab.allCases, [.home, .remoteControl, .terminals, .agents, .assistant])
+        XCTAssertEqual(AppShellTab.allCases.map(\.rawValue), ["home", "remoteControl", "terminals", "agents", "assistant"])
         XCTAssertFalse(AppShellTab.allCases.map(\.rawValue).contains("nvda"))
         XCTAssertFalse(AppShellTab.allCases.map(\.rawValue).contains("settings"))
+    }
+
+    func testWindowsOrientedModifierDefaultsAndExplicitPreference() throws {
+        let defaults = try makeDefaults()
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertEqual(settings.optionMapping, .win)
+        XCTAssertEqual(settings.commandMapping, .win)
+
+        defaults.set(ModifierMapping.ctrl.rawValue, forKey: "farrelay.commandMapping")
+        let reloaded = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+        XCTAssertEqual(reloaded.commandMapping, .ctrl)
     }
 
     func testHostProfileWithoutPlatformFieldDecodesAsOther() throws {

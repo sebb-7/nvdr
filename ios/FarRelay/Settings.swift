@@ -56,7 +56,7 @@ final class AppSettings {
         profileStore = HostProfileStore(defaults: defaults, key: Keys.hostProfiles)
         nvdaModifier = NvdaModifier(rawValue: defaults.string(forKey: Keys.nvdaModifier) ?? "") ?? .capsLock
         optionMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.optionMapping) ?? "") ?? .win
-        commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .alt
+        commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .win
         speechRate = Float(defaults.object(forKey: Keys.speechRate) as? Double ?? 0.55)
         voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
         hapticFeedbackEnabled = defaults.object(forKey: Keys.hapticFeedbackEnabled) as? Bool ?? true

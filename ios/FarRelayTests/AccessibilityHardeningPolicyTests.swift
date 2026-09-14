@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import FarRelay
 
 final class AccessibilityHardeningPolicyTests: XCTestCase {
@@ -14,7 +15,7 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         )
         XCTAssertEqual(
             TerminalSessionActionPolicy.actions(for: idle),
-            [.open, .pin, .rename, .moveDown, .close]
+            [.pin, .rename, .moveDown, .close]
         )
 
         let failedPinned = TerminalSessionCapabilities(
@@ -28,7 +29,7 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         )
         XCTAssertEqual(
             TerminalSessionActionPolicy.actions(for: failedPinned),
-            [.open, .unpin, .rename, .retry, .moveUp, .close]
+            [.unpin, .rename, .retry, .moveUp, .close]
         )
     }
 
@@ -110,7 +111,7 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
                 to: .connecting,
                 computerName: "G14"
             ),
-            "Connecting to NVDA on G14"
+            "Connecting to G14"
         )
         XCTAssertNil(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
@@ -125,23 +126,21 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
                 to: .ready,
                 computerName: "G14"
             ),
-            "NVDA Remote ready"
+            "Connected to G14"
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
                 from: .ready,
                 to: .nvdaNotConnected,
                 computerName: "G14"
-            ),
-            "NVDA not connected on channel"
+            )
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
                 from: .ready,
                 to: .reconnecting(attempt: 1),
                 computerName: "G14"
-            ),
-            "Reconnecting"
+            )
         )
         XCTAssertNil(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
@@ -230,6 +229,15 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         XCTAssertTrue(diagnostic.localizedStandardContains("--channel •••"))
         XCTAssertFalse(diagnostic.localizedStandardContains("BEGIN OPENSSH PRIVATE KEY"))
         XCTAssertFalse(diagnostic.localizedStandardContains("passwordValue"))
+    }
+
+    func testReservedVoiceOverKeysMapExactlyOnceThroughPriorityPolicy() {
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputUpArrow), VK.up)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputDownArrow), VK.down)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputLeftArrow), VK.left)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputRightArrow), VK.right)
+        XCTAssertEqual(ReservedKeyForwardingPolicy.vk(forInput: UIKeyCommand.inputEscape), VK.escape)
+        XCTAssertNil(ReservedKeyForwardingPolicy.vk(forInput: "x"))
     }
 
     func testDiagnosticsRedactEverySupportedShellArgumentForm() {

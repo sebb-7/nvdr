@@ -172,6 +172,7 @@ struct HostProfileStore {
 
 enum AppShellTab: String, CaseIterable, Identifiable, Sendable {
     case home
+    case remoteControl
     case terminals
     case agents
     case assistant

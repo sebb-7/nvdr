@@ -21,7 +21,7 @@ struct SettingsView: View {
                             Text(m.label).tag(m)
                         }
                     }
-                    Picker("Command (⌘) sends", selection: $settings.commandMapping) {
+                    Picker("Command / Windows (GUI key) sends", selection: $settings.commandMapping) {
                         ForEach(ModifierMapping.allCases) { m in
                             Text(m.label).tag(m)
                         }

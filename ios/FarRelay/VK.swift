@@ -159,3 +159,18 @@ enum HIDToVK {
         }
     }
 }
+
+enum ReservedKeyForwardingPolicy {
+    static let inputs = [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow, UIKeyCommand.inputEscape]
+
+    static func vk(forInput input: String) -> UInt16? {
+        switch input {
+        case UIKeyCommand.inputUpArrow: return VK.up
+        case UIKeyCommand.inputDownArrow: return VK.down
+        case UIKeyCommand.inputLeftArrow: return VK.left
+        case UIKeyCommand.inputRightArrow: return VK.right
+        case UIKeyCommand.inputEscape: return VK.escape
+        default: return nil
+        }
+    }
+}

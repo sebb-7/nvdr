@@ -26,7 +26,8 @@ struct TerminalSessionCapabilities: Equatable, Sendable {
 
 enum TerminalSessionActionPolicy {
     static func actions(for capabilities: TerminalSessionCapabilities) -> [TerminalSessionAccessibilityAction] {
-        var actions: [TerminalSessionAccessibilityAction] = [.open]
+        // The row itself is a Button, so normal activation already opens it.
+        var actions: [TerminalSessionAccessibilityAction] = []
         if capabilities.canUnpin {
             actions.append(.unpin)
         } else if capabilities.canPin {
@@ -111,13 +112,18 @@ enum ConnectionAnnouncementPolicy {
         guard !isEquivalent(old, new) else { return nil }
         switch new {
         case .connecting:
-            return "Connecting to NVDA on \(computerName)"
+            switch old {
+            case .idle, .disconnected, .failed:
+                return "Connecting to \(computerName)"
+            default:
+                return nil
+            }
         case .ready:
-            return "NVDA Remote ready"
+            return "Connected to \(computerName)"
         case .nvdaNotConnected:
-            return "NVDA not connected on channel"
+            return nil
         case .reconnecting:
-            return "Reconnecting"
+            return nil
         case .failed:
             return "NVDA connection failed"
         case .authenticating, .idle, .disconnected:

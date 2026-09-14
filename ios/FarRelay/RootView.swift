@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(TerminalSessionManager.self) private var terminals
     @Environment(InteractionFeedback.self) private var interactionFeedback
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
+    @SceneStorage("farrelay.selectedTab") private var selectedTabRaw = AppShellTab.home.rawValue
     @State private var selectedTab: AppShellTab = .home
     @State private var showingSettings = false
     @State private var terminalIssue: UserFacingIssue?
@@ -14,6 +15,9 @@ struct RootView: View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: "house", value: .home) {
                 HomeTabView(showingSettings: $showingSettings)
+            }
+            Tab("Remote Control", systemImage: "accessibility", value: .remoteControl) {
+                RemoteControlTabView()
             }
             Tab("Terminals", systemImage: "terminal", value: .terminals) {
                 NavigationStack { TerminalsTabView() }
@@ -26,9 +30,11 @@ struct RootView: View {
             }
         }
         .onChange(of: selectedTab) { _, newTab in
-            if newTab != .home { bridge.suspendInputForInactiveContext() }
+            selectedTabRaw = newTab.rawValue
+            if newTab != .remoteControl { bridge.suspendInputForInactiveContext() }
             terminals.setTerminalInteractionActive(false)
         }
+        .onAppear { selectedTab = AppShellTab(rawValue: selectedTabRaw) ?? .home }
         .onChange(of: terminals.lastLifecycleEvent?.id) { _, _ in
             handleTerminalLifecycleEvent()
         }
@@ -82,6 +88,58 @@ struct RootView: View {
         terminalIssue = nil
         guard case let .some(.terminal(sessionID)) = issue.retry else { return }
         Task { _ = await terminals.retry(sessionID, settings: settings) }
+    }
+}
+
+private enum RemoteControlDestination: Hashable {
+    case nvda(UUID)
+}
+
+private struct RemoteControlTabView: View {
+    @Environment(AppSettings.self) private var settings
+    @SceneStorage("farrelay.activeRemoteProfileID") private var activeProfileRaw = ""
+    @State private var path: [RemoteControlDestination] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            List {
+                Section("Available computers") {
+                    let supported = settings.hostProfiles.filter { $0.isNVDARemoteEnabled }
+                    if supported.isEmpty {
+                        ContentUnavailableView("No remote-control computers", systemImage: "accessibility", description: Text("Enable NVDA Remote on a Windows computer in Home."))
+                    } else {
+                        ForEach(supported) { profile in
+                            NavigationLink(value: RemoteControlDestination.nvda(profile.id)) {
+                                Label(profile.displayName, systemImage: "accessibility")
+                            }
+                        }
+                    }
+                }
+                Section("Coming later") {
+                    Label("macOS VoiceOver Remote — not available yet", systemImage: "desktopcomputer").foregroundStyle(.secondary)
+                    Label("Linux remote control — not available yet", systemImage: "desktopcomputer").foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Remote Control")
+            .navigationDestination(for: RemoteControlDestination.self) { destination in
+                switch destination {
+                case .nvda(let id):
+                    if let profile = settings.hostProfiles.first(where: { $0.id == id }) {
+                        NVDARemoteFeatureView(profile: profile)
+                    } else {
+                        ContentUnavailableView("Computer removed", systemImage: "accessibility", description: Text("This computer is no longer saved on Home."))
+                    }
+                }
+            }
+        }
+        .onAppear {
+            guard path.isEmpty, let id = UUID(uuidString: activeProfileRaw), settings.hostProfiles.contains(where: { $0.id == id && $0.isNVDARemoteEnabled }) else { return }
+            path = [.nvda(id)]
+        }
+        .onChange(of: path) { _, newPath in
+            if case .nvda(let id) = newPath.last { activeProfileRaw = id.uuidString }
+            else if newPath.isEmpty { activeProfileRaw = "" }
+        }
     }
 }
 
