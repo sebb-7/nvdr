@@ -128,12 +128,13 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
             ),
             "Connected to G14"
         )
-        XCTAssertNil(
+        XCTAssertEqual(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
                 from: .ready,
                 to: .nvdaNotConnected,
                 computerName: "G14"
-            )
+            ),
+            "Waiting for NVDA on G14"
         )
         XCTAssertNil(
             ConnectionAnnouncementPolicy.nvdaAnnouncement(
