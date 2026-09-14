@@ -598,6 +598,12 @@ final class TerminalPresentationModel {
 
     private func announceFinalized(_ entries: [AccessibleConversationEntry]) {
         for entry in entries where shouldAnnounce(entry) {
+            // Keep the existing observable as a compatibility seam for the
+            // current terminal view while the shared queue becomes the
+            // delivery source for new surfaces.
+            if currentLiveOutputContext().permitsAnnouncements {
+                liveOutputAnnouncement = LiveOutputAnnouncement(text: entry.liveAnnouncementText)
+            }
             dynamicReadingQueue.enqueue(
                 entryID: entry.id,
                 sessionID: sessionID,
