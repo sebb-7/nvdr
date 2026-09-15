@@ -118,6 +118,7 @@ private final class MacHostSocketClient {
         self.onClose = onClose
         handle.readabilityHandler = { [weak self] _ in
             Task { @MainActor in self?.readAvailableData() }
+        }
     }
 
     func close() {
