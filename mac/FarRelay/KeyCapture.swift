@@ -180,6 +180,11 @@ final class KeyCapture {
 
     /// Returns the event to let it through, or `nil` to swallow it.
     func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // A Mac may be both FarRelay controller and target. Target injection
+        // tags its CGEvents, and those events must always bypass capture.
+        if FarRelaySyntheticEvent.isFarRelayEvent(event) {
+            return Unmanaged.passUnretained(event)
+        }
         // The system disables a tap that is slow or interrupted — re-arm it.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }

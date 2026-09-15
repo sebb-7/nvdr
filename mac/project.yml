@@ -28,6 +28,7 @@ targets:
     platform: macOS
     sources:
       - path: FarRelay
+      - path: Shared
     info:
       path: FarRelay/Info.plist
       properties:
@@ -42,6 +43,8 @@ targets:
         # Lock straight off the HID layer so it can act as the NVDA key.
         NSInputMonitoringUsageDescription: "FarRelay reads Caps Lock at the hardware level so it can act as the NVDA key when forwarding keystrokes to the remote computer."
     dependencies:
+      - target: FarRelayRemoteVoice
+        embed: true
       - package: Citadel
       - package: swift-crypto
         product: _CryptoExtras
@@ -57,3 +60,31 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: FarRelay/FarRelay.entitlements
+
+  FarRelayRemoteVoice:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: RemoteVoiceExtension
+      - path: Shared
+    info:
+      path: RemoteVoiceExtension/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay.remotevoice
+        PRODUCT_NAME: FarRelayRemoteVoice
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: RemoteVoiceExtension/FarRelayRemoteVoice.entitlements
+
+  FarRelayTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: FarRelayTests
+    dependencies:
+      - target: FarRelay
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay.tests
+        GENERATE_INFOPLIST_FILE: YES

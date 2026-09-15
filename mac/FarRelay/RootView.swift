@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(KeyCapture.self) private var capture
+    @Environment(RemoteSpeechInbox.self) private var remoteSpeechInbox
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,6 +16,8 @@ struct RootView: View {
             Divider()
             ForwardingPanel()
             Divider()
+            RemoteSpeechProviderPanel()
+            Divider()
             LastSpeechPanel()
             Divider()
             LogPanel()
@@ -27,6 +30,30 @@ struct RootView: View {
                 }
             }
         }
+    }
+}
+
+private struct RemoteSpeechProviderPanel: View {
+    @Environment(RemoteSpeechInbox.self) private var inbox
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Remote Voice provider")
+                .font(.headline)
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .accessibilityElement(children: .combine)
+    }
+
+    private var detail: String {
+        guard inbox.receivedEventCount > 0 else {
+            return "Waiting for VoiceOver output. Select FarRelay Remote Voice in VoiceOver settings to run the semantic-output spike."
+        }
+        return "Received \(inbox.receivedEventCount) semantic speech event\(inbox.receivedEventCount == 1 ? "" : "s"). Content is kept out of diagnostics."
     }
 }
 

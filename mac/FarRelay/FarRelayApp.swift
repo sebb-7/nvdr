@@ -5,6 +5,7 @@ struct FarRelayApp: App {
     @State private var settings: AppSettings
     @State private var bridge: BridgeClient
     @State private var capture: KeyCapture
+    @State private var remoteSpeechInbox: RemoteSpeechInbox
 
     init() {
         let settings = AppSettings()
@@ -13,6 +14,7 @@ struct FarRelayApp: App {
         _settings = State(initialValue: settings)
         _bridge = State(initialValue: bridge)
         _capture = State(initialValue: KeyCapture(bridge: bridge, settings: settings))
+        _remoteSpeechInbox = State(initialValue: RemoteSpeechInbox())
     }
 
     var body: some Scene {
@@ -21,7 +23,11 @@ struct FarRelayApp: App {
                 .environment(settings)
                 .environment(bridge)
                 .environment(capture)
-                .task { capture.start() }
+                .environment(remoteSpeechInbox)
+                .task {
+                    capture.start()
+                    remoteSpeechInbox.start()
+                }
         }
         .windowResizability(.contentSize)
         .commands {
