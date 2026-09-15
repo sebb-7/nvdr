@@ -47,7 +47,13 @@ struct MacDiagnosticSnapshot: Equatable, Sendable {
     func sanitizedReport(bundle: Bundle = .main) -> String {
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let architecture = ProcessInfo.processInfo.isTranslated ? "Apple Silicon (translated)" : "Native Mac"
+        #if arch(arm64)
+        let architecture = "Apple Silicon"
+        #elseif arch(x86_64)
+        let architecture = "Intel"
+        #else
+        let architecture = "Unknown Mac architecture"
+        #endif
         let eventAge = lastEventAge.map { $0 < 1 ? "less than one second" : "\(Int($0)) seconds" } ?? "none"
         return """
         FarRelay Mac \(version) build \(build)

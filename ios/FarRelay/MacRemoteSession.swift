@@ -35,8 +35,21 @@ final class MacRemoteSession {
         guard task == nil, profile.isMacRemoteEnabled else { return }
         state = .connecting
         let session = SSHSession(configuration: profile.sshSessionConfiguration(credentials: credentials))
+        let didConnect: @MainActor @Sendable (FarRelayHostClient, Bool) -> Void = { [weak self] client, subscribed in
+            self?.didConnect(client: client, subscription: subscribed)
+        }
+        let consumeEvents: @MainActor @Sendable (AsyncStream<MacRemoteHostEvent>) -> Void = { [weak self] events in
+            self?.consume(events: events)
+        }
+        let didFail: @MainActor @Sendable (String) -> Void = { [weak self] message in
+            self?.state = .failed(message)
+            self?.keyboardForwardingActive = false
+        }
+        let didEnd: @MainActor @Sendable () -> Void = { [weak self] in
+            self?.didEnd()
+        }
         self.session = session
-        task = Task { [weak self] in
+        task = Task {
             do {
                 try await session.connect()
                 try await session.withExec(profile.macRemoteHostCommand) { transport in
@@ -45,10 +58,10 @@ final class MacRemoteSession {
                     let subscription = try await client.subscribeToMacRemoteEvents([
                         "speech.utterance", "speech.cancel", "session.state", "controller.changed", "permission.changed",
                     ])
-                    await self?.didConnect(client: client, subscription: subscription.subscribed)
+                    await didConnect(client, subscription.subscribed)
                     if subscription.subscribed {
                         let events = await client.macRemoteEvents()
-                        await self?.consume(events: events)
+                        await consumeEvents(events)
                     }
                     while !Task.isCancelled {
                         try await Task.sleep(for: .seconds(3600))
@@ -58,10 +71,10 @@ final class MacRemoteSession {
             } catch is CancellationError {
                 // Explicit Disconnect is already represented locally.
             } catch {
-                await self?.didFail(error)
+                await didFail(error.localizedDescription)
             }
             try? await session.close()
-            await self?.didEnd()
+            await didEnd()
         }
     }
 

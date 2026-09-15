@@ -4,7 +4,7 @@ import Foundation
 /// A private, same-user Unix-domain endpoint. It is deliberately not a TCP,
 /// Bonjour, LAN, or WAN listener. The bundled SSH helper is the only intended
 /// client and merely forwards its authenticated stdio channel here.
-final class MacHostSocketServer: @unchecked Sendable {
+final class MacHostSocketServer {
     static let endpointURL: URL = URL.homeDirectory
         .appending(path: "Library/Application Support/FarRelay", directoryHint: .isDirectory)
         .appending(path: "farrelay-host.sock")
@@ -97,7 +97,7 @@ final class MacHostSocketServer: @unchecked Sendable {
     }
 }
 
-private final class MacHostSocketClient: @unchecked Sendable {
+private final class MacHostSocketClient {
     private let handle: FileHandle
     private let onLine: @Sendable (Int32, String, @escaping @Sendable (String) -> Void) -> Void
     private let onClose: @Sendable (Int32) -> Void
