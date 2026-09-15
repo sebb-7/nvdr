@@ -93,6 +93,7 @@ struct RootView: View {
 
 private enum RemoteControlDestination: Hashable {
     case nvda(UUID)
+    case mac(UUID)
 }
 
 private struct RemoteControlTabView: View {
@@ -105,7 +106,8 @@ private struct RemoteControlTabView: View {
             List {
                 Section("Available computers") {
                     let supported = settings.hostProfiles.filter { $0.isNVDARemoteEnabled }
-                    if supported.isEmpty {
+                    let macSupported = settings.hostProfiles.filter { $0.isMacRemoteEnabled }
+                    if supported.isEmpty && macSupported.isEmpty {
                         ContentUnavailableView("No remote-control computers", systemImage: "accessibility", description: Text("Enable NVDA Remote on a Windows computer in Home."))
                     } else {
                         ForEach(supported) { profile in
@@ -113,10 +115,14 @@ private struct RemoteControlTabView: View {
                                 Label(profile.displayName, systemImage: "accessibility")
                             }
                         }
+                        ForEach(macSupported) { profile in
+                            NavigationLink(value: RemoteControlDestination.mac(profile.id)) {
+                                Label(profile.displayName, systemImage: "desktopcomputer")
+                            }
+                        }
                     }
                 }
-                Section("Coming later") {
-                    Label("macOS VoiceOver Remote — not available yet", systemImage: "desktopcomputer").foregroundStyle(.secondary)
+                Section("Unavailable platforms") {
                     Label("Linux remote control — not available yet", systemImage: "desktopcomputer").foregroundStyle(.secondary)
                 }
             }
@@ -128,6 +134,12 @@ private struct RemoteControlTabView: View {
                         NVDARemoteFeatureView(profile: profile)
                     } else {
                         ContentUnavailableView("Computer removed", systemImage: "accessibility", description: Text("This computer is no longer saved on Home."))
+                    }
+                case .mac(let id):
+                    if let profile = settings.hostProfiles.first(where: { $0.id == id }) {
+                        MacRemoteFeatureView(profile: profile)
+                    } else {
+                        ContentUnavailableView("Computer removed", systemImage: "desktopcomputer", description: Text("This computer is no longer saved on Home."))
                     }
                 }
             }

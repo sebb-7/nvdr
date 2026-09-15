@@ -4,6 +4,27 @@ Status: semantic-speech provider packaging and local handoff implemented;
 physical macOS validation is required before any remote-control feature is
 called working.
 
+## Beta 0.1 packaging and readiness
+
+The direct-distribution app embeds `farrelay-host` in `Contents/Helpers` and
+the Remote Voice extension in `Contents/PlugIns`. The helper's Mac proxy mode
+only relays an authenticated SSH exec stream to the app's private same-user
+Unix socket; it never owns Accessibility permission or input injection.
+
+**This Mac** supplies an accessible first-run checklist, live permission and
+provider state, an `Allow remote control of this Mac` setting, local Emergency
+Stop, Start at Login controls, and a redacted Copy Diagnostic Report. Readiness
+is not a single Boolean: disabled, permissions required, input ready,
+VoiceOver-feedback unavailable, full ready, and controller-connected are
+distinct states. The app only advertises full ready after the local endpoint,
+input permissions, embedded provider, and observed provider events are present.
+
+The explicit Beta feedback modes are Semantic VoiceOver, System Audio, and
+Minimal Feedback. Only the semantic provider path is implemented; System Audio
+is a documented ScreenCaptureKit seam, not a silent or VoiceOver-only fallback.
+
+See [Mac Beta distribution](MAC_BETA_DISTRIBUTION.md) and [the tester guide](MAC_BETA_TESTER.md).
+
 ## Principle
 
 FarRelay transports the target screen reader's interpretation. It does not

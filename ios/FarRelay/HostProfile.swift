@@ -56,6 +56,14 @@ struct NVDARemoteCapability: Codable, Equatable, Sendable {
     }
 }
 
+/// Mac Remote uses the bundled target-app proxy over the existing SSH trust
+/// path. It remains separate from NVDA Remote's relay channel.
+struct MacRemoteCapability: Codable, Equatable, Sendable {
+    var isEnabled: Bool
+
+    init(isEnabled: Bool = false) { self.isEnabled = isEnabled }
+}
+
 /// A saved SSH computer. This is intentionally transport-neutral metadata:
 /// passwords and private keys stay in the device Keychain, never in Codable
 /// profile persistence.
@@ -77,6 +85,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
     /// Legacy NVDA bridge command, invoked with `--ipc` by AppSettings.
     var nvdaBridgeCommand: String
     var nvdaRemote: NVDARemoteCapability?
+    var macRemote: MacRemoteCapability?
 
     init(
         id: UUID = UUID(),
@@ -89,7 +98,8 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         credentialReference: String? = nil,
         farRelayHostCommand: String = "farrelay-host",
         nvdaBridgeCommand: String = "farrelay",
-        nvdaRemote: NVDARemoteCapability? = nil
+        nvdaRemote: NVDARemoteCapability? = nil,
+        macRemote: MacRemoteCapability? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -102,6 +112,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         self.farRelayHostCommand = farRelayHostCommand
         self.nvdaBridgeCommand = nvdaBridgeCommand
         self.nvdaRemote = nvdaRemote
+        self.macRemote = macRemote
     }
 
     func sshSessionConfiguration(credentials: HostProfileCredentials) -> SSHSessionConfiguration {
@@ -135,9 +146,17 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         platform == .windows && nvdaRemote?.isEnabled == true
     }
 
+    var isMacRemoteEnabled: Bool { platform == .macOS && macRemote?.isEnabled == true }
+
+    /// The shipped direct-distribution app embeds this proxy at the stable
+    /// Applications location. It fails closed if FarRelay.app is not running.
+    var macRemoteHostCommand: String {
+        "'/Applications/FarRelay.app/Contents/Helpers/farrelay-host' --proxy"
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, displayName, address, port, username, authenticationMode
-        case platform, credentialReference, farRelayHostCommand, nvdaBridgeCommand, nvdaRemote
+        case platform, credentialReference, farRelayHostCommand, nvdaBridgeCommand, nvdaRemote, macRemote
     }
 
     init(from decoder: any Decoder) throws {
@@ -154,6 +173,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         farRelayHostCommand = try values.decodeIfPresent(String.self, forKey: .farRelayHostCommand) ?? "farrelay-host"
         nvdaBridgeCommand = try values.decodeIfPresent(String.self, forKey: .nvdaBridgeCommand) ?? "farrelay"
         nvdaRemote = try values.decodeIfPresent(NVDARemoteCapability.self, forKey: .nvdaRemote)
+        macRemote = try values.decodeIfPresent(MacRemoteCapability.self, forKey: .macRemote)
     }
 }
 

@@ -144,3 +144,33 @@ final class RemoteKeyLeaseTests: XCTestCase {
         }
     }
 }
+
+final class MacBetaDiagnosticsTests: XCTestCase {
+    func testDiagnosticReportIsSanitized() {
+        let report = MacDiagnosticSnapshot(
+            readiness: .fullMacRemoteReady,
+            providerEmbedded: true,
+            providerEventsReceived: true,
+            eventCount: 17,
+            lastEventAge: 0.4,
+            ssmlAvailable: true,
+            controllerID: "controller-with-a-secret",
+            inputMonitoringGranted: true,
+            accessibilityGranted: true,
+            hostSocketReady: true
+        ).sanitizedReport()
+
+        XCTAssertTrue(report.contains("Events received: 17"))
+        XCTAssertTrue(report.contains("Active controller: connected"))
+        XCTAssertFalse(report.contains("controller-with-a-secret"))
+        XCTAssertFalse(report.contains("utterance"))
+    }
+
+    func testHostProtocolRejectsOversizeInputAndKeepsResponseMetadataOnly() {
+        let oversized = String(repeating: "x", count: MacHostProtocol.maximumFrameBytes + 1)
+        let response = MacHostProtocol.error(nil, code: "frame_too_large", message: oversized)
+        XCTAssertTrue(response.contains("frame_too_large"))
+        XCTAssertLessThan(response.utf8.count, 512)
+        XCTAssertFalse(MacHostProtocol.success("request", value: ["subscribed": true]).contains("speech.utterance"))
+    }
+}

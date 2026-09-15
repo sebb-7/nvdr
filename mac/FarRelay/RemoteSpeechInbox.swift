@@ -9,9 +9,12 @@ final class RemoteSpeechInbox {
     private(set) var pendingEvents: [RemoteSpeechEvent] = []
     private(set) var receivedEventCount = 0
     private(set) var lastSequence: UInt64?
+    private(set) var lastReceivedAt: Date?
+    private(set) var ssmlReceived = false
 
     @ObservationIgnored private let ipc: RemoteSpeechIPC?
     @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored var onEvents: (@MainActor ([RemoteSpeechEvent]) -> Void)?
 
     init(ipc: RemoteSpeechIPC? = RemoteSpeechIPC()) {
         self.ipc = ipc
@@ -57,5 +60,8 @@ final class RemoteSpeechInbox {
         }
         receivedEventCount += events.count
         lastSequence = events.last?.sequence
+        lastReceivedAt = Date()
+        ssmlReceived = ssmlReceived || events.contains { $0.ssml != nil }
+        onEvents?(events)
     }
 }

@@ -6,6 +6,23 @@ It is an application, not a reusable library, so its `Cargo.lock` is committed
 to keep deployed and CI dependency resolution reproducible. Dependency updates
 remain deliberate changes rather than part of protocol work.
 
+## Bundled Mac proxy
+
+In FarRelay Mac Beta 0.1, the executable embedded at
+`FarRelay.app/Contents/Helpers/farrelay-host` also accepts `--proxy`. The
+installed app starts a private Unix-domain socket at the deterministic,
+same-user path `~/Library/Application Support/FarRelay/farrelay-host.sock`
+only while **Allow remote control of this Mac** is enabled. The socket
+directory is mode `0700`, the endpoint is mode `0600`, and the app verifies
+the connecting peer's uid where macOS supports it.
+
+The proxy forwards bounded (32 KiB) NDJSON between the authenticated SSH exec
+channel and that socket. It has no TCC ownership, no daemon role, no TCP/UDP
+listener, no discovery advertisement, and no durable speech storage. If the
+app is stopped or the endpoint is stale, the proxy fails closed. The native app
+continues to own permission checks, controller leases, held-key release, and
+CGEvent injection.
+
 The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
 
 ```text

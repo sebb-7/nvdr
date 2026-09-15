@@ -479,6 +479,30 @@ alone is already a functional NVDA Remote master.
 
 ---
 
+## 4.1 FarRelay Host Mac Remote extension
+
+This is a separate, additive version-1 NDJSON capability protocol carried by
+an authenticated SSH exec channel. It does **not** alter the NVDA Remote relay
+protocol above. Existing host clients remain compatible because a host emits no
+unsolicited events until a client sends `subscribe`.
+
+Mac Beta clients may use these request operations when the target advertises
+them: `host.status`, `subscribe`, `control.request`, `control.release`,
+`input.key`, and `emergency.stop`. `input.key` carries a USB HID usage value,
+`pressed`, the controller ID, and the lease generation. The target rejects a
+wrong controller or stale generation and releases all held keys on release,
+connection loss, or emergency stop.
+
+`subscribe` takes an explicit event list. Future event frames use a distinct
+`"type":"event"` envelope and may include `speech.utterance`,
+`speech.cancel`, `session.state`, `controller.changed`, and
+`permission.changed`. Speech payloads preserve generation, sequence, SSML,
+text fallback, and cancellation semantics; clients reject stale generations
+and must not select FarRelay Remote Voice as their local renderer. The target
+must never send these frames to clients that have not subscribed.
+
+---
+
 ## 5. Gotchas
 
 1. **No `type` message for text.** Unlike some other remote-accessibility

@@ -1,0 +1,112 @@
+name: FarRelay Mac Beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Monotonic Mac beta build number
+        required: true
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  notarized-dmg:
+    runs-on: macos-26
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+      CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Validate required signing and notarization secrets
+        run: |
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          : "${CERTIFICATE_BASE64:?Missing DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64}"
+          : "${CERTIFICATE_PASSWORD:?Missing DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD}"
+          : "${ASC_KEY_ID:?Missing ASC_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing ASC_ISSUER_ID}"
+          : "${ASC_PRIVATE_KEY:?Missing ASC_PRIVATE_KEY}"
+          case "$BUILD_NUMBER" in (''|*[!0-9]*) exit 1;; esac
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Import Developer ID Application certificate
+        run: |
+          keychain="$RUNNER_TEMP/farrelay-developer-id.keychain-db"
+          certificate="$RUNNER_TEMP/farrelay-developer-id.p12"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$CERTIFICATE_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$CERTIFICATE_PASSWORD" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$CERTIFICATE_PASSWORD" "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          security find-identity -v -p codesigning "$keychain" | grep -q 'Developer ID Application'
+          echo "KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+      - name: Build universal bundled host proxy
+        working-directory: farrelay-host
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p "$RUNNER_TEMP/farrelay-helper"
+          lipo -create target/aarch64-apple-darwin/release/farrelay-host target/x86_64-apple-darwin/release/farrelay-host -output "$RUNNER_TEMP/farrelay-helper/farrelay-host"
+          echo "FARRELAY_HOST_EXECUTABLE=$RUNNER_TEMP/farrelay-helper/farrelay-host" >> "$GITHUB_ENV"
+      - name: Generate and resolve Mac project
+        working-directory: mac
+        run: |
+          xcodegen generate
+          xcodebuild -resolvePackageDependencies -project FarRelay.xcodeproj -scheme FarRelay
+      - name: Archive signed Developer ID app
+        working-directory: mac
+        run: >-
+          xcodebuild archive -project FarRelay.xcodeproj -scheme FarRelay -configuration Release
+          -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/FarRelay.xcarchive"
+          DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY='Developer ID Application'
+          OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+      - name: Verify nested signatures before notarization
+        run: |
+          app="$RUNNER_TEMP/FarRelay.xcarchive/Products/Applications/FarRelay.app"
+          test -x "$app/Contents/Helpers/farrelay-host"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --verbose=4 "$app/Contents/Helpers/farrelay-host"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/FarRelay.zip"
+      - name: Configure App Store Connect API key for notarytool
+        run: |
+          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$key"
+          echo "NOTARY_KEY=$key" >> "$GITHUB_ENV"
+      - name: Notarize and staple app
+        run: |
+          xcrun notarytool submit "$RUNNER_TEMP/FarRelay.zip" --key "$NOTARY_KEY" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
+          xcrun stapler staple "$RUNNER_TEMP/FarRelay.xcarchive/Products/Applications/FarRelay.app"
+          xcrun stapler validate "$RUNNER_TEMP/FarRelay.xcarchive/Products/Applications/FarRelay.app"
+      - name: Create, notarize, and staple DMG
+        run: |
+          stage="$RUNNER_TEMP/dmg-root"; mkdir -p "$stage"
+          cp -R "$RUNNER_TEMP/FarRelay.xcarchive/Products/Applications/FarRelay.app" "$stage/FarRelay.app"
+          ln -s /Applications "$stage/Applications"
+          dmg="$RUNNER_TEMP/FarRelay-Mac-Beta-0.1-$BUILD_NUMBER.dmg"
+          hdiutil create -volname 'FarRelay Mac Beta' -srcfolder "$stage" -ov -format UDZO "$dmg"
+          codesign --force --sign 'Developer ID Application' --timestamp --options runtime "$dmg"
+          xcrun notarytool submit "$dmg" --key "$NOTARY_KEY" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
+          xcrun stapler staple "$dmg"; xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"; cp "$dmg" "$GITHUB_WORKSPACE/artifacts/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarRelay-Mac-Beta-0.1-${{ inputs.build_number }}
+          path: artifacts/*.dmg
+          if-no-files-found: error
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" || true
+          rm -f "$RUNNER_TEMP/farrelay-developer-id.p12" "$RUNNER_TEMP"/AuthKey_*.p8
