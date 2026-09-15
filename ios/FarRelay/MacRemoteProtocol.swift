@@ -55,9 +55,9 @@ struct MacRemoteHostEvent: Codable, Equatable, Sendable {
     }
 }
 
-private struct MacRemoteSubscribeParameters: Encodable, Sendable { let events: [String] }
-private struct MacRemoteControlParameters: Encodable, Sendable { let controllerID: String; enum CodingKeys: String, CodingKey { case controllerID = "controller_id" } }
-private struct MacRemoteKeyParameters: Encodable, Sendable {
+struct MacRemoteSubscribeParameters: Encodable, Sendable { let events: [String] }
+struct MacRemoteControlParameters: Encodable, Sendable { let controllerID: String; enum CodingKeys: String, CodingKey { case controllerID = "controller_id" } }
+struct MacRemoteKeyParameters: Encodable, Sendable {
     let controllerID: String
     let generation: UInt64
     let usage: UInt16
