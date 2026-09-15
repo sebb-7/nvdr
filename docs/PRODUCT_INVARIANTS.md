@@ -53,6 +53,20 @@ regression test unless the exception and the physical-only reason are recorded.
 | DIAGNOSTICS-001 | Partially enforced | User-facing diagnostics use sanitized endpoint/status metadata and never include passwords, private keys, passphrases, channels, ordinary typing, or speech content. |
 | MAC-REMOTE-001 | Not yet enforced | Mac Remote readiness is component-specific; no physical remote-control claim is made until hardware and permission validation passes. |
 
+## iOS lifecycle, protocol, persistence, and ownership
+
+| ID | Status | Contract |
+| --- | --- | --- |
+| IOS-LIFECYCLE-001 | Enforced | Background/inactive transitions immediately revoke NVDA keyboard forwarding and issue `release_all`; foregrounding alone never creates a replacement connection. |
+| IOS-GENERATION-001 | Enforced | A stale SSH or IPC callback may update state only when its supervisor and generation are still authoritative. |
+| IOS-RECOVERY-001 | Partially enforced | Local control remains recoverable after screen exit, backgrounding, or connection loss; physical lock/unlock behavior requires device validation. |
+| PROTOCOL-001 | Enforced | Unknown IPC lines are inert and malformed host responses fail the request deterministically without crashing later requests. |
+| PROTOCOL-002 | Partially enforced | Structured host version mismatch rejects safely; optional host operations are discovered through advertised capabilities before use. |
+| PERSISTENCE-001 | Enforced | A malformed saved-profile record does not crash startup or get overwritten with an empty record; it remains available for recovery. |
+| PERSISTENCE-002 | Partially enforced | Legacy profiles retain missing-field defaults and credentials remain Keychain-only. |
+| OWNERSHIP-001 | Not yet enforced | Future multi-controller features must establish one explicit input-controller owner; current NVDA relay input has no lease protocol. |
+| DIAGNOSTICS-002 | Enforced | Test secret fixtures for passwords, keys, channels, and typed content must never appear in normal diagnostic output. |
+
 ## Bug-to-regression policy
 
 For each reproducible product bug, record the violated invariant, create the

@@ -27,3 +27,14 @@ Status: **Automated** means a deterministic unit/integration seam exists;
 The matrix intentionally records physical work separately: CI does not prove a
 real Windows target shutdown, a hardware function row, or system screen-reader
 interception.
+
+## iOS reliability additions
+
+| Scenario | Expected state transition | Expected UI | Cleanup | Reconnect | Automated test | Physical |
+| --- | --- | --- | --- | --- | --- | --- |
+| App inactive/background, device lock | forwarding → off; transport truth unchanged until an event | no false Ready announcement | `release_all`, clear held keys | supervisor decides only after a real failure | scene policy/input chaos | required |
+| Foreground/unlock | no synthetic reconnect | current truthful status | no replacement generation | existing supervisor only | scene policy regression | required |
+| Stale connect callback after cancel/new connect | ignored | current session unchanged | late connection closes | current generation only | supervisor stale-generation tests | simulated |
+| Corrupt profile JSON | startup remains usable | recovery message | preserve original bytes | n/a | profile corruption regression | n/a |
+| Unknown/truncated IPC | inert/unknown or deterministic error | no false Ready | no action | n/a | bounded malformed IPC chaos | n/a |
+| VoiceOver/Quick Nav, BSI, keyboard detach | local ownership remains recoverable | documented local/remote control state | release keys at ownership boundary | n/a | input-state tests | required |

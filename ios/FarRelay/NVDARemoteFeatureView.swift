@@ -8,7 +8,6 @@ struct NVDARemoteFeatureView: View {
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
     @State private var presentedIssue: UserFacingIssue?
-    @State private var reconnectAfterForeground = false
 
     var body: some View {
         Form {
@@ -43,15 +42,8 @@ struct NVDARemoteFeatureView: View {
             handleStatusChange(from: old, to: new)
         }
         .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .inactive, .background:
-                reconnectAfterForeground = isConnectionActive
+            if NVDARemoteSceneLifecyclePolicy.shouldSuspendInput(for: phase) {
                 bridge.suspendInputForInactiveContext()
-            case .active where reconnectAfterForeground:
-                reconnectAfterForeground = false
-                bridge.start(settings: settings, profile: profile)
-            default:
-                break
             }
         }
         .userFacingIssueAlert($presentedIssue) { _ in
@@ -78,12 +70,6 @@ struct NVDARemoteFeatureView: View {
 
     private var connectionAction: NVDARemoteConnectionAction {
         NVDARemoteConnectionAction(status: bridge.status)
-    }
-    private var isConnectionActive: Bool {
-        return switch bridge.status {
-        case .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected: true
-        default: false
-        }
     }
     private var isForwardingAvailable: Bool {
         return switch bridge.status { case .ready: true; default: false }
@@ -123,6 +109,19 @@ struct NVDARemoteFeatureView: View {
             )
         default:
             break
+        }
+    }
+}
+
+/// Scene activation must not manufacture a replacement SSH generation. The
+/// supervisor observes real transport loss and reconnects when necessary;
+/// backgrounding only removes unsafe keyboard ownership.
+enum NVDARemoteSceneLifecyclePolicy {
+    static func shouldSuspendInput(for phase: ScenePhase) -> Bool {
+        switch phase {
+        case .inactive, .background: true
+        case .active: false
+        @unknown default: true
         }
     }
 }

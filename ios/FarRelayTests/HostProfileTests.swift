@@ -463,6 +463,21 @@ final class HostProfileTests: XCTestCase {
         XCTAssertNotNil(settings.credentialStorageError)
     }
 
+    func testMalformedProfileDataIsReportedWithoutOverwritingRecoveryBytes() throws {
+        let defaults = try makeDefaults()
+        let corrupted = Data("{ definitely not a profile array }".utf8)
+        defaults.set(corrupted, forKey: "farrelay.hostProfiles")
+
+        let settings = AppSettings(defaults: defaults, credentialStore: TestCredentialStore())
+
+        XCTAssertTrue(settings.hostProfiles.isEmpty)
+        XCTAssertEqual(defaults.data(forKey: "farrelay.hostProfiles"), corrupted)
+        XCTAssertEqual(
+            settings.credentialStorageError,
+            "Saved computer metadata was unreadable and was preserved for recovery."
+        )
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let suiteName = "HostProfileTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

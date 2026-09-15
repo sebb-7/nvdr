@@ -84,8 +84,10 @@ final class AppSettings {
         case .profiles(let profiles): hostProfiles = profiles
         case .malformed:
             hostProfiles = []
-            profileStore.save([])
-            credentialStorageError = "Saved computer metadata was unreadable and was reset."
+            // Keep the original bytes intact. Overwriting a malformed record
+            // with an empty array turns a recoverable corruption into data
+            // loss before the user can restore from a backup or later build.
+            credentialStorageError = "Saved computer metadata was unreadable and was preserved for recovery."
         case .uninitialized:
             hostProfiles = []
             migrateSingleComputerSettings()

@@ -10,6 +10,13 @@ hardware before calling a build physically validated.
 - [ ] Shut down and reboot the target while connected; confirm no stale Connected state and no uncontrolled retry loop.
 - [ ] Drop and restore Wi-Fi; verify explicit Disconnect cancels reconnect.
 
+## iPhone and iPad lifecycle
+
+- [ ] Background FarRelay while NVDA forwarding is active; confirm remote held keys release.
+- [ ] Return to foreground; confirm it does not reconnect merely because the app resumed.
+- [ ] Lock and unlock the device during forwarding; verify truthful state and local control recovery.
+- [ ] Exercise Wi-Fi → cellular/VPN loss → Wi-Fi transitions; verify no duplicate NVDA/terminal sessions.
+
 ## Terminal
 
 - [ ] Run a normal command and browse its transcript.
@@ -26,6 +33,9 @@ hardware before calling a build physically validated.
 - [ ] Test with VoiceOver/TalkBack on and off, and with macOS function keys configured as media controls.
 - [ ] Toggle forwarding and disconnect while holding Control, Alt, Shift, and Caps Lock; verify nothing remains held remotely.
 - [ ] Confirm waiting-for-NVDA is not announced or presented as slave-ready.
+- [ ] Test VoiceOver on with Quick Nav on and off, then VoiceOver off; record which arrows iOS reserves.
+- [ ] Test BSI enter/type/send/exit/browse/re-enter, including terminal end and app background while BSI is active.
+- [ ] Repeat F-key smoke tests with Magic Keyboard, generic Bluetooth keyboard, Windows-layout keyboard, and USB keyboard where supported.
 
 ## Mac Remote foundation
 
