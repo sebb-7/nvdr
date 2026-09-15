@@ -47,8 +47,7 @@ struct RemoteSpeechIPC {
         DistributedNotificationCenter.default().post(
             name: Self.notificationName,
             object: nil,
-            userInfo: nil,
-            deliverImmediately: true
+            userInfo: nil
         )
         return true
     }
