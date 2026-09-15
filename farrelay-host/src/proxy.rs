@@ -5,7 +5,7 @@
 use std::{
     env, fs,
     io::{self, Read, Write},
-    os::unix::net::UnixStream,
+    os::unix::{fs::FileTypeExt, net::UnixStream},
     path::PathBuf,
     thread,
 };
