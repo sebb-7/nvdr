@@ -59,6 +59,21 @@ final class SSHTerminalHostTests: XCTestCase {
         XCTAssertTrue(didOpenPTY)
     }
 
+    func testRemoteEOFLeavesTerminalPresentationConnectedStateAndKeepsTranscriptInspectable() async {
+        let connection = FakeTerminalHostConnection()
+        let host = SSHTerminalHost(connectionFactory: FakeTerminalHostConnectionFactory(connection: connection))
+
+        await host.start(configuration: configuration())
+        await waitUntil { host.state == .connected }
+        await waitUntil { await connection.isReaderReady() }
+
+        await connection.simulateRemoteEOF()
+
+        await waitUntil { host.state == .ended }
+        XCTAssertEqual(host.presentation.sessionState, .ended)
+        XCTAssertNotNil(host.presentation.accessibleSnapshot)
+    }
+
     func testCloseIsIdempotentAndReleasesOwnedTerminalWork() async {
         let connection = FakeTerminalHostConnection()
         let host = SSHTerminalHost(connectionFactory: FakeTerminalHostConnectionFactory(connection: connection))
@@ -172,6 +187,10 @@ private actor FakeTerminalHostConnection: SSHTerminalHostConnection {
     func close() async throws {
         closes += 1
         closed = true
+        await transport.releaseReadLoop()
+    }
+
+    func simulateRemoteEOF() async {
         await transport.releaseReadLoop()
     }
 

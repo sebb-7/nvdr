@@ -161,11 +161,19 @@ final class KeyCapture {
             kIOHIDDeviceUsagePageKey: kHIDPage_GenericDesktop,
             kIOHIDDeviceUsageKey: kHIDUsage_GD_Keyboard,
         ] as CFDictionary)
-        // …and, within them, only the Caps Lock element.
-        IOHIDManagerSetInputValueMatching(manager, [
+        // …and only the keys that need the raw path. Function-row keys can be
+        // consumed by macOS as brightness/media controls before CGEventTap.
+        let capsLockMatch: CFDictionary = [
             kIOHIDElementUsagePageKey: kHIDPage_KeyboardOrKeypad,
             kIOHIDElementUsageKey: kHIDUsage_KeyboardCapsLock,
-        ] as CFDictionary)
+        ] as CFDictionary
+        let functionMatches = (HIDFunctionKeyForwardingPolicy.firstUsage...HIDFunctionKeyForwardingPolicy.lastUsage).map { usage in
+            [
+                kIOHIDElementUsagePageKey: kHIDPage_KeyboardOrKeypad,
+                kIOHIDElementUsageKey: usage,
+            ] as CFDictionary
+        }
+        IOHIDManagerSetInputValueMatchingMultiple(manager, [capsLockMatch] + functionMatches as CFArray)
         IOHIDManagerRegisterInputValueCallback(
             manager, keyCaptureHIDValueCallback, Unmanaged.passUnretained(self).toOpaque()
         )
@@ -202,6 +210,11 @@ final class KeyCapture {
         switch type {
         case .keyDown, .keyUp:
             guard bridge.forwardingEnabled else { return Unmanaged.passUnretained(event) }
+            // F1-F12 are delivered by the raw HID callback below. Do not
+            // forward them twice when macOS also exposes a CGEvent.
+            if MacKeyVK.isFunctionRowKey(keyCode) {
+                return nil
+            }
             if let vk = MacKeyVK.vk(
                 forKeyCode: keyCode,
                 leftOptionMapping: settings.leftOptionMapping,
@@ -267,6 +280,18 @@ final class KeyCapture {
         }
     }
 
+    /// Raw HID fallback for the standard function row. It deliberately
+    /// forwards only F1-F12 and only while forwarding is already active; no
+    /// ordinary typing or secure-field content enters diagnostics or storage.
+    func handleHIDKeyboardUsage(_ usage: Int, pressed: Bool) {
+        guard let vk = HIDFunctionKeyForwardingPolicy.vk(forKeyboardUsage: usage) else { return }
+        guard bridge.forwardingEnabled else { return }
+        // F11 with the configured NVDA modifier is the local forwarding
+        // toggle. The event-tap path owns that chord, so it must not leak.
+        if vk == VK.f1 + 10, isNVDAModifierHeldFromState() { return }
+        bridge.sendKey(vk: vk, pressed: pressed)
+    }
+
     /// Is the configured NVDA modifier physically held right now? Caps Lock
     /// comes from the HID hook; VO keys (Ctrl+Option) from the live flags.
     private func nvdaModifierHeld(_ event: CGEvent) -> Bool {
@@ -275,6 +300,18 @@ final class KeyCapture {
             return capsHeld
         case .voKeys:
             return event.flags.contains(.maskControl) && event.flags.contains(.maskAlternate)
+        }
+    }
+
+    private func isNVDAModifierHeldFromState() -> Bool {
+        switch settings.nvdaModifier {
+        case .capsLock:
+            capsHeld
+        case .voKeys:
+            (downModifiers.contains(MacKeyCode.leftControl)
+                || downModifiers.contains(MacKeyCode.rightControl))
+                && (downModifiers.contains(MacKeyCode.leftOption)
+                    || downModifiers.contains(MacKeyCode.rightOption))
         }
     }
 }
@@ -306,7 +343,12 @@ private func keyCaptureHIDValueCallback(
     guard let context else { return }
     let capture = Unmanaged<KeyCapture>.fromOpaque(context).takeUnretainedValue()
     let pressed = IOHIDValueGetIntegerValue(value) != 0
+    let usage = Int(IOHIDElementGetUsage(IOHIDValueGetElement(value)))
     MainActor.assumeIsolated {
-        capture.handleCapsLock(pressed: pressed)
+        if usage == kHIDUsage_KeyboardCapsLock {
+            capture.handleCapsLock(pressed: pressed)
+        } else {
+            capture.handleHIDKeyboardUsage(usage, pressed: pressed)
+        }
     }
 }

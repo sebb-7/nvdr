@@ -91,14 +91,7 @@ enum HIDToVK {
         if raw >= UIKeyboardHIDUsage.keyboard1.rawValue, raw <= UIKeyboardHIDUsage.keyboard9.rawValue {
             return UInt16(0x31 + (raw - UIKeyboardHIDUsage.keyboard1.rawValue))
         }
-        // F1..F12
-        if raw >= UIKeyboardHIDUsage.keyboardF1.rawValue, raw <= UIKeyboardHIDUsage.keyboardF12.rawValue {
-            return VK.f1 + UInt16(raw - UIKeyboardHIDUsage.keyboardF1.rawValue)
-        }
-        // F13..F24
-        if raw >= UIKeyboardHIDUsage.keyboardF13.rawValue, raw <= UIKeyboardHIDUsage.keyboardF24.rawValue {
-            return VK.f1 + 12 + UInt16(raw - UIKeyboardHIDUsage.keyboardF13.rawValue)
-        }
+        if let functionVK = functionVK(forKeyboardUsage: Int(raw)) { return functionVK }
         // Numpad 1..9
         if raw >= UIKeyboardHIDUsage.keypad1.rawValue, raw <= UIKeyboardHIDUsage.keypad9.rawValue {
             return VK.numpad0 + 1 + UInt16(raw - UIKeyboardHIDUsage.keypad1.rawValue)
@@ -157,6 +150,22 @@ enum HIDToVK {
         default:
             return nil
         }
+    }
+
+    /// Logical mapping seam used by both the raw UIKit path and deterministic
+    /// conformance tests. USB HID assigns consecutive usages to F1...F24.
+    static func functionVK(forKeyboardUsage usage: Int) -> UInt16? {
+        let f1 = Int(UIKeyboardHIDUsage.keyboardF1.rawValue)
+        let f12 = Int(UIKeyboardHIDUsage.keyboardF12.rawValue)
+        let f13 = Int(UIKeyboardHIDUsage.keyboardF13.rawValue)
+        let f24 = Int(UIKeyboardHIDUsage.keyboardF24.rawValue)
+        if usage >= f1, usage <= f12 {
+            return VK.f1 + UInt16(usage - f1)
+        }
+        if usage >= f13, usage <= f24 {
+            return VK.f1 + 12 + UInt16(usage - f13)
+        }
+        return nil
     }
 }
 

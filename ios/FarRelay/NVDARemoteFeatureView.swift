@@ -14,8 +14,13 @@ struct NVDARemoteFeatureView: View {
         Form {
             Section("Computer") {
                 Text(profile.displayName)
-                Button(isConnected ? "Disconnect" : "Connect", systemImage: "network") {
-                    if isConnected { bridge.stop() } else { bridge.start(settings: settings, profile: profile) }
+                Button(connectionAction.title, systemImage: "network") {
+                    switch connectionAction {
+                    case .connect:
+                        bridge.start(settings: settings, profile: profile)
+                    case .cancel, .disconnect:
+                        bridge.stop()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -71,8 +76,8 @@ struct NVDARemoteFeatureView: View {
         )
     }
 
-    private var isConnected: Bool {
-        return switch bridge.status { case .ready, .connecting, .authenticating, .reconnecting, .relayConnected, .waitingForNVDA, .nvdaNotConnected: true; default: false }
+    private var connectionAction: NVDARemoteConnectionAction {
+        NVDARemoteConnectionAction(status: bridge.status)
     }
     private var isConnectionActive: Bool {
         return switch bridge.status {
@@ -118,6 +123,33 @@ struct NVDARemoteFeatureView: View {
             )
         default:
             break
+        }
+    }
+}
+
+/// The connection control reflects transport truth, never merely the user's
+/// request. A pending connection can be cancelled, but it is not Connected.
+enum NVDARemoteConnectionAction: Equatable {
+    case connect
+    case cancel
+    case disconnect
+
+    init(status: BridgeClient.Status) {
+        switch status {
+        case .idle, .disconnected, .failed:
+            self = .connect
+        case .connecting, .authenticating, .reconnecting:
+            self = .cancel
+        case .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected:
+            self = .disconnect
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .connect: "Connect"
+        case .cancel: "Cancel connection"
+        case .disconnect: "Disconnect"
         }
     }
 }

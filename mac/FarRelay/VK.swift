@@ -123,6 +123,14 @@ enum MacKeyVK {
         }
     }
 
+    static func isFunctionRowKey(_ code: CGKeyCode) -> Bool {
+        functionRowKeyCodes.contains(code)
+    }
+
+    private static let functionRowKeyCodes: Set<CGKeyCode> = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111
+    ]
+
     /// Non-modifier keycodes. Keyed by `kVK_*` value (see Carbon's `Events.h`).
     private static let table: [CGKeyCode: UInt16] = [
         // Letters (kVK_ANSI_A … Z) → VK 0x41…0x5A
@@ -156,4 +164,18 @@ enum MacKeyVK {
         92: VK.numpad0 + 9, 76: VK.return, 65: VK.decimal, 67: VK.multiply,
         69: VK.add, 78: VK.subtract, 75: VK.divide,
     ]
+}
+
+/// The top function row may be translated into a hardware-control action by
+/// macOS before a `CGEvent` key-down reaches the event tap. The raw HID report
+/// remains a stable physical-key representation, so it is the authoritative
+/// fallback for F1 through F12. This intentionally does not log key values.
+enum HIDFunctionKeyForwardingPolicy {
+    static let firstUsage = 0x3A // USB HID Keyboard F1
+    static let lastUsage = 0x45  // USB HID Keyboard F12
+
+    static func vk(forKeyboardUsage usage: Int) -> UInt16? {
+        guard (firstUsage...lastUsage).contains(usage) else { return nil }
+        return VK.f1 + UInt16(usage - firstUsage)
+    }
 }

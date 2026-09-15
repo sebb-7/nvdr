@@ -38,9 +38,10 @@ targets:
         LSMinimumSystemVersion: "26.0"
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "FarRelay"
-        # Shown in the Input Monitoring permission prompt — FarRelay reads Caps
-        # Lock straight off the HID layer so it can act as the NVDA key.
-        NSInputMonitoringUsageDescription: "FarRelay reads Caps Lock at the hardware level so it can act as the NVDA key when forwarding keystrokes to the remote computer."
+        # Shown in the Input Monitoring permission prompt — FarRelay reads
+        # Caps Lock and the function row straight off the HID layer for
+        # reliable remote input forwarding.
+        NSInputMonitoringUsageDescription: "FarRelay reads Caps Lock and function keys at the hardware level so it can reliably forward them to the remote computer."
     dependencies:
       - package: Citadel
       - package: swift-crypto
@@ -57,3 +58,15 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
+
+  FarRelayTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: FarRelayTests
+    dependencies:
+      - target: FarRelay
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay.tests
+        GENERATE_INFOPLIST_FILE: YES

@@ -3,8 +3,9 @@ name: iOS CI
 on:
   workflow_dispatch:
   push:
-    branches:
-      - feat/ssh-foundation
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
   pull_request:
 
 permissions:
