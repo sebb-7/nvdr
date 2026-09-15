@@ -1,6 +1,7 @@
 name: macOS CI
 
 on:
+  workflow_dispatch:
   push:
     paths: ["mac/**", ".github/workflows/macos-ci.yml"]
   pull_request:
