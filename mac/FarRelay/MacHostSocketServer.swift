@@ -4,6 +4,7 @@ import Foundation
 /// A private, same-user Unix-domain endpoint. It is deliberately not a TCP,
 /// Bonjour, LAN, or WAN listener. The bundled SSH helper is the only intended
 /// client and merely forwards its authenticated stdio channel here.
+@MainActor
 final class MacHostSocketServer {
     static let endpointURL: URL = URL.homeDirectory
         .appending(path: "Library/Application Support/FarRelay", directoryHint: .isDirectory)
@@ -51,7 +52,9 @@ final class MacHostSocketServer {
         let flags = fcntl(descriptor, F_GETFL)
         _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
         listener = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        listener.readabilityHandler = { [weak self] _ in self?.acceptAvailableClients() }
+        listener.readabilityHandler = { [weak self] _ in
+            Task { @MainActor in self?.acceptAvailableClients() }
+        }
     }
 
     deinit { stop() }
@@ -81,7 +84,7 @@ final class MacHostSocketServer {
                 continue
             }
             let client = MacHostSocketClient(descriptor: descriptor, onLine: onLine) { [weak self] descriptor in
-                self?.removeClient(descriptor)
+                Task { @MainActor in self?.removeClient(descriptor) }
             }
             lock.lock()
             clients[descriptor] = client
@@ -97,6 +100,7 @@ final class MacHostSocketServer {
     }
 }
 
+@MainActor
 private final class MacHostSocketClient {
     private let handle: FileHandle
     private let onLine: @Sendable (Int32, String, @escaping @Sendable (String) -> Void) -> Void
@@ -112,7 +116,8 @@ private final class MacHostSocketClient {
         handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.onLine = onLine
         self.onClose = onClose
-        handle.readabilityHandler = { [weak self] handle in self?.read(handle) }
+        handle.readabilityHandler = { [weak self] _ in
+            Task { @MainActor in self?.readAvailableData() }
     }
 
     func close() {
@@ -120,7 +125,7 @@ private final class MacHostSocketClient {
         handle.closeFile()
     }
 
-    private func read(_ handle: FileHandle) {
+    private func readAvailableData() {
         let data = handle.availableData
         guard !data.isEmpty else {
             close()
@@ -140,7 +145,9 @@ private final class MacHostSocketClient {
             buffer.removeSubrange(...newline)
             if line.last == 0x0D { line.removeLast() }
             let text = String(decoding: line, as: UTF8.self)
-            onLine(handle.fileDescriptor, text) { [weak self] response in self?.send(response) }
+            onLine(handle.fileDescriptor, text) { [weak self] response in
+                Task { @MainActor in self?.send(response) }
+            }
         }
         lock.unlock()
     }
