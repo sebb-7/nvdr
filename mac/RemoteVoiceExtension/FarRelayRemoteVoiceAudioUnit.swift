@@ -33,7 +33,10 @@ final class FarRelayRemoteVoiceAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         options: AudioComponentInstantiationOptions = []
     ) throws {
         try super.init(componentDescription: componentDescription, options: options)
-        internalRenderBlock = { actionFlags, _, _, _, outputData, _, _ in
+    }
+
+    override var internalRenderBlock: AUInternalRenderBlock {
+        { actionFlags, _, _, _, outputData, _, _ in
             for buffer in UnsafeMutableAudioBufferListPointer(outputData) {
                 guard let data = buffer.mData else { continue }
                 memset(data, 0, Int(buffer.mDataByteSize))
