@@ -14,9 +14,18 @@ final class RemoteInputMappingTests: XCTestCase {
     }
 
     func testRawHIDFunctionKeysCoverF1ThroughF24() {
-        let first = Int(UIKeyboardHIDUsage.keyboardF1.rawValue)
-        for offset in 0..<24 {
-            XCTAssertEqual(HIDToVK.functionVK(forKeyboardUsage: first + offset), VK.f1 + UInt16(offset))
+        let ranges: [(first: Int, count: Int, firstVK: UInt16)] = [
+            (Int(UIKeyboardHIDUsage.keyboardF1.rawValue), 12, VK.f1),
+            (Int(UIKeyboardHIDUsage.keyboardF13.rawValue), 12, VK.f1 + 12)
+        ]
+
+        for range in ranges {
+            for offset in 0..<range.count {
+                XCTAssertEqual(
+                    HIDToVK.functionVK(forKeyboardUsage: range.first + offset),
+                    range.firstVK + UInt16(offset)
+                )
+            }
         }
     }
 
