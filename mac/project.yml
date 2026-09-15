@@ -59,6 +59,9 @@ targets:
         # hardened runtime is on so the build can be notarized.
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
+        # The build phase creates the app-bundle Helpers directory. This is a
+        # build-time sandbox setting only; it does not weaken the shipped app.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: FarRelay/FarRelay.entitlements
     preBuildScripts:
