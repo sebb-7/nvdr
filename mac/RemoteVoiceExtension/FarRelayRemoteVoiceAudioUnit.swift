@@ -33,7 +33,14 @@ final class FarRelayRemoteVoiceAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         options: AudioComponentInstantiationOptions = []
     ) throws {
         try super.init(componentDescription: componentDescription, options: options)
-        internalRenderBlock = Self.silentRenderBlock
+        internalRenderBlock = { actionFlags, _, _, _, outputData, _, _ in
+            for buffer in UnsafeMutableAudioBufferListPointer(outputData) {
+                guard let data = buffer.mData else { continue }
+                memset(data, 0, Int(buffer.mDataByteSize))
+            }
+            actionFlags.pointee.insert(.offlineUnitRenderAction_Complete)
+            return noErr
+        }
     }
 
     override func synthesizeSpeechRequest(_ speechRequest: AVSpeechSynthesisProviderRequest) {
@@ -56,21 +63,5 @@ final class FarRelayRemoteVoiceAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         if let event = sequencer.cancellation() {
             _ = RemoteSpeechIPC()?.append(event)
         }
-    }
-
-    private static let silentRenderBlock: AUInternalRenderBlock = {
-        actionFlags,
-        _,
-        _,
-        _,
-        outputData,
-        _,
-        _ in
-        for buffer in UnsafeMutableAudioBufferListPointer(outputData) {
-            guard let data = buffer.mData else { continue }
-            memset(data, 0, Int(buffer.mDataByteSize))
-        }
-        actionFlags.pointee.insert(.offlineUnitRenderAction_Complete)
-        return noErr
     }
 }
