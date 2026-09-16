@@ -64,9 +64,11 @@ final class BridgeClient {
     private var driverGeneration = 0
     private(set) var activeProfileID: UUID?
     private let speech: SpeechOutput
+    private let events: FarRelayEventStore
 
-    init(speech: SpeechOutput) {
+    init(speech: SpeechOutput, events: FarRelayEventStore? = nil) {
         self.speech = speech
+        self.events = events ?? FarRelayEventStore()
     }
 
     func start(settings: AppSettings, profile: HostProfile) {
@@ -267,17 +269,37 @@ final class BridgeClient {
             appendLog("ssh authenticated; spawning the remote IPC operation")
 
         case .disconnected(let failure):
+            let wasEstablished = isEstablished(status)
             disconnectInputChannel()
             appendLog("ssh disconnected: \(failure.message)")
             status = .disconnected(reason: failure.message)
+            if wasEstablished {
+                emitCritical(
+                    code: .connectionLost,
+                    category: .connectivity,
+                    summary: "Connection lost",
+                    detail: "Remote keyboard input was stopped and held keys were released.",
+                    action: "Retry now or open Diagnostics"
+                )
+            }
 
         case .reconnecting(let attempt, let delay, let failure):
+            let wasEstablished = isEstablished(status)
             disconnectInputChannel()
             appendLog(
                 "reconnecting after \(delay) " +
                 "(attempt \(attempt)): \(failure.message)"
             )
             status = .reconnecting(attempt: attempt)
+            if wasEstablished {
+                emitCritical(
+                    code: .connectionLost,
+                    category: .connectivity,
+                    summary: "Connection lost",
+                    detail: "FarRelay is reconnecting. Remote keyboard input was stopped and held keys were released.",
+                    action: "Stop reconnecting or open Diagnostics"
+                )
+            }
 
         case .permanentlyFailed(let failure):
             disconnectInputChannel()
@@ -291,12 +313,49 @@ final class BridgeClient {
                 )
             }
             status = .failed(message: failure.message)
+            emitCritical(
+                code: .connectionFailed,
+                category: .connectivity,
+                summary: "Connection failed",
+                detail: "FarRelay could not establish a usable remote session.",
+                action: "Retry, edit the computer, or open Diagnostics"
+            )
 
         case .stopped:
             disconnectInputChannel()
             if case .failed = status { return }
             status = .disconnected(reason: "stopped")
         }
+    }
+
+    private func isEstablished(_ status: Status) -> Bool {
+        switch status {
+        case .relayConnected, .waitingForNVDA, .ready, .nvdaNotConnected:
+            true
+        case .idle, .connecting, .authenticating, .reconnecting, .disconnected, .failed:
+            false
+        }
+    }
+
+    private func emitCritical(
+        code: FarRelayEventCode,
+        category: FarRelayEventCategory,
+        summary: String,
+        detail: String,
+        action: String
+    ) {
+        let profileID = activeProfileID
+        events.emit(FarRelayEvent(
+            severity: .critical,
+            category: category,
+            profileID: profileID,
+            connectionGeneration: driverGeneration,
+            code: code,
+            summary: summary,
+            safeDetail: detail,
+            recommendedAction: action,
+            deduplicationKey: "\(code.rawValue).\(profileID?.uuidString ?? "none").\(driverGeneration)"
+        ))
     }
 
     // -- Speech forwarding ---------------------------------------------------
@@ -486,7 +545,18 @@ final class BridgeClient {
     }
 
     private func setStatus(_ s: Status) {
+        let previous = status
         status = s
+        if previous == .ready,
+           s == .waitingForNVDA || s == .nvdaNotConnected {
+            emitCritical(
+                code: .nvdaDisconnected,
+                category: .nvda,
+                summary: "NVDA disconnected",
+                detail: "The relay connection remains active, but NVDA is no longer present. Remote keyboard forwarding was paused.",
+                action: "Wait for NVDA to return or open Diagnostics"
+            )
+        }
     }
 
     private func appendLog(_ line: String) {

@@ -160,25 +160,63 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
 enum HostProfileStoreValue: Equatable {
     case uninitialized
     case profiles([HostProfile])
+    /// The pre-Phase 3 `[HostProfile]` payload. Settings migrates this only
+    /// after retaining the exact source bytes for recovery.
+    case legacyProfiles([HostProfile])
     case malformed
+    case unsupportedSchema(Int)
 }
 
 struct HostProfileStore {
+    static let currentSchemaVersion = 1
     let defaults: UserDefaults
     let key: String
 
     func load() -> HostProfileStoreValue {
         guard let data = defaults.data(forKey: key) else { return .uninitialized }
-        do {
-            return .profiles(try JSONDecoder().decode([HostProfile].self, from: data))
-        } catch {
-            return .malformed
+        if let envelope = try? JSONDecoder().decode(HostProfileStoreEnvelope.self, from: data) {
+            guard envelope.schemaVersion == Self.currentSchemaVersion else {
+                return .unsupportedSchema(envelope.schemaVersion)
+            }
+            return .profiles(envelope.profiles)
         }
+        if let legacy = try? JSONDecoder().decode([HostProfile].self, from: data) {
+            return .legacyProfiles(legacy)
+        }
+        return .malformed
     }
 
-    func save(_ profiles: [HostProfile]) {
-        guard let data = try? JSONEncoder().encode(profiles) else { return }
+    /// UserDefaults replaces its value atomically. The Boolean permits callers
+    /// to retain their in-memory model and surface recovery state if encoding
+    /// ever fails instead of pretending a write succeeded.
+    @discardableResult
+    func save(_ profiles: [HostProfile]) -> Bool {
+        guard let data = try? JSONEncoder().encode(
+            HostProfileStoreEnvelope(schemaVersion: Self.currentSchemaVersion, profiles: profiles)
+        ) else { return false }
         defaults.set(data, forKey: key)
+        return defaults.data(forKey: key) == data
+    }
+
+    /// Preserve old bytes before replacing a successfully decoded legacy store.
+    /// The backup is bounded to one source payload and never contains Keychain
+    /// secrets because HostProfile persistence is metadata-only.
+    @discardableResult
+    func migrateLegacy(_ profiles: [HostProfile]) -> Bool {
+        guard let original = defaults.data(forKey: key) else { return false }
+        defaults.set(original, forKey: "\(key).migrationSource")
+        guard save(profiles) else { return false }
+        return true
+    }
+}
+
+private struct HostProfileStoreEnvelope: Codable, Equatable {
+    let schemaVersion: Int
+    let profiles: [HostProfile]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schemaVersion"
+        case profiles
     }
 }
 

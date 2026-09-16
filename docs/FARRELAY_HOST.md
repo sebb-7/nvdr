@@ -6,7 +6,7 @@ It is an application, not a reusable library, so its `Cargo.lock` is committed
 to keep deployed and CI dependency resolution reproducible. Dependency updates
 remain deliberate changes rather than part of protocol work.
 
-The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
+The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations and the optional feature identifiers `macRemote` and `voiceOverSemanticFeedback`. `operations` are RPC names; `features` are extensible product capability names. Clients must ignore an unknown optional feature and reject an unsupported protocol major, rather than inferring capability from platform. A missing `features` field is valid for an older v1 host. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, controller-lease, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
 
 ```text
 FarRelay iPhone

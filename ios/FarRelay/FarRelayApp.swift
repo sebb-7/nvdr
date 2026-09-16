@@ -7,11 +7,13 @@ struct FarRelayApp: App {
     @State private var terminals: TerminalSessionManager
     @State private var remoteIntentRouter: RemoteIntentRouter
     @State private var interactionFeedback: InteractionFeedback
+    @State private var events: FarRelayEventStore
 
     init() {
         let s = AppSettings()
         let speech = SpeechOutput(rate: s.speechRate, voiceIdentifier: s.voiceIdentifier)
-        let bridge = BridgeClient(speech: speech)
+        let events = FarRelayEventStore()
+        let bridge = BridgeClient(speech: speech, events: events)
         _settings = State(initialValue: s)
         _bridge = State(initialValue: bridge)
         let terminals = TerminalSessionManager()
@@ -21,6 +23,7 @@ struct FarRelayApp: App {
         _terminals = State(initialValue: terminals)
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
         _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
+        _events = State(initialValue: events)
     }
 
     var body: some Scene {
@@ -31,6 +34,7 @@ struct FarRelayApp: App {
                 .environment(terminals)
                 .environment(remoteIntentRouter)
                 .environment(interactionFeedback)
+                .environment(events)
         }
     }
 }

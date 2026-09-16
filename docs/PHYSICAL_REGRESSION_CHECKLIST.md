@@ -42,3 +42,18 @@ hardware before calling a build physically validated.
 - [ ] Verify permission-degraded, input-ready, and feedback-ready states separately.
 - [ ] Verify Emergency Stop releases remote input.
 - [ ] Mark all Remote Voice/provider claims unvalidated unless exercised on physical macOS hardware.
+
+## Home status and Critical Events
+
+- [ ] G14 offline shows Disconnected; a pending connection shows Connecting.
+- [ ] A successful SSH/relay session without NVDA shows Waiting for NVDA, never Ready.
+- [ ] NVDA joining and leaving updates the Home status without leaving stale forwarding enabled.
+- [ ] An unexpected established-session loss produces one useful, VoiceOver-readable Critical Event.
+- [ ] An intentional Disconnect does not produce a false critical failure.
+- [ ] Copy Status Report contains connection/capability truth but no credentials, channel, typed content, terminal transcript, or speech.
+
+## Controller ownership and compatibility
+
+- [ ] Validate controller lease grant/reject/loss against a future host that advertises `controllerLease`; a legacy host must visibly remain unleased.
+- [ ] Validate that a second FarRelay device cannot silently type once a host lease protocol is available.
+- [ ] Exercise an older compatible host, a current host, and an unsupported future protocol-major host.

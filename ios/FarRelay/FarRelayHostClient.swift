@@ -6,12 +6,20 @@ struct HostCapabilities: Codable, Sendable, Equatable {
     let hostImplementation: String
     let hostVersion: String
     let operations: [String]
+    /// Missing on an older v1 host. New optional features therefore do not
+    /// make old hosts undecodable or falsely supported.
+    let features: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
         case hostImplementation = "host_implementation"
         case hostVersion = "host_version"
         case operations
+        case features
+    }
+
+    var advertisedFeatures: Set<FarRelayCapability> {
+        Set((features ?? []).map(FarRelayCapability.init(rawValue:)))
     }
 }
 

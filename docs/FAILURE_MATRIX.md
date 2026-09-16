@@ -38,3 +38,10 @@ interception.
 | Corrupt profile JSON | startup remains usable | recovery message | preserve original bytes | n/a | profile corruption regression | n/a |
 | Unknown/truncated IPC | inert/unknown or deterministic error | no false Ready | no action | n/a | bounded malformed IPC chaos | n/a |
 | VoiceOver/Quick Nav, BSI, keyboard detach | local ownership remains recoverable | documented local/remote control state | release keys at ownership boundary | n/a | input-state tests | required |
+| Home status while NVDA is connecting, waiting, ready, reconnecting, or failed | runtime state → matching concise health row | no false Connected/Ready claim | n/a | existing supervisor only | status derivation tests | required |
+| Repeated connection-loss callback | one coalesced critical event with count | one accessible initial announcement | release keys | policy controlled | event-store tests | simulated |
+| NVDA leaves an established relay session | Ready → Waiting for NVDA | remote forwarding paused; actionable critical event | release_all | relay may recover | bridge event regression | required |
+| Two controller generations / stale controller callback | old generation rejected | ownership is not falsely restored | release keys on loss | request new lease | lease-gate tests | simulated |
+| Current client / future host optional capability | compatible subset | unsupported feature remains unavailable | n/a | n/a | compatibility tests | simulated |
+| Protocol-major mismatch | handshake rejected | clear incompatible-version state | no input channel | explicit update | compatibility tests | simulated |
+| Legacy profile schema / unknown future schema | v0 → v1, or preserve unknown source | saved computers load or recovery state | original bytes retained | n/a | migration fixture tests | simulated |

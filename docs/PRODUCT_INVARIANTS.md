@@ -66,6 +66,13 @@ regression test unless the exception and the physical-only reason are recorded.
 | PERSISTENCE-002 | Partially enforced | Legacy profiles retain missing-field defaults and credentials remain Keychain-only. |
 | OWNERSHIP-001 | Not yet enforced | Future multi-controller features must establish one explicit input-controller owner; current NVDA relay input has no lease protocol. |
 | DIAGNOSTICS-002 | Enforced | Test secret fixtures for passwords, keys, channels, and typed content must never appear in normal diagnostic output. |
+| STATUS-001 | Partially enforced | Home derives connection, NVDA, terminal, and controller text from current runtime state; it never labels a connect request as Connected. Physical multi-target validation remains required. |
+| CAPABILITY-001 | Partially enforced | Capability snapshots use extensible identifiers. Unknown optional capabilities are inert; a protocol-major mismatch fails closed. Current legacy NVDA IPC has no capability handshake. |
+| OWNERSHIP-002 | Partially enforced | Controller lease state includes identity and generation gating. A lost/released lease rejects stale input locally; legacy NVDA IPC is explicitly unleased and must not be described as controller-owned. |
+| EVENT-001 | Enforced | Important in-app events are typed, bounded, safe-copy only, and coalesced by deterministic keys. A repeated critical event does not repeatedly announce. |
+| EVENT-002 | Enforced | Critical-event summaries, details, and copied status reports exclude credentials, relay channels, typed content, terminal transcripts, and speech content. |
+| PERSISTENCE-003 | Enforced | Saved profile records carry an explicit schema version. Legacy profile bytes migrate deterministically only after the original bytes are retained for recovery. |
+| PERSISTENCE-004 | Enforced | Malformed or newer unsupported profile schemas remain untouched; FarRelay presents recovery state instead of replacing them with an empty store. |
 
 ## Bug-to-regression policy
 
