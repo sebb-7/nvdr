@@ -9,12 +9,14 @@ struct FarRelayApp: App {
     @State private var interactionFeedback: InteractionFeedback
     @State private var inputDiagnostics: InputDiagnosticStore
     @State private var macRemoteSession: MacRemoteSession
+    @State private var events: FarRelayEventStore
 
     init() {
         let s = AppSettings()
         let speech = SpeechOutput(rate: s.speechRate, voiceIdentifier: s.voiceIdentifier)
         let inputDiagnostics = InputDiagnosticStore()
-        let bridge = BridgeClient(speech: speech)
+        let events = FarRelayEventStore()
+        let bridge = BridgeClient(speech: speech, events: events)
         _settings = State(initialValue: s)
         _bridge = State(initialValue: bridge)
         let terminals = TerminalSessionManager()
@@ -26,6 +28,7 @@ struct FarRelayApp: App {
         _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
         _inputDiagnostics = State(initialValue: inputDiagnostics)
         _macRemoteSession = State(initialValue: MacRemoteSession(speech: speech))
+        _events = State(initialValue: events)
     }
 
     var body: some Scene {
@@ -38,6 +41,7 @@ struct FarRelayApp: App {
                 .environment(interactionFeedback)
                 .environment(inputDiagnostics)
                 .environment(macRemoteSession)
+                .environment(events)
         }
     }
 }

@@ -7,6 +7,7 @@ const VOICEOVER_OPERATIONS: &[&str] = &[
     "voiceover.press",
     "voiceover.state",
 ];
+const MACOS_FEATURES: &[&str] = &["macRemote", "voiceOverSemanticFeedback"];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Capabilities {
@@ -14,6 +15,10 @@ pub struct Capabilities {
     pub host_implementation: String,
     pub host_version: String,
     pub operations: Vec<String>,
+    /// Extensible feature identifiers. Operations describe callable RPCs;
+    /// features describe product capabilities and may be safely ignored by an
+    /// older client when they are optional.
+    pub features: Vec<String>,
 }
 
 impl Capabilities {
@@ -27,11 +32,20 @@ impl Capabilities {
         if os == "macos" {
             operations.extend(VOICEOVER_OPERATIONS.iter().map(|op| (*op).to_string()));
         }
+        let features = if os == "macos" {
+            MACOS_FEATURES
+                .iter()
+                .map(|feature| (*feature).to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self {
             protocol_version: 1,
             host_implementation: "farrelay-host".into(),
             host_version: env!("CARGO_PKG_VERSION").into(),
             operations,
+            features,
         }
     }
 }
@@ -50,6 +64,7 @@ mod tests {
             &caps.operations[..3],
             ["host.info", "process.list", "process.info"]
         );
+        assert!(caps.features.is_empty());
     }
 
     #[test]
@@ -65,6 +80,10 @@ mod tests {
                 "voiceover.press",
                 "voiceover.state",
             ]
+        );
+        assert_eq!(
+            Capabilities::for_os("macos").features,
+            ["macRemote", "voiceOverSemanticFeedback"]
         );
     }
 

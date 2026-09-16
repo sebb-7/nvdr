@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(BridgeClient.self) private var bridge
     @Environment(TerminalSessionManager.self) private var terminals
     @Environment(InteractionFeedback.self) private var interactionFeedback
+    @Environment(FarRelayEventStore.self) private var events
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @SceneStorage("farrelay.selectedTab") private var selectedTabRaw = AppShellTab.home.rawValue
     @State private var selectedTab: AppShellTab = .home
@@ -42,6 +43,12 @@ struct RootView: View {
             if let request = terminals.lastSessionActionFeedback {
                 interactionFeedback.play(request.kind)
             }
+        }
+        .onChange(of: events.lastAnnounceableEventID) { _, id in
+            guard isVoiceOverEnabled,
+                  let id,
+                  let event = events.events.first(where: { $0.id == id }) else { return }
+            AccessibilityNotification.Announcement("Critical event: \(event.summary). \(event.safeDetail)").post()
         }
         .userFacingIssueAlert($terminalIssue, onRetry: retryTerminalIssue)
         .sheet(isPresented: $showingSettings) { SettingsView() }
@@ -165,6 +172,7 @@ private struct HomeTabView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(TerminalSessionManager.self) private var terminals
     @Environment(BridgeClient.self) private var bridge
+    @Environment(FarRelayEventStore.self) private var events
     @Binding var showingSettings: Bool
     @State private var addingProfile = false
     @State private var path = NavigationPath()
@@ -173,6 +181,32 @@ private struct HomeTabView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                Section("FarRelay Status") {
+                    if settings.hostProfiles.isEmpty {
+                        Text("No saved computers").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(settings.hostProfiles) { profile in
+                            HomeStatusRow(
+                                profile: profile,
+                                status: FarRelayComputerStatus.derive(
+                                    profile: profile,
+                                    bridge: bridge,
+                                    terminals: terminals
+                                ),
+                                events: events.criticalEvents
+                            )
+                        }
+                    }
+                }
+                Section("Critical Events") {
+                    if events.criticalEvents.isEmpty {
+                        Text("No issues requiring attention").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(events.criticalEvents) { event in
+                            FarRelayEventRow(event: event)
+                        }
+                    }
+                }
                 if settings.hostProfiles.isEmpty {
                     ContentUnavailableView("No computers", systemImage: "desktopcomputer", description: Text("Add a computer to connect over SSH."))
                 } else {
@@ -200,6 +234,13 @@ private struct HomeTabView: View {
                 }
                 if let error = settings.credentialStorageError {
                     Text(error).font(.footnote).foregroundStyle(.red)
+                }
+                if !events.events.isEmpty {
+                    Section("Recent Events") {
+                        ForEach(events.events.prefix(5)) { event in
+                            FarRelayEventRow(event: event)
+                        }
+                    }
                 }
             }
             .navigationTitle("FarRelay")
@@ -292,6 +333,42 @@ private struct ComputerStatusRow: View {
                 .disabled(!profile.isNVDARemoteEnabled)
                 .accessibilityHint("\(status.detail)")
         }
+    }
+}
+
+private struct HomeStatusRow: View {
+    let profile: HostProfile
+    let status: FarRelayComputerStatus
+    let events: [FarRelayEvent]
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("\(profile.displayName) — \(status.primary)")
+            Text(status.nvda).foregroundStyle(.secondary)
+            Text(status.terminalSummary).foregroundStyle(.secondary)
+            Text(status.controller).foregroundStyle(.secondary)
+            Button("Copy Status Report", systemImage: "doc.on.doc") {
+                AppClipboard.copy(FarRelayStatusReport.make(profile: profile, status: status, events: events))
+            }
+            .accessibilityHint("Copies a privacy-safe status report without credentials, channel keys, typed content, terminal text, or speech.")
+        }
+        .accessibilityLabel("\(profile.displayName). \(status.primary). \(status.detail). \(status.nvda). \(status.terminalSummary). \(status.controller).")
+    }
+}
+
+private struct FarRelayEventRow: View {
+    let event: FarRelayEvent
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(event.summary)
+            Text(event.safeDetail).foregroundStyle(.secondary)
+            Text(event.recommendedAction).font(.footnote).foregroundStyle(.secondary)
+            if event.occurrenceCount > 1 {
+                Text("Occurred \(event.occurrenceCount) times").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityLabel("\(event.severity.rawValue.capitalized) event: \(event.summary). \(event.safeDetail). Next: \(event.recommendedAction).")
     }
 }
 

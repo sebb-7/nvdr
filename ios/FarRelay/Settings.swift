@@ -82,12 +82,20 @@ final class AppSettings {
 
         switch profileStore.load() {
         case .profiles(let profiles): hostProfiles = profiles
+        case .legacyProfiles(let profiles):
+            hostProfiles = profiles
+            if !profileStore.migrateLegacy(profiles) {
+                credentialStorageError = "Saved computers could not be upgraded. The original data was preserved for recovery."
+            }
         case .malformed:
             hostProfiles = []
             // Keep the original bytes intact. Overwriting a malformed record
             // with an empty array turns a recoverable corruption into data
             // loss before the user can restore from a backup or later build.
             credentialStorageError = "Saved computer metadata was unreadable and was preserved for recovery."
+        case .unsupportedSchema:
+            hostProfiles = []
+            credentialStorageError = "Saved computers use a newer unsupported format and were preserved for recovery."
         case .uninitialized:
             hostProfiles = []
             migrateSingleComputerSettings()
@@ -119,9 +127,14 @@ final class AppSettings {
             credentialStorageError = "Unable to save credentials for \(profile.displayName)."
             return false
         }
-        if let index = hostProfiles.firstIndex(where: { $0.id == normalizedProfile.id }) { hostProfiles[index] = normalizedProfile }
-        else { hostProfiles.append(normalizedProfile) }
-        profileStore.save(hostProfiles)
+        var updatedProfiles = hostProfiles
+        if let index = updatedProfiles.firstIndex(where: { $0.id == normalizedProfile.id }) { updatedProfiles[index] = normalizedProfile }
+        else { updatedProfiles.append(normalizedProfile) }
+        guard profileStore.save(updatedProfiles) else {
+            credentialStorageError = "Saved computers could not be safely written."
+            return false
+        }
+        hostProfiles = updatedProfiles
         credentialStorageError = nil
         return true
     }
@@ -132,8 +145,12 @@ final class AppSettings {
             credentialStorageError = "Unable to remove credentials for \(profile.displayName)."
             return false
         }
-        hostProfiles.removeAll { $0.id == profile.id }
-        profileStore.save(hostProfiles)
+        let updatedProfiles = hostProfiles.filter { $0.id != profile.id }
+        guard profileStore.save(updatedProfiles) else {
+            credentialStorageError = "Saved computers could not be safely written."
+            return false
+        }
+        hostProfiles = updatedProfiles
         credentialStorageError = nil
         return true
     }
