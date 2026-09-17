@@ -45,13 +45,14 @@ Build 16:
 1. The capture view was mounted as a zero-height SwiftUI overlay. Its first
    responder ownership was requested but not made observable or recoverable.
 2. UIKit key-command registrations were conditional on forwarding state, but
-   the view never invalidated the UIKit key-command cache after that state
-   changed. A fallback registration could therefore remain absent after a
-   reconnect or a return to the screen.
+   the capture view remained mounted across that state change. A fallback
+   registration could therefore remain absent after a reconnect or a return
+   to the screen.
 
 The correction mounts a real, non-interactive 1×1 responder view, requests and
-records responder activation while diagnostic mode is on, and calls
-`setNeedsUpdateOfKeyCommands()` whenever SwiftUI updates the capture view.
+records responder activation while diagnostic mode is on, and recreates the
+capture responder when forwarding changes so UIKit evaluates a fresh public
+`keyCommands` surface.
 This is a code-level correction for an unproven client boundary, not a claim
 that iOS or VoiceOver will yield every function key.
 

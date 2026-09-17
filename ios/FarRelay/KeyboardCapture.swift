@@ -29,10 +29,6 @@ struct KeyboardCapture: UIViewRepresentable {
         view.bridge = bridge
         view.settings = settings
         view.diagnostics = diagnostics
-        // UIKit caches responder key commands. The previous capture view never
-        // invalidated that cache after forwarding changed, leaving its F-key
-        // fallback absent after reconnecting or returning to this screen.
-        view.requestKeyCommandRefresh()
         if bridge.forwardingEnabled {
             if view.window != nil, !view.isFirstResponder {
                 Task { @MainActor in _ = view.becomeFirstResponder() }
@@ -63,7 +59,6 @@ final class CaptureView: UIView {
             Task { @MainActor in
                 let active = self.becomeFirstResponder()
                 self.diagnostics?.observe(source: .responder, result: active ? "first responder active" : "first responder request failed")
-                self.requestKeyCommandRefresh()
             }
         }
     }
@@ -72,20 +67,6 @@ final class CaptureView: UIView {
     /// (e.g. Cmd+Tab analogues, focus changes). With this true, every key
     /// reaches `pressesBegan` first.
     @objc func _wantsPriorityOverSystemBehaviorWhenKeyboardEvent() -> Bool { true }
-
-    /// UIKit exposes key-command invalidation on the owning view controller,
-    /// not on UIView. Walk the responder chain so a forwarding-state change
-    /// refreshes registrations made by this embedded capture view.
-    func requestKeyCommandRefresh() {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let controller = current as? UIViewController {
-                controller.setNeedsUpdateOfKeyCommands()
-                return
-            }
-            responder = current.next
-        }
-    }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if !forward(presses, pressed: true) {

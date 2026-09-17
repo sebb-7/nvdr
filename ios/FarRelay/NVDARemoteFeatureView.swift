@@ -62,6 +62,11 @@ struct NVDARemoteFeatureView: View {
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                // Recreate the first responder when the condition governing
+                // key commands changes. This is the supported SwiftUI/UIKit
+                // lifecycle path; UIKit exposes no public cache invalidation
+                // API for a UIView's `keyCommands` override.
+                .id(bridge.forwardingEnabled)
         }
         .onChange(of: bridge.status) { old, new in
             handleStatusChange(from: old, to: new)
