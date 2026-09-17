@@ -174,7 +174,7 @@ final class BridgeClient {
     }
 
     @discardableResult
-    func sendKey(vk: UInt16, pressed: Bool) -> InputForwardingResult {
+    func forwardKey(vk: UInt16, pressed: Bool) -> InputForwardingResult {
         guard forwardingEnabled else {
             return .rejected("forwarding is off")
         }
@@ -197,6 +197,13 @@ final class BridgeClient {
         @unknown default:
             return .rejected("unknown transmission state")
         }
+    }
+
+    /// Compatibility surface for semantic remote-intent targets. Physical
+    /// capture uses `forwardKey` so it can record the result without changing
+    /// the established no-result protocol contract.
+    func sendKey(vk: UInt16, pressed: Bool) {
+        _ = forwardKey(vk: vk, pressed: pressed)
     }
 
     /// Read-only input readiness for semantic adapters. This never changes

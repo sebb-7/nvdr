@@ -118,7 +118,7 @@ final class CaptureView: UIView {
                 claimed = true
                 continue
             }
-            let result = bridge.sendKey(vk: vk, pressed: pressed)
+            let result = bridge.forwardKey(vk: vk, pressed: pressed)
             diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: result.diagnosticText)
             claimed = true
         }
@@ -158,7 +158,7 @@ final class CaptureView: UIView {
         // path if UIKit happens to deliver both representations.
         priorityDuplicateGate.recordPriorityTransitions(transitions)
         for transition in transitions {
-            let result = bridge.sendKey(vk: transition.vk, pressed: transition.pressed)
+            let result = bridge.forwardKey(vk: transition.vk, pressed: transition.pressed)
             diagnostics?.observe(
                 source: .keyCommand,
                 modifiers: command.modifierFlags.rawValue,
