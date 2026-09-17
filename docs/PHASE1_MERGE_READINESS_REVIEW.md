@@ -23,6 +23,10 @@ candidate, so it is not a Phase 1 regression gate.
   of the cumulative-diff trailing blank line in
   `ios/FarRelay/TerminalPresentationView.swift`. No Phase 3 source remains in
   the candidate.
+- Final application candidate: `d2b0b3f023f93951f58a71745fda9f048a977557`.
+  It makes the SSH-host teardown test wait for the already-observed reader
+  cancellation to unwind before asserting deallocation; it adds no product
+  behavior.
 
 ## Validation matrix
 
@@ -30,8 +34,8 @@ candidate, so it is not a Phase 1 regression gate.
 | --- | --- | --- | --- |
 | Root Rust | `cargo fmt --check`, `cargo check --locked`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings` | PASS — 5 tests | none locally |
 | FarRelay Host | Same locked Rust commands | PASS — 27 tests | Windows host smoke test still required |
-| iOS / Swift | Exact-candidate iOS CI workflow | Pending | Required before merge; includes XcodeGen, package resolution, simulator build, SSH, terminal, and app tests |
-| SSH / terminal path | Existing iOS unit suite plus static lifecycle review | Pending exact-head CI | Physical remote-host smoke test required before beta |
+| iOS / Swift | Exact-candidate iOS CI workflow | PASS — run 35178865792 | XcodeGen, package resolution, simulator build, SSH, terminal, and app tests passed |
+| SSH / terminal path | Exact-candidate iOS unit suite plus static lifecycle review | PASS | Physical remote-host smoke test required before beta |
 | macOS/shared direction | Source/project configuration review | PASS static review | Mac build and VoiceOver smoke test required |
 | Accessibility | Existing policy/unit coverage reviewed | PASS automated scope | iPhone/iPad VoiceOver, keyboard, and BSI smoke tests required before beta |
 | Android | Out of current project scope; not evaluated | n/a | n/a |
@@ -43,8 +47,11 @@ candidate, so it is not a Phase 1 regression gate.
 The historical successful iOS CI run
 [35138652377](https://github.com/sebb-7/nvdr/actions/runs/35138652377) and
 TestFlight workflow [35130548149](https://github.com/sebb-7/nvdr/actions/runs/35130548149)
-validate `8d64443`, not the final branch commit carrying this report and the
-whitespace correction. An exact-candidate iOS CI run is required before merge.
+validate `8d64443`. The final application candidate
+`d2b0b3f023f93951f58a71745fda9f048a977557` is validated by successful iOS CI
+[35178865792](https://github.com/sebb-7/nvdr/actions/runs/35178865792), which
+completed XcodeGen generation, package resolution, simulator build, and the
+SSH foundation/unit suite.
 
 Before external beta, complete and record:
 
@@ -61,7 +68,7 @@ Before external beta, complete and record:
 
 ### Merge blockers
 
-- A successful iOS CI run for the exact final Phase 1 candidate is required.
+- None.
 
 ### External-beta blockers
 
