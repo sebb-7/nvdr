@@ -47,7 +47,7 @@ struct Args {
 
     /// Pin server cert SHA-256 fingerprint (lowercase hex, no separators).
     /// If omitted, TOFU: first connection pins and caches to
-    /// ~/.config/nvdr/known_hosts.
+    /// ~/.config/farrelay/known_hosts (with legacy nvdr pins migrated on use).
     #[arg(long)]
     fingerprint: Option<String>,
 
@@ -100,7 +100,7 @@ struct Args {
     #[arg(long, default_value_t = 250)]
     separator_ms: u64,
 
-    /// Long-running headless mode for driving nvdr from another process
+    /// Long-running headless mode for driving farrelay from another process
     /// (e.g. the NVDA add-on). Reads line-oriented commands from stdin,
     /// emits one-line events to stdout, logs to stderr. See `ipc.rs` for
     /// the grammar.
@@ -144,7 +144,7 @@ async fn run(args: Args) -> Result<()> {
     const BACKOFF_MAX_MS: u64 = 30_000;
 
     loop {
-        eprintln!("nvdr: connecting to {}:{}…", host, args.port);
+        eprintln!("farrelay: connecting to {}:{}…", host, args.port);
         let conn = match transport::connect(
             &host,
             args.port,
@@ -174,10 +174,10 @@ async fn run(args: Args) -> Result<()> {
                 }
                 if msg.contains("fingerprint") {
                     // Explicit --fingerprint mismatch: fatal (user supplied it).
-                    eprintln!("nvdr: {msg}");
+                    eprintln!("farrelay: {msg}");
                     return Err(e);
                 }
-                eprintln!("nvdr: connect failed: {msg}");
+                eprintln!("farrelay: connect failed: {msg}");
                 sleep_backoff(&mut backoff_ms, BACKOFF_MAX_MS).await;
                 continue;
             }
@@ -185,20 +185,20 @@ async fn run(args: Args) -> Result<()> {
 
         match session(conn, &channel, leader_char).await {
             SessionOutcome::Reconnect => {
-                eprintln!("nvdr: reconnecting…");
+                eprintln!("farrelay: reconnecting…");
                 backoff_ms = 500;
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             SessionOutcome::Dropped(msg) => {
-                eprintln!("nvdr: connection dropped ({msg}); reconnecting…");
+                eprintln!("farrelay: connection dropped ({msg}); reconnecting…");
                 sleep_backoff(&mut backoff_ms, BACKOFF_MAX_MS).await;
             }
             SessionOutcome::Quit => {
-                eprintln!("nvdr: bye.");
+                eprintln!("farrelay: bye.");
                 return Ok(());
             }
             SessionOutcome::Fatal(e) => {
-                eprintln!("nvdr: {e:#}");
+                eprintln!("farrelay: {e:#}");
                 return Err(e);
             }
         }
@@ -207,7 +207,7 @@ async fn run(args: Args) -> Result<()> {
 
 pub(crate) async fn sleep_backoff(backoff_ms: &mut u64, cap: u64) {
     let d = Duration::from_millis(*backoff_ms);
-    eprintln!("nvdr: waiting {:.1}s before retry", d.as_secs_f32());
+    eprintln!("farrelay: waiting {:.1}s before retry", d.as_secs_f32());
     tokio::time::sleep(d).await;
     *backoff_ms = (*backoff_ms * 2).min(cap);
 }
@@ -243,7 +243,7 @@ async fn session(conn: transport::TlsConn, channel: &str, leader_char: char) -> 
         leader_char.to_ascii_uppercase().to_string()
     };
     eprintln!(
-        "nvdr: raw mode on. Leader is Ctrl+{leader_label} — press it then a letter to send NVDA+<letter>. Type Ctrl+{leader_label} then `:help` for commands.\r",
+        "farrelay: raw mode on. Leader is Ctrl+{leader_label} — press it then a letter to send NVDA+<letter>. Type Ctrl+{leader_label} then `:help` for commands.\r",
     );
     let _ = std::io::stderr().flush();
 
@@ -349,7 +349,11 @@ fn writeln_raw<W: Write>(w: &mut W, line: &str) -> io::Result<()> {
 fn write_raw_buf(buf: &[u8]) {
     let mut stdout = std::io::stdout().lock();
     for line in buf.split_inclusive(|b| *b == b'\n') {
-        if let Some((body, _)) = line.split_last().filter(|(last, _)| **last == b'\n').map(|(last, rest)| (rest, last)) {
+        if let Some((body, _)) = line
+            .split_last()
+            .filter(|(last, _)| **last == b'\n')
+            .map(|(last, rest)| (rest, last))
+        {
             let _ = stdout.write_all(body);
             let _ = stdout.write_all(b"\r\n");
         } else {
@@ -476,7 +480,7 @@ pub(crate) async fn read_loop(
                     }
                     Err(e) => {
                         let preview: String = trimmed.chars().take(200).collect();
-                        eprintln!("nvdr: [skipped unparseable frame] {e}: {preview}\r");
+                        eprintln!("farrelay: [skipped unparseable frame] {e}: {preview}\r");
                     }
                 }
             }
@@ -565,7 +569,7 @@ fn handle_pin_mismatch(m: &PinMismatch, auto_accept: bool) -> Result<bool> {
     if accept {
         transport::store_pin(&m.path, &m.host, &m.got)
             .with_context(|| format!("updating pin at {}", m.path.display()))?;
-        eprintln!("nvdr: pin updated.");
+        eprintln!("farrelay: pin updated.");
     }
     Ok(accept)
 }
@@ -597,7 +601,7 @@ async fn run_script(args: Args) -> Result<()> {
         return Err(anyhow!("script contained no steps"));
     }
 
-    eprintln!("nvdr: connecting to {}:{}…", args.host, args.port);
+    eprintln!("farrelay: connecting to {}:{}…", args.host, args.port);
     let conn = transport::connect(
         &args.host,
         args.port,
@@ -671,11 +675,11 @@ async fn run_script(args: Args) -> Result<()> {
                         }
                     }
                     Inbound::NvdaNotConnected => {
-                        eprintln!("nvdr: warning: no NVDA slave connected to the channel");
+                        eprintln!("farrelay: warning: no NVDA slave connected to the channel");
                     }
                     Inbound::Error { error } => {
                         eprintln!(
-                            "nvdr: server error: {}",
+                            "farrelay: server error: {}",
                             error.as_deref().unwrap_or("(unspecified)")
                         );
                     }

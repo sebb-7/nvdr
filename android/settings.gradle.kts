@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "nvdr"
+rootProject.name = "farrelay"
 include(":app")

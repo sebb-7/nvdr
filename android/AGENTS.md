@@ -1,10 +1,10 @@
 # Agent guide for the Android port
 
-This is the native Android build of nvdr. It plays the same role as `../ios`:
+This is the native Android build of FarRelay. It plays the same role as `../ios`:
 bridge an Android device with a hardware (Bluetooth/USB) keyboard to a remote
-NVDA over SSH → `nvdr --ipc`, speak the slave's speech with on-device TTS, and
+NVDA over SSH → `farrelay --ipc`, speak the slave's speech with on-device TTS, and
 forward keystrokes back. Like the iOS port (and unlike `../mac`), capture is
-**focused-only** — keys are intercepted while the nvdr Activity is foreground.
+**focused-only** — keys are intercepted while the farrelay Activity is foreground.
 
 ## Role
 
@@ -21,7 +21,7 @@ users lean on TalkBack.
   - **SSHJ** (`com.hierynomus:sshj`) — SSH transport. Picked over JSch because
     it supports ed25519 and rsa-sha2 out of the box, so we do **not** reimplement
     the RSA-SHA2 signing dance the Swift ports needed for Citadel. BouncyCastle +
-    eddsa are its transitive crypto deps; `NvdrApp` swaps Android's stripped `BC`
+    eddsa are its transitive crypto deps; `FarRelayApp` swaps Android's stripped `BC`
     provider for the full one so key parsing works.
   - **Material Icons Extended** — UI glyphs.
 
@@ -44,17 +44,17 @@ those first.
    Mac keyboards paired to Android). US layout assumed. **`KeyMap` and the iOS
    `HIDToVK` / mac `MacKeyVK` don't share a table** — add a named key to all of
    them when you add one here.
-4. **`settings/`** — `AppSettings` (SharedPreferences, same `nvdr.*` keys as the
+4. **`settings/`** — `AppSettings` (SharedPreferences, same `farrelay.*` keys as the
    Swift `UserDefaults` store) + the `NvdaModifier` / `ModifierMapping` /
-   `SSHAuthMode` enums. `remoteCommand()` shell-quotes the `nvdr --ipc` argv
+   `SSHAuthMode` enums. `remoteCommand()` shell-quotes the `farrelay --ipc` argv
    exactly like the Swift `remoteCommand()`.
 5. **`speech/SpeechOutput.kt`** — `TextToSpeech` wrapper. Speaks as
    `USAGE_ASSISTANCE_ACCESSIBILITY`. Early utterances buffer until the engine
    initializes.
 6. **`net/BridgeClient.kt`** — the SSHJ driver. Opens an exec channel running
-   `nvdr --ipc`, runs the line protocol, routes `speak` to `SpeechOutput`,
+   `farrelay --ipc`, runs the line protocol, routes `speak` to `SpeechOutput`,
    pushes keys back. Auto-reconnects the SSH link with 500 ms→30 s backoff. The
-   relay-level `state disconnected`/`ready` events nvdr emits are informational
+   relay-level `state disconnected`/`ready` events farrelay emits are informational
    and never tear down the SSH session.
 7. **`MainActivity.kt`** — hosts Compose and captures the keyboard via
    `dispatchKeyEvent`. When forwarding is on, mapped keys are consumed and sent;
@@ -66,13 +66,13 @@ those first.
 
 ## Non-obvious invariants
 
-- **Every `key` line is `key <vk> <0|1>`** with a decimal Windows VK. nvdr fills
+- **Every `key` line is `key <vk> <0|1>`** with a decimal Windows VK. farrelay fills
   in scan_code/extended downstream; don't try to add them here.
 - **Forwarding is gated in `MainActivity`, not `BridgeClient`.** `BridgeClient`
   forwards whatever it's told. Toggling forwarding off sends `release_all`.
 - **`KeyMap` returns `null` for unmapped keys and the caller must let the system
   handle them** — otherwise Back/Home/volume break while forwarding.
-- **The BouncyCastle provider swap in `NvdrApp.onCreate` is load-bearing** for
+- **The BouncyCastle provider swap in `FarRelayApp.onCreate` is load-bearing** for
   SSHJ on Android. Don't remove it.
 - **Auto-repeat is dropped** (`event.repeatCount == 0` gate on key-down) so held
   keys don't flood the wire; key-up always sends.

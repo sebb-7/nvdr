@@ -117,4 +117,3 @@ fn parse_line(line: &str, nvda_vk: u16) -> Result<Step, String> {
         }
     }
 }
-

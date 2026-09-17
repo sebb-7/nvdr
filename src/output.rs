@@ -6,7 +6,9 @@ use crate::protocol::{self, Inbound};
 /// pleasant over screen readers / limited terminals.
 pub fn render<W: Write>(mut w: W, msg: &Inbound) -> io::Result<()> {
     match msg {
-        Inbound::ChannelJoined { channel, clients, .. } => {
+        Inbound::ChannelJoined {
+            channel, clients, ..
+        } => {
             let channel = channel.as_deref().unwrap_or("?");
             writeln!(
                 w,
@@ -62,10 +64,7 @@ pub fn render<W: Write>(mut w: W, msg: &Inbound) -> io::Result<()> {
         }
         Inbound::Wave { file_name } => {
             if let Some(p) = file_name {
-                let base = p
-                    .rsplit(|c| c == '/' || c == '\\')
-                    .next()
-                    .unwrap_or(p.as_str());
+                let base = p.rsplit(['/', '\\']).next().unwrap_or(p.as_str());
                 writeln!(w, "[sound: {base}]")?;
             }
         }
@@ -73,12 +72,7 @@ pub fn render<W: Write>(mut w: W, msg: &Inbound) -> io::Result<()> {
             writeln!(w, "[braille {} cells]", cells.len())?;
         }
         Inbound::SetClipboardText { text } => {
-            let preview: String = text
-                .as_deref()
-                .unwrap_or("")
-                .chars()
-                .take(80)
-                .collect();
+            let preview: String = text.as_deref().unwrap_or("").chars().take(80).collect();
             writeln!(w, "[slave clipboard set: {preview}]")?;
         }
         Inbound::Unknown => { /* silent per §5.11 */ }

@@ -64,7 +64,6 @@ pub fn scan_for_vk(vk: u16) -> u32 {
         VK_LMENU | VK_MENU => 0x38,
         VK_SPACE => 0x39,
         VK_CAPITAL => 0x3A,
-        VK_F1 => 0x3B,
         VK_F1..=0x79 => 0x3B + (vk - VK_F1) as u32,
         VK_NUMLOCK => 0x45,
         VK_SCROLL => 0x46,

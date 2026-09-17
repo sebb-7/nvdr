@@ -1,0 +1,255 @@
+import Foundation
+import Observation
+
+/// Feature lifecycle state for one interactive terminal owned by `SSHTerminalHost`.
+enum SSHTerminalHostState: Equatable, Sendable {
+    case idle
+    case connecting
+    case connected
+    case ended
+    case failed(String)
+    case closed
+
+    var presentationState: TerminalPresentationSessionState {
+        switch self {
+        case .idle: .idle
+        case .connecting: .connecting
+        case .connected: .connected
+        case .ended: .ended
+        case .failed(let message): .failed(message)
+        case .closed: .closed
+        }
+    }
+
+    /// Truthful, VoiceOver-readable status for the Terminals workspace.
+    var statusLabel: String {
+        switch self {
+        case .idle: "Starting"
+        case .connecting: "Connecting"
+        case .connected: "Connected"
+        case .ended: "Ended"
+        case .failed(let message): "Failed: \(message)"
+        case .closed: "Closed"
+        }
+    }
+}
+
+/// The narrow connection surface needed by the terminal feature host.
+protocol SSHTerminalHostConnection: Sendable {
+    func connect() async throws
+    func withTerminalPTY(
+        configuration: SSHPTYConfiguration,
+        operation: @escaping @Sendable (any SSHPTYTransporting) async throws -> Void
+    ) async throws
+    func close() async throws
+}
+
+protocol SSHTerminalHostConnectionFactory: Sendable {
+    func makeConnection(
+        configuration: SSHSessionConfiguration
+    ) -> any SSHTerminalHostConnection
+}
+
+struct ProductionSSHTerminalHostConnectionFactory: SSHTerminalHostConnectionFactory {
+    func makeConnection(
+        configuration: SSHSessionConfiguration
+    ) -> any SSHTerminalHostConnection {
+        SSHSession(configuration: configuration)
+    }
+}
+
+extension SSHSession: SSHTerminalHostConnection {
+    func withTerminalPTY(
+        configuration: SSHPTYConfiguration,
+        operation: @escaping @Sendable (any SSHPTYTransporting) async throws -> Void
+    ) async throws {
+        try await withPTY(configuration: configuration) { transport in
+            try await operation(transport)
+        }
+    }
+}
+
+/// Owns composition and top-level lifecycle for one interactive SSH terminal.
+/// Parsing, accessibility interpretation, and presentation remain in their
+/// dedicated lower layers.
+@Observable
+@MainActor
+final class SSHTerminalHost {
+    private(set) var state: SSHTerminalHostState = .idle
+    private(set) var activeProfile: HostProfile?
+    let presentation = TerminalPresentationModel()
+    var onStateChange: (@MainActor (SSHTerminalHostState, SSHTerminalHostState) -> Void)?
+
+    private let connectionFactory: any SSHTerminalHostConnectionFactory
+    private var connection: (any SSHTerminalHostConnection)?
+    private var terminalSession: SSHTerminalSession?
+    private var driver: Task<Void, Never>?
+    private var generation = 0
+
+    init(
+        connectionFactory: any SSHTerminalHostConnectionFactory = ProductionSSHTerminalHostConnectionFactory()
+    ) {
+        self.connectionFactory = connectionFactory
+    }
+
+    isolated deinit {
+        terminalSession?.close()
+        driver?.cancel()
+        let connection = connection
+        Task {
+            try? await connection?.close()
+        }
+    }
+
+    /// Starts a terminal for the explicitly selected computer. Terminal
+    /// transport does not consult global SSH preferences.
+    func start(settings: AppSettings, profile: HostProfile) async {
+        guard let configuration = settings.sshSessionConfiguration(for: profile) else {
+            fail("Select a complete computer profile before opening the terminal.")
+            return
+        }
+        await close()
+        activeProfile = profile
+        await start(configuration: configuration, closingExisting: false)
+    }
+
+    /// A configuration entry point keeps lifecycle tests deterministic without
+    /// creating a second app settings or credential system.
+    func start(configuration: SSHSessionConfiguration) async {
+        await start(configuration: configuration, closingExisting: true)
+    }
+
+    private func start(configuration: SSHSessionConfiguration, closingExisting: Bool) async {
+        if closingExisting { await close() }
+        do {
+            _ = try SSHSession.authenticationSummary(for: configuration)
+        } catch {
+            fail(error.localizedDescription)
+            return
+        }
+
+        generation &+= 1
+        let generation = generation
+        let connection = connectionFactory.makeConnection(configuration: configuration)
+        self.connection = connection
+        transition(to: .connecting)
+        presentation.beginConnecting()
+        driver = Task { [weak self] in
+            await self?.run(
+                connection: connection,
+                generation: generation
+            )
+        }
+    }
+
+    /// Closes the PTY reader before releasing the SSH connection. Repeated
+    /// close calls are safe and do not start replacement work.
+    func close() async {
+        generation &+= 1
+        let terminalSession = terminalSession
+        self.terminalSession = nil
+        terminalSession?.close()
+
+        driver?.cancel()
+        driver = nil
+        let connection = connection
+        self.connection = nil
+        activeProfile = nil
+        transition(to: .closed)
+        try? await connection?.close()
+    }
+
+    private func run(
+        connection: any SSHTerminalHostConnection,
+        generation: Int
+    ) async {
+        do {
+            try await connection.connect()
+            try ensureCurrent(generation)
+            let ptyConfiguration = try SSHPTYConfiguration()
+            try await connection.withTerminalPTY(configuration: ptyConfiguration) { [weak self] transport in
+                guard let self else { throw CancellationError() }
+                try await self.runTerminal(transport: transport, generation: generation)
+            }
+            await release(connection: connection, generation: generation)
+        } catch is CancellationError {
+            await release(connection: connection, generation: generation)
+        } catch {
+            guard isCurrent(generation) else { return }
+            fail(startupFailureMessage(for: error))
+            await release(connection: connection, generation: generation)
+        }
+    }
+
+    private func runTerminal(
+        transport: any SSHPTYTransporting,
+        generation: Int
+    ) async throws {
+        try ensureCurrent(generation)
+        let session = SSHTerminalSession(transport: transport)
+        terminalSession = session
+        session.start()
+        presentation.attach(session)
+        transition(to: .connected)
+
+        let terminalState = await session.waitForCompletion()
+        try ensureCurrent(generation)
+        terminalSession = nil
+        presentation.refresh()
+        switch terminalState {
+        case .ended:
+            transition(to: .ended)
+        case .failed(let message):
+            fail("Terminal session failed: \(message)")
+        case .closed:
+            transition(to: .closed)
+        case .idle, .running:
+            fail("Terminal session ended unexpectedly.")
+        }
+    }
+
+    private func release(
+        connection: any SSHTerminalHostConnection,
+        generation: Int
+    ) async {
+        guard isCurrent(generation) else { return }
+        try? await connection.close()
+        guard isCurrent(generation) else { return }
+        self.connection = nil
+        driver = nil
+        activeProfile = nil
+        if state == .connected {
+            transition(to: .ended)
+        }
+    }
+
+    private func ensureCurrent(_ generation: Int) throws {
+        guard isCurrent(generation), !Task.isCancelled else {
+            throw CancellationError()
+        }
+    }
+
+    private func isCurrent(_ generation: Int) -> Bool {
+        self.generation == generation
+    }
+
+    private func startupFailureMessage(for error: Error) -> String {
+        if error is SSHAuthenticationError {
+            return error.localizedDescription
+        }
+        return "Unable to start the SSH terminal. Check the host, network, and credentials."
+    }
+
+    private func fail(_ message: String) {
+        transition(to: .failed(message))
+    }
+
+    private func transition(to newState: SSHTerminalHostState) {
+        let oldState = state
+        state = newState
+        presentation.setSessionState(newState.presentationState)
+        if oldState != newState {
+            onStateChange?(oldState, newState)
+        }
+    }
+}

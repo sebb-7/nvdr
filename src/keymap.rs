@@ -151,7 +151,11 @@ fn map_char(c: char) -> Option<MappedKey> {
 /// `nvda_vk` lets the caller decide whether NVDA = Insert or CapsLock.
 /// Returns the full down/up transition list, in proper modifier-nested order.
 pub fn parse_combo(spec: &str, nvda_vk: u16) -> Result<Vec<Transition>, String> {
-    let parts: Vec<&str> = spec.split('+').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = spec
+        .split('+')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if parts.is_empty() {
         return Err("empty key spec".into());
     }
@@ -172,8 +176,7 @@ pub fn parse_combo(spec: &str, nvda_vk: u16) -> Result<Vec<Transition>, String> 
             mod_vks.push(vk);
         }
     }
-    let base_mapped = parse_named_key(base)
-        .ok_or_else(|| format!("unknown key: {base}"))?;
+    let base_mapped = parse_named_key(base).ok_or_else(|| format!("unknown key: {base}"))?;
     // If the base requires Shift to type (e.g. `?`) and the user didn't
     // already include it, add it.
     let mut shift_added = false;

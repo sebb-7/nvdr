@@ -64,7 +64,7 @@ impl ServerCertVerifier for PinnedVerifier {
     ) -> Result<ServerCertVerified, rustls::Error> {
         let fp = sha256_hex(end_entity.as_ref());
         if self.insecure {
-            eprintln!("nvdr: [insecure] accepting cert fingerprint {fp}");
+            eprintln!("farrelay: [insecure] accepting cert fingerprint {fp}");
             return Ok(ServerCertVerified::assertion());
         }
         if let Some(req) = &self.required {
@@ -91,12 +91,12 @@ impl ServerCertVerifier for PinnedVerifier {
                 }
                 Ok(None) => {
                     eprintln!(
-                        "nvdr: [TOFU] first connection to {key}, pinning fingerprint {fp}\n\
+                        "farrelay: [TOFU] first connection to {key}, pinning fingerprint {fp}\n\
                          (cached in {})",
                         path.display()
                     );
                     if let Err(e) = store_pin(path, key, &fp) {
-                        eprintln!("nvdr: warning, failed to persist pin: {e}");
+                        eprintln!("farrelay: warning, failed to persist pin: {e}");
                     }
                     return Ok(ServerCertVerified::assertion());
                 }
@@ -197,7 +197,31 @@ pub fn store_pin(path: &std::path::Path, key: &str, fp: &str) -> io::Result<()> 
 }
 
 pub fn default_pin_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("nvdr").join("known_hosts"))
+    dirs::config_dir().map(|config_dir| {
+        let farrelay_path = config_dir.join("farrelay").join("known_hosts");
+        let legacy_path = config_dir.join("nvdr").join("known_hosts");
+
+        if !farrelay_path.exists() && legacy_path.is_file() {
+            if let Some(parent) = farrelay_path.parent() {
+                if fs::create_dir_all(parent).is_ok()
+                    && fs::copy(&legacy_path, &farrelay_path).is_ok()
+                {
+                    eprintln!(
+                        "farrelay: migrated legacy TLS pins from {}",
+                        legacy_path.display()
+                    );
+                }
+            }
+        }
+
+        if farrelay_path.exists() {
+            farrelay_path
+        } else if legacy_path.is_file() {
+            legacy_path
+        } else {
+            farrelay_path
+        }
+    })
 }
 
 pub async fn connect(
@@ -243,4 +267,3 @@ pub async fn connect(
         .map_err(|e| anyhow!("TLS handshake: {e}"))?;
     Ok(stream)
 }
-
