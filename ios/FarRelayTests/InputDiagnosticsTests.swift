@@ -13,7 +13,8 @@ final class InputDiagnosticsTests: XCTestCase {
             diagnostics.observe(source: .rawPress, hidUsage: sequence, pressed: true, virtualKey: VK.f1, result: "queued for transmission")
         }
         XCTAssertEqual(diagnostics.entries.count, 50)
-        XCTAssertEqual(diagnostics.entries.first?.sequence, 1)
+        XCTAssertEqual(diagnostics.entries.first?.sequence, 6)
+        XCTAssertEqual(diagnostics.entries.last?.sequence, 55)
         XCTAssertTrue(diagnostics.entries.last?.reportLine.contains("VK 112") == true)
     }
 
