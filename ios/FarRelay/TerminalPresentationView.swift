@@ -419,4 +419,3 @@ private final class NativeTerminalTextField: UITextField {
         #endif
     }
 }
-
