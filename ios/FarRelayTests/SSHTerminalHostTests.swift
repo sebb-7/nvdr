@@ -104,6 +104,7 @@ final class SSHTerminalHostTests: XCTestCase {
         host = nil
 
         await waitUntil { await connection.didObserveReaderCancellation() }
+        await waitUntil { releasedHost == nil }
         XCTAssertNil(releasedHost)
     }
 
