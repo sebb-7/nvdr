@@ -18,13 +18,16 @@ jobs:
       BUNDLE_ID: com.sebb7.farrelay
       BUILD_NUMBER: ${{ github.run_number }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      KEYCHAIN_PATH: ${{ runner.temp }}/farrelay-signing.keychain-db
-      ARCHIVE_PATH: ${{ runner.temp }}/FarRelay.xcarchive
-      EXPORT_PATH: ${{ runner.temp }}/FarRelay-export
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Configure temporary paths
+        run: |
+          echo "KEYCHAIN_PATH=$RUNNER_TEMP/farrelay-signing.keychain-db" >> "$GITHUB_ENV"
+          echo "ARCHIVE_PATH=$RUNNER_TEMP/FarRelay.xcarchive" >> "$GITHUB_ENV"
+          echo "EXPORT_PATH=$RUNNER_TEMP/FarRelay-export" >> "$GITHUB_ENV"
 
       - name: Select Apple toolchain
         run: |
