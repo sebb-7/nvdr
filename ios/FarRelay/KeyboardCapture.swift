@@ -12,11 +12,13 @@ import UIKit
 struct KeyboardCapture: UIViewRepresentable {
     let bridge: BridgeClient
     let settings: AppSettings
+    let diagnostics: InputDiagnosticStore
 
     func makeUIView(context: Context) -> CaptureView {
         let v = CaptureView()
         v.bridge = bridge
         v.settings = settings
+        v.diagnostics = diagnostics
         v.backgroundColor = .clear
         v.isAccessibilityElement = false
         Task { @MainActor in _ = v.becomeFirstResponder() }
@@ -26,6 +28,11 @@ struct KeyboardCapture: UIViewRepresentable {
     func updateUIView(_ view: CaptureView, context: Context) {
         view.bridge = bridge
         view.settings = settings
+        view.diagnostics = diagnostics
+        // UIKit caches responder key commands. The previous capture view never
+        // invalidated that cache after forwarding changed, leaving its F-key
+        // fallback absent after reconnecting or returning to this screen.
+        view.setNeedsUpdateOfKeyCommands()
         if bridge.forwardingEnabled {
             if view.window != nil, !view.isFirstResponder {
                 Task { @MainActor in _ = view.becomeFirstResponder() }
@@ -45,6 +52,7 @@ struct KeyboardCapture: UIViewRepresentable {
 final class CaptureView: UIView {
     var bridge: BridgeClient?
     var settings: AppSettings?
+    var diagnostics: InputDiagnosticStore?
     private var priorityDuplicateGate = PriorityRawDuplicateGate()
 
     override var canBecomeFirstResponder: Bool { true }
@@ -52,7 +60,11 @@ final class CaptureView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
-            Task { @MainActor in _ = self.becomeFirstResponder() }
+            Task { @MainActor in
+                let active = self.becomeFirstResponder()
+                self.diagnostics?.observe(source: .responder, result: active ? "first responder active" : "first responder request failed")
+                self.setNeedsUpdateOfKeyCommands()
+            }
         }
     }
 
@@ -91,12 +103,23 @@ final class CaptureView: UIView {
         var claimed = false
         for press in presses {
             guard let key = press.key else { continue }
-            guard let vk = HIDToVK.vk(for: key, optionMapping: optionMap, commandMapping: commandMap) else { continue }
+            let vk = HIDToVK.vk(for: key, optionMapping: optionMap, commandMapping: commandMap)
+            diagnostics?.observe(
+                source: .rawPress,
+                hidUsage: key.keyCode.rawValue,
+                modifiers: key.modifierFlags.rawValue,
+                pressed: pressed,
+                virtualKey: vk,
+                result: vk == nil ? "unmapped HID usage" : "mapped"
+            )
+            guard let vk else { continue }
             if priorityDuplicateGate.suppressesRaw(vk: vk, pressed: pressed) {
+                diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: "suppressed duplicate")
                 claimed = true
                 continue
             }
-            bridge.sendKey(vk: vk, pressed: pressed)
+            let result = bridge.sendKey(vk: vk, pressed: pressed)
+            diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: result.diagnosticText)
             claimed = true
         }
         return claimed
@@ -120,20 +143,29 @@ final class CaptureView: UIView {
     }
 
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
-        guard let bridge, bridge.forwardingEnabled,
-              let input = command.input,
-              let transitions = ReservedKeyForwardingPolicy.transitions(
+        guard let bridge, bridge.forwardingEnabled, let input = command.input else { return }
+        guard let transitions = ReservedKeyForwardingPolicy.transitions(
                 for: input,
                 modifierFlags: command.modifierFlags,
                 optionMapping: settings?.optionMapping ?? .alt,
                 commandMapping: settings?.commandMapping ?? .alt
-              ) else { return }
+              ) else {
+            diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, result: "unmapped key command")
+            return
+        }
         // UIKeyCommand does not expose key-up callbacks. Reconstruct the full
         // Windows chord as a deterministic tap, then suppress a matching raw
         // path if UIKit happens to deliver both representations.
         priorityDuplicateGate.recordPriorityTransitions(transitions)
         for transition in transitions {
-            bridge.sendKey(vk: transition.vk, pressed: transition.pressed)
+            let result = bridge.sendKey(vk: transition.vk, pressed: transition.pressed)
+            diagnostics?.observe(
+                source: .keyCommand,
+                modifiers: command.modifierFlags.rawValue,
+                pressed: transition.pressed,
+                virtualKey: transition.vk,
+                result: result.diagnosticText
+            )
         }
     }
 }

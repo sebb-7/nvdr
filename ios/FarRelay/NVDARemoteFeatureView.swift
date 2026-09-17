@@ -4,12 +4,14 @@ struct NVDARemoteFeatureView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(BridgeClient.self) private var bridge
     @Environment(InteractionFeedback.self) private var interactionFeedback
+    @Environment(InputDiagnosticStore.self) private var inputDiagnostics
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
     @State private var presentedIssue: UserFacingIssue?
 
     var body: some View {
+        @Bindable var diagnostics = inputDiagnostics
         Form {
             Section("Computer") {
                 Text(profile.displayName)
@@ -33,11 +35,34 @@ struct NVDARemoteFeatureView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section("Input diagnostics") {
+                Toggle("Record remote keyboard diagnostics", isOn: $diagnostics.isEnabled)
+                Text("Records only key metadata and forwarding results. It never records typed text, credentials, terminal content, or speech.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button("Copy input diagnostic report", systemImage: "doc.on.doc") {
+                    AppClipboard.copy(inputDiagnostics.report(connectionState: statusLabel))
+                }
+                Button("Clear input diagnostics", role: .destructive) {
+                    inputDiagnostics.clear()
+                }
+                .disabled(inputDiagnostics.entries.isEmpty)
+                if let last = inputDiagnostics.entries.last {
+                    Text("Last event: \(last.reportLine)").font(.footnote.monospaced()).foregroundStyle(.secondary)
+                }
+            }
             Section("Last spoken") { Text(bridge.lastSpeech.isEmpty ? "—" : bridge.lastSpeech) }
             Section("Log") { ForEach(bridge.log.indices, id: \.self) { Text(bridge.log[$0]).font(.caption.monospaced()) } }
         }
         .navigationTitle("NVDA Remote")
-        .overlay { KeyboardCapture(bridge: bridge, settings: settings).frame(height: 0) }
+        // The old zero-height overlay could not reliably retain responder
+        // ownership on physical keyboards. Keep a real, non-interactive view
+        // in the hierarchy while leaving it unavailable to touch and VoiceOver.
+        .background {
+            KeyboardCapture(bridge: bridge, settings: settings, diagnostics: inputDiagnostics)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .onChange(of: bridge.status) { old, new in
             handleStatusChange(from: old, to: new)
         }

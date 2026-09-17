@@ -173,10 +173,30 @@ final class BridgeClient {
         commandContinuation?.yield(command)
     }
 
-    func sendKey(vk: UInt16, pressed: Bool) {
-        guard forwardingEnabled, status == .ready, inputReady, let commandContinuation else { return }
-        guard let command = inputState.command(forKey: vk, pressed: pressed) else { return }
-        commandContinuation.yield(command)
+    @discardableResult
+    func sendKey(vk: UInt16, pressed: Bool) -> InputForwardingResult {
+        guard forwardingEnabled else {
+            return .rejected("forwarding is off")
+        }
+        guard status == .ready else {
+            return .rejected("connection is not ready")
+        }
+        guard inputReady, let commandContinuation else {
+            return .rejected("input channel is not ready")
+        }
+        guard let command = inputState.command(forKey: vk, pressed: pressed) else {
+            return .rejected("unpaired key-up")
+        }
+        switch commandContinuation.yield(command) {
+        case .enqueued:
+            return .accepted
+        case .dropped:
+            return .rejected("transmission queue is full")
+        case .terminated:
+            return .rejected("transmission channel ended")
+        @unknown default:
+            return .rejected("unknown transmission state")
+        }
     }
 
     /// Read-only input readiness for semantic adapters. This never changes

@@ -118,6 +118,7 @@ jobs:
           FARRELAY_PROFILE_NAME="$PROFILE_NAME"
           FARRELAY_OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"
           FARRELAY_BUILD_NUMBER="$BUILD_NUMBER"
+          FARRELAY_SOURCE_REVISION="${GITHUB_SHA:0:12}"
 
       - name: Export App Store Connect IPA
         env:

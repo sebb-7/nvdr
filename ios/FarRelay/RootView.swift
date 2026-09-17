@@ -152,6 +152,7 @@ private enum HomeDestination: Hashable {
 private struct HomeTabView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(TerminalSessionManager.self) private var terminals
+    @Environment(BridgeClient.self) private var bridge
     @Binding var showingSettings: Bool
     @State private var addingProfile = false
     @State private var path = NavigationPath()
@@ -165,13 +166,12 @@ private struct HomeTabView: View {
                 } else {
                     Section("Computers") {
                         ForEach(settings.hostProfiles) { profile in
-                            NavigationLink(value: HomeDestination.computer(profile.id)) {
-                                VStack(alignment: .leading) {
-                                    Text(profile.displayName)
-                                    Text("\(profile.platform.label) · \(profile.username)@\(profile.address):\(profile.port)")
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                }
-                            }
+                            ComputerStatusRow(
+                                profile: profile,
+                                status: FarRelayComputerStatus.derive(profile: profile, bridge: bridge, terminals: terminals),
+                                openProfile: { path.append(HomeDestination.computer(profile.id)) },
+                                performConnectionAction: { performConnectionAction(for: profile) }
+                            )
                             .namedAccessibilityActions(
                                 HostProfileActionPolicy.actions(for: profile, preferences: settings.voiceOverActionPreferences),
                                 name: \.name
@@ -241,6 +241,44 @@ private struct HomeTabView: View {
             path.append(HomeDestination.computer(profile.id))
         case .delete:
             pendingDeletion = profile
+        }
+    }
+
+    private func performConnectionAction(for profile: HostProfile) {
+        let status = FarRelayComputerStatus.derive(profile: profile, bridge: bridge, terminals: terminals)
+        switch status.connection.action {
+        case .connect:
+            bridge.start(settings: settings, profile: profile)
+        case .cancel, .disconnect:
+            bridge.stop(for: profile.id)
+        }
+    }
+}
+
+private struct ComputerStatusRow: View {
+    let profile: HostProfile
+    let status: FarRelayComputerStatus
+    let openProfile: () -> Void
+    let performConnectionAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: openProfile) {
+                VStack(alignment: .leading) {
+                    Text(profile.displayName)
+                    Text(status.connection.label).font(.footnote).foregroundStyle(.secondary)
+                    Text(status.nvdaSummary).font(.footnote).foregroundStyle(.secondary)
+                    Text(status.terminalSummary).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(profile.displayName). \(status.accessibilityLabel)")
+            .accessibilityHint("Opens this computer's settings.")
+
+            Button(status.connection.action.title, action: performConnectionAction)
+                .buttonStyle(.bordered)
+                .disabled(!profile.isNVDARemoteEnabled)
+                .accessibilityHint("\(status.detail)")
         }
     }
 }
