@@ -3,6 +3,7 @@ import SwiftUI
 struct MacRemoteFeatureView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(MacRemoteSession.self) private var session
+    @Environment(RemoteIntentRouter.self) private var router
     let profile: HostProfile
 
     var body: some View {
@@ -13,7 +14,10 @@ struct MacRemoteFeatureView: View {
                 LabeledContent("Keyboard forwarding", value: session.keyboardForwardingActive ? "Active" : "Inactive")
                 Button(isConnected ? "Disconnect" : "Connect", systemImage: "network") {
                     if isConnected { session.disconnect() }
-                    else if let credentials = settings.credentials(for: profile) { session.connect(profile: profile, credentials: credentials) }
+                    else if let credentials = settings.credentials(for: profile) {
+                        _ = router.setActiveTarget(id: MacRemoteIntentTarget.defaultID)
+                        session.connect(profile: profile, credentials: credentials)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -28,11 +32,11 @@ struct MacRemoteFeatureView: View {
             }
 
             Section("Test keyboard commands") {
-                Button("VoiceOver Right") { session.sendCombo([.leftControl, .leftOption, .rightArrow]) }
-                Button("VoiceOver Left") { session.sendCombo([.leftControl, .leftOption, .leftArrow]) }
-                Button("VoiceOver Activate") { session.sendCombo([.leftControl, .leftOption, .space]) }
-                Button("Command-Tab") { session.sendCombo([.leftCommand, .tab]) }
-                Text("These buttons send physical HID key events through the Mac Remote lease. Hardware-keyboard forwarding is the next validation target; do not treat this UI test as proof of physical keyboard behavior.")
+                Button("VoiceOver Right") { route(.macRemote(.nextItem)) }
+                Button("VoiceOver Left") { route(.macRemote(.previousItem)) }
+                Button("VoiceOver Activate") { route(.macRemote(.activate)) }
+                Button("Command-Tab") { route(.macRemote(.nextApplication)) }
+                Text("These semantic actions route through the selected Mac target and its controller lease. Hardware-keyboard forwarding is the next validation target; do not treat this UI test as proof of physical keyboard behavior.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -55,5 +59,9 @@ struct MacRemoteFeatureView: View {
         case .controlBusy: "Control busy"
         case .failed(let message): "Failed: \(message)"
         }
+    }
+
+    private func route(_ intent: RemoteIntent) {
+        Task { _ = await router.route(intent) }
     }
 }

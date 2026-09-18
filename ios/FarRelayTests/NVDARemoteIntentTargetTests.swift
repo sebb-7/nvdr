@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import FarRelay
 
@@ -89,6 +90,7 @@ private struct KeyTransition: Equatable {
 @MainActor
 private final class FakeWindowsKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady: Bool
+    var activeProfileID: UUID?
     var transitions: [KeyTransition] = []
 
     init(isInputForwardingReady: Bool = true) {

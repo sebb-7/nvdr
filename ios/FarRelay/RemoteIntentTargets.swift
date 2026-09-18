@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 protocol RemoteWindowsKeySink: AnyObject {
     var isInputForwardingReady: Bool { get }
+    var activeProfileID: UUID? { get }
     func sendKey(vk: UInt16, pressed: Bool)
 }
 
@@ -13,9 +14,8 @@ extension BridgeClient: RemoteWindowsKeySink {}
 /// is never targeted. Future controller bindings should select a
 /// `TerminalSession` ID rather than a list position.
 @MainActor
-final class TerminalRemoteIntentTarget: RemoteIntentTarget {
+final class TerminalRemoteIntentTarget: HostTargetExecutor {
     let remoteTargetID: RemoteTargetID
-    let remoteTargetName = "SSH terminal"
     let capabilities: Set<RemoteCapability> = [
         .genericNavigation,
         .terminalControl,
@@ -23,12 +23,16 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
     ]
 
     private let resolvePresentation: @MainActor () -> TerminalPresentationModel?
+    private let resolveProfile: @MainActor () -> HostProfile?
+    private let resolveSessionID: @MainActor () -> UUID?
 
     init(
         presentation: TerminalPresentationModel,
         id: RemoteTargetID = RemoteTargetID("ssh-terminal")
     ) {
         self.resolvePresentation = { presentation }
+        resolveProfile = { nil }
+        resolveSessionID = { nil }
         remoteTargetID = id
     }
 
@@ -37,7 +41,35 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
         id: RemoteTargetID = RemoteTargetID("ssh-terminal")
     ) {
         self.resolvePresentation = { manager.currentTerminalPresentation }
+        resolveProfile = {
+            guard let id = manager.presentedSessionID else { return nil }
+            return manager.session(id: id)?.profileSnapshot
+        }
+        resolveSessionID = { manager.presentedSessionID }
         remoteTargetID = id
+    }
+
+    var target: HostTarget {
+        let presentation = resolvePresentation()
+        let state: HostTarget.ConnectionState
+        if presentation == nil {
+            state = .disconnected
+        } else if presentation?.sessionState == .connected {
+            state = .ready
+        } else {
+            state = .unavailable("The SSH terminal is not connected.")
+        }
+        let profile = resolveProfile()
+        return HostTarget(
+            id: remoteTargetID,
+            displayName: profile?.displayName ?? "SSH terminal",
+            profileID: profile?.id,
+            sessionID: resolveSessionID(),
+            platform: profile?.platform ?? .other,
+            kind: .sshTerminal,
+            connectionState: state,
+            capabilities: capabilities
+        )
     }
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
@@ -99,9 +131,8 @@ final class TerminalRemoteIntentTarget: RemoteIntentTarget {
 
 /// Translates semantic intent into the bridge's existing Windows key events.
 @MainActor
-final class NVDARemoteIntentTarget: RemoteIntentTarget {
+final class NVDARemoteIntentTarget: HostTargetExecutor {
     let remoteTargetID: RemoteTargetID
-    let remoteTargetName = "NVDA"
     let capabilities: Set<RemoteCapability> = [
         .genericNavigation,
         .applicationNavigation,
@@ -117,6 +148,21 @@ final class NVDARemoteIntentTarget: RemoteIntentTarget {
     ) {
         self.keySink = keySink
         remoteTargetID = id
+    }
+
+    var target: HostTarget {
+        HostTarget(
+            id: remoteTargetID,
+            displayName: "NVDA Remote",
+            profileID: keySink.activeProfileID,
+            sessionID: nil,
+            platform: .windows,
+            kind: .nvdaRemote,
+            connectionState: keySink.isInputForwardingReady
+                ? .ready
+                : .unavailable("NVDA input forwarding is unavailable."),
+            capabilities: capabilities
+        )
     }
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
@@ -199,6 +245,54 @@ final class NVDARemoteIntentTarget: RemoteIntentTarget {
             return UInt16(scalar.value)
         }
         return nil
+    }
+}
+
+/// Keeps Mac Remote's controller lease and key-injection ownership in
+/// `MacRemoteSession` while exposing only semantic actions to the router.
+@MainActor
+protocol MacRemoteIntentControlling: AnyObject {
+    var activeProfile: HostProfile? { get }
+    var remoteIntentConnectionState: HostTarget.ConnectionState { get }
+
+    func performMacRemoteAction(_ action: MacRemoteAction) async -> RemoteIntentResult
+}
+
+@MainActor
+final class MacRemoteIntentTarget: HostTargetExecutor {
+    static let defaultID = RemoteTargetID("mac-remote")
+
+    private let controller: any MacRemoteIntentControlling
+
+    init(
+        controller: any MacRemoteIntentControlling,
+        id: RemoteTargetID = defaultID
+    ) {
+        self.controller = controller
+        self.id = id
+    }
+
+    private let id: RemoteTargetID
+    private let capabilities: Set<RemoteCapability> = [.macRemoteControl]
+
+    var target: HostTarget {
+        let profile = controller.activeProfile
+        return HostTarget(
+            id: id,
+            displayName: profile?.displayName ?? "Mac Remote",
+            profileID: profile?.id,
+            sessionID: nil,
+            platform: .macOS,
+            kind: .macRemote,
+            connectionState: controller.remoteIntentConnectionState,
+            capabilities: capabilities
+        )
+    }
+
+    func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
+        guard capabilities.contains(intent.requiredCapability) else { return .unsupported }
+        guard case .macRemote(let action) = intent else { return .unsupported }
+        return await controller.performMacRemoteAction(action)
     }
 }
 

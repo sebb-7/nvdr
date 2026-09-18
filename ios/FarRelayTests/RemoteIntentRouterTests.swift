@@ -9,6 +9,7 @@ final class RemoteIntentRouterTests: XCTestCase {
         let result = await router.route(.nextItem)
 
         XCTAssertEqual(result, .unavailable("No remote target is active."))
+        XCTAssertEqual(router.lastDecision, .noActiveTarget(intent: .nextItem))
     }
 
     func testExplicitSelectionRoutesOnlyToSelectedTargetAndExposesCapabilities() async {
@@ -30,10 +31,12 @@ final class RemoteIntentRouterTests: XCTestCase {
         XCTAssertEqual(router.activeTargetName, "second")
         XCTAssertEqual(router.activeCapabilities, [.genericNavigation, .rawKeyInput])
         XCTAssertEqual(router.capabilities(for: first.remoteTargetID), [.genericNavigation])
+        XCTAssertEqual(router.target(for: second.remoteTargetID)?.kind, .sshTerminal)
 
         let result = await router.route(.nextItem)
 
         XCTAssertEqual(result, .performed)
+        XCTAssertEqual(router.lastDecision, .dispatched(targetID: second.remoteTargetID, intent: .nextItem))
         XCTAssertTrue(first.performedIntents.isEmpty)
         XCTAssertEqual(second.performedIntents, [.nextItem])
     }
@@ -68,6 +71,10 @@ final class RemoteIntentRouterTests: XCTestCase {
         let unavailable = await router.route(.nextItem)
 
         XCTAssertEqual(unsupported, .unsupported)
+        XCTAssertEqual(
+            router.lastDecision,
+            .dispatched(targetID: target.remoteTargetID, intent: .nextItem)
+        )
         XCTAssertEqual(unavailable, .unavailable("Target is disconnected."))
         XCTAssertEqual(target.performedIntents, [.nextItem])
     }
@@ -85,6 +92,7 @@ final class RemoteIntentRouterTests: XCTestCase {
 
         XCTAssertNil(router.activeTargetID)
         XCTAssertEqual(result, .unavailable("No remote target is active."))
+        XCTAssertEqual(router.lastDecision, .noActiveTarget(intent: .nextItem))
         XCTAssertTrue(other.performedIntents.isEmpty)
     }
 
@@ -99,9 +107,8 @@ final class RemoteIntentRouterTests: XCTestCase {
 }
 
 @MainActor
-private final class FakeRemoteIntentTarget: RemoteIntentTarget {
+private final class FakeRemoteIntentTarget: HostTargetExecutor {
     let remoteTargetID: RemoteTargetID
-    let remoteTargetName: String
     let capabilities: Set<RemoteCapability>
     var result: RemoteIntentResult
     private(set) var performedIntents: [RemoteIntent] = []
@@ -112,9 +119,21 @@ private final class FakeRemoteIntentTarget: RemoteIntentTarget {
         result: RemoteIntentResult = .performed
     ) {
         remoteTargetID = id
-        remoteTargetName = id.rawValue
         self.capabilities = capabilities
         self.result = result
+    }
+
+    var target: HostTarget {
+        HostTarget(
+            id: remoteTargetID,
+            displayName: remoteTargetID.rawValue,
+            profileID: nil,
+            sessionID: nil,
+            platform: .other,
+            kind: .sshTerminal,
+            connectionState: .ready,
+            capabilities: capabilities
+        )
     }
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {

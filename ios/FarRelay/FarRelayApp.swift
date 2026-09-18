@@ -20,14 +20,16 @@ struct FarRelayApp: App {
         _settings = State(initialValue: s)
         _bridge = State(initialValue: bridge)
         let terminals = TerminalSessionManager()
+        let macRemoteSession = MacRemoteSession(speech: speech)
         let remoteIntentRouter = RemoteIntentRouter()
         remoteIntentRouter.register(NVDARemoteIntentTarget(keySink: bridge))
         remoteIntentRouter.register(TerminalRemoteIntentTarget(manager: terminals))
+        remoteIntentRouter.register(MacRemoteIntentTarget(controller: macRemoteSession))
         _terminals = State(initialValue: terminals)
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
         _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
         _inputDiagnostics = State(initialValue: inputDiagnostics)
-        _macRemoteSession = State(initialValue: MacRemoteSession(speech: speech))
+        _macRemoteSession = State(initialValue: macRemoteSession)
         _events = State(initialValue: events)
     }
 

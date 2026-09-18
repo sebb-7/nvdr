@@ -21,6 +21,7 @@ enum RemoteIntent: Equatable, Sendable {
 
     case sendKey(RemoteKey)
     case sendChord(RemoteChord)
+    case macRemote(MacRemoteAction)
 
     var requiredCapability: RemoteCapability {
         switch self {
@@ -36,8 +37,19 @@ enum RemoteIntent: Equatable, Sendable {
             .rawKeyInput
         case .sendChord:
             .rawChordInput
+        case .macRemote:
+            .macRemoteControl
         }
     }
+}
+
+/// The semantic Mac actions already exercised by the foundation's diagnostic
+/// controls. They intentionally describe user intent rather than HID chords.
+enum MacRemoteAction: Equatable, Sendable {
+    case nextItem
+    case previousItem
+    case activate
+    case nextApplication
 }
 
 enum RemoteModifier: Hashable, Sendable {
@@ -131,6 +143,7 @@ enum RemoteCapability: Hashable, Sendable {
     case terminalControl
     case rawKeyInput
     case rawChordInput
+    case macRemoteControl
 }
 
 struct RemoteTargetID: Hashable, Sendable {
@@ -146,13 +159,4 @@ enum RemoteIntentResult: Equatable, Sendable {
     case unsupported
     case unavailable(String)
     case failed(String)
-}
-
-@MainActor
-protocol RemoteIntentTarget: AnyObject {
-    var remoteTargetID: RemoteTargetID { get }
-    var remoteTargetName: String { get }
-    var capabilities: Set<RemoteCapability> { get }
-
-    func perform(_ intent: RemoteIntent) async -> RemoteIntentResult
 }
