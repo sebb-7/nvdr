@@ -369,8 +369,8 @@ final class CaptureView: UIView {
         Int(UIKeyboardHIDUsage.keyboardF1.rawValue) + Int(virtualKey - VK.f1)
     }
 
-    private func modifierFlags(for modifiers: [UInt16]) -> UInt {
-        modifiers.reduce(0) { $0 | UInt($1) }
+    private func modifierFlags(for modifiers: [UInt16]) -> Int {
+        modifiers.reduce(0) { $0 | Int($1) }
     }
 
     private func isFunctionVirtualKey(_ vk: UInt16) -> Bool {

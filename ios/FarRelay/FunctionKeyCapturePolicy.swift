@@ -163,7 +163,7 @@ struct FunctionKeyDuplicateGate {
     private struct Event: Hashable {
         let virtualKey: UInt16
         let pressed: Bool
-        let modifierFlags: UInt
+        let modifierFlags: Int
         let originUsage: Int
     }
 
@@ -174,7 +174,7 @@ struct FunctionKeyDuplicateGate {
         virtualKey: UInt16,
         pressed: Bool,
         source: Source,
-        modifierFlags: UInt = 0,
+        modifierFlags: Int = 0,
         originUsage: Int,
         now: Date = .now
     ) -> Bool {
