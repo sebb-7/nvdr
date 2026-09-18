@@ -4,6 +4,28 @@ Status: semantic-speech provider packaging and local handoff implemented;
 physical macOS validation is required before any remote-control feature is
 called working.
 
+## Superseded pre-foundation UI branch
+
+`feat/macos-remote-control-ui` is superseded. Do not merge or cherry-pick its
+commits: it routes an older iPhone UI directly to the standalone
+`voiceover.*` host operations, whereas this foundation uses the target app's
+authenticated local proxy, controller lease, and semantic speech path.
+
+Its durable test expectations belong in a future UI rebuilt on
+`MacRemoteSession` and the HostTarget/RemoteIntent capability router, not in a
+compatibility layer for the old session:
+
+- Reject incomplete or non-macOS targets before opening a transport.
+- Enable controls only after advertised capability and runtime readiness both
+  succeed; show failures truthfully without claiming physical VoiceOver proof.
+- Serialize semantic actions, distinguish an action failure from a following
+  state-refresh failure, and never route through a stale session.
+- On disconnect, connection loss, or target change, release control and held
+  input, invalidate the session, and require a clean reconnect.
+
+Do not delete that branch until this integration branch has passed CI, been
+reviewed, and reached `main`.
+
 ## Beta 0.1 packaging and readiness
 
 The direct-distribution app embeds `farrelay-host` in `Contents/Helpers` and

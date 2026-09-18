@@ -57,7 +57,14 @@ final class MacHostSocketServer {
         }
     }
 
-    deinit { stop() }
+    deinit {
+        // `deinit` is nonisolated even for a main-actor type. The app-owned
+        // service calls `stop()` for normal shutdown (including control-lease
+        // revocation); deinitialization only closes this server's own endpoint.
+        listener.readabilityHandler = nil
+        listener.closeFile()
+        try? FileManager.default.removeItem(at: Self.endpointURL)
+    }
 
     func stop() {
         listener.readabilityHandler = nil
