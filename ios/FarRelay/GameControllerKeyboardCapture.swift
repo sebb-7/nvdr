@@ -23,9 +23,11 @@ final class GameControllerKeyboardCapture {
                 forName: .GCKeyboardDidConnect,
                 object: nil,
                 queue: .main
-            ) { [weak self] notification in
-                guard let keyboard = notification.object as? GCKeyboard else { return }
-                Task { @MainActor in self?.install(keyboard) }
+            ) { [weak self] _ in
+                // NotificationCenter's closure is not actor-isolated. Read
+                // the coalesced keyboard after hopping to MainActor instead
+                // of transferring its non-Sendable notification object.
+                Task { @MainActor in self?.installCurrentKeyboard() }
             },
             center.addObserver(
                 forName: .GCKeyboardDidDisconnect,
@@ -35,6 +37,12 @@ final class GameControllerKeyboardCapture {
                 Task { @MainActor in self?.handleDisconnect() }
             }
         ]
+        if let keyboard = GCKeyboard.coalesced {
+            install(keyboard)
+        }
+    }
+
+    private func installCurrentKeyboard() {
         if let keyboard = GCKeyboard.coalesced {
             install(keyboard)
         }
