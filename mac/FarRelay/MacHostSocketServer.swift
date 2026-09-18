@@ -6,7 +6,7 @@ import Foundation
 /// client and merely forwards its authenticated stdio channel here.
 @MainActor
 final class MacHostSocketServer {
-    static let endpointURL: URL = URL.homeDirectory
+    nonisolated static let endpointURL: URL = URL.homeDirectory
         .appending(path: "Library/Application Support/FarRelay", directoryHint: .isDirectory)
         .appending(path: "farrelay-host.sock")
 
