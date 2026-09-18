@@ -35,13 +35,15 @@ enum CommandFunctionKeyFallback {
         mappings.first { $0.input == input }
     }
 
-    /// Command is always consumed locally. Control, Option, and Shift remain
-    /// Windows modifiers for the synthesized F-key chord.
+    /// Command is consumed only by a recognised fallback. Control, Option,
+    /// Shift, and Caps Lock remain Windows modifiers for the synthesized
+    /// F-key chord.
     static func preservedModifiers(for flags: UIKeyModifierFlags) -> [UInt16] {
         var modifiers: [UInt16] = []
         if flags.contains(.control) { modifiers.append(VK.control) }
         if flags.contains(.alternate) { modifiers.append(VK.menu) }
         if flags.contains(.shift) { modifiers.append(VK.shift) }
+        if flags.contains(.alphaShift) { modifiers.append(VK.capital) }
         return modifiers
     }
 
@@ -50,17 +52,8 @@ enum CommandFunctionKeyFallback {
         if flags.contains(.control) { names.append("Control") }
         if flags.contains(.alternate) { names.append("Alt") }
         if flags.contains(.shift) { names.append("Shift") }
+        if flags.contains(.alphaShift) { names.append("Caps Lock") }
         return names.isEmpty ? "none" : names.joined(separator: ", ")
-    }
-
-    static func transitions(
-        virtualKey: UInt16,
-        modifierFlags: UIKeyModifierFlags
-    ) -> [(vk: UInt16, pressed: Bool)] {
-        let modifiers = preservedModifiers(for: modifierFlags)
-        return modifiers.map { ($0, true) }
-            + [(virtualKey, true), (virtualKey, false)]
-            + modifiers.reversed().map { ($0, false) }
     }
 
     static func isCommandKey(_ usage: UIKeyboardHIDUsage) -> Bool {
@@ -79,6 +72,25 @@ enum CommandFunctionKeyFallback {
         return mappings.flatMap { mapping in
             modifierSets.map { (input: mapping.input, modifiers: $0) }
         }
+    }
+}
+
+/// The authoritative function-key tap sequence used by `BridgeClient`. It
+/// owns only modifiers that the raw path has not already pressed, so a
+/// fallback can never release a physically-held modifier.
+struct FunctionKeyTransmissionPlan: Equatable {
+    struct Transition: Equatable {
+        let vk: UInt16
+        let pressed: Bool
+    }
+
+    let transitions: [Transition]
+
+    init(virtualKey: UInt16, modifiers: [UInt16], alreadyPressed: Set<UInt16>) {
+        let owned = modifiers.filter { !alreadyPressed.contains($0) }
+        transitions = owned.map { Transition(vk: $0, pressed: true) }
+            + [Transition(vk: virtualKey, pressed: true), Transition(vk: virtualKey, pressed: false)]
+            + owned.reversed().map { Transition(vk: $0, pressed: false) }
     }
 }
 
@@ -131,6 +143,7 @@ enum GameControllerFunctionKeyMapping {
         if isPressed(.leftControl) || isPressed(.rightControl) { modifiers.append(VK.control) }
         if isPressed(.leftAlt) || isPressed(.rightAlt) { modifiers.append(VK.menu) }
         if isPressed(.leftShift) || isPressed(.rightShift) { modifiers.append(VK.shift) }
+        if isPressed(.capsLock) { modifiers.append(VK.capital) }
         return modifiers
     }
 }
@@ -143,38 +156,37 @@ struct FunctionKeyDuplicateGate {
         case rawPress
         case keyCommand
         case gameController
-        case commandFallback
+        case rawFallback
+        case keyCommandFallback
     }
 
     private struct Event: Hashable {
         let virtualKey: UInt16
         let pressed: Bool
+        let modifierFlags: UInt
+        let originUsage: Int
     }
 
     private var recent: [Event: (source: Source, at: Date)] = [:]
-    private var recentFallbacks: [UInt16: Date] = [:]
     private let window: TimeInterval = 0.075
 
     mutating func suppresses(
         virtualKey: UInt16,
         pressed: Bool,
         source: Source,
+        modifierFlags: UInt = 0,
+        originUsage: Int,
         now: Date = .now
     ) -> Bool {
         recent = recent.filter { now.timeIntervalSince($0.value.at) <= window }
-        let event = Event(virtualKey: virtualKey, pressed: pressed)
+        let event = Event(
+            virtualKey: virtualKey,
+            pressed: pressed,
+            modifierFlags: modifierFlags,
+            originUsage: originUsage
+        )
         defer { recent[event] = (source, now) }
         guard let prior = recent[event] else { return false }
         return prior.source != source && now.timeIntervalSince(prior.at) <= window
-    }
-
-    mutating func suppressesFallback(
-        virtualKey: UInt16,
-        now: Date = .now
-    ) -> Bool {
-        recentFallbacks = recentFallbacks.filter { now.timeIntervalSince($0.value) <= window }
-        defer { recentFallbacks[virtualKey] = now }
-        guard let prior = recentFallbacks[virtualKey] else { return false }
-        return now.timeIntervalSince(prior) <= window
     }
 }

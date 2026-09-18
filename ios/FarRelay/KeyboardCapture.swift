@@ -41,8 +41,8 @@ struct KeyboardCapture: UIViewRepresentable {
 }
 
 /// First-responder UIView that observes raw UIKit keyboard events. Command is
-/// reserved locally on this NVDA-specific surface so a recognised fallback can
-/// never leak as the Windows key before its number-row key is classified.
+/// buffered only until the next key identifies one of the twelve reserved
+/// fallback chords; every other Command chord is sent as the Windows key.
 final class CaptureView: UIView {
     var bridge: BridgeClient?
     var settings: AppSettings?
@@ -50,9 +50,9 @@ final class CaptureView: UIView {
     private var priorityDuplicateGate = PriorityRawDuplicateGate()
     private var functionDuplicateGate = FunctionKeyDuplicateGate()
     private var reservedFallbackUsages: Set<Int> = []
-    private var pendingModifierKeys: [Int: UIKey] = [:]
-    private var forwardedModifierUsages: Set<Int> = []
-    private var fallbackModifierUsages: Set<Int> = []
+    private var pendingCommandKeys: [Int: UIKey] = [:]
+    private var forwardedCommandUsages: Set<Int> = []
+    private var consumedFallbackCommandUsages: Set<Int> = []
     private var gameControllerCapture: GameControllerKeyboardCapture?
 
     override var canBecomeFirstResponder: Bool { true }
@@ -81,9 +81,9 @@ final class CaptureView: UIView {
             gameControllerCapture?.stop()
             gameControllerCapture = nil
             reservedFallbackUsages.removeAll()
-            pendingModifierKeys.removeAll()
-            forwardedModifierUsages.removeAll()
-            fallbackModifierUsages.removeAll()
+            pendingCommandKeys.removeAll()
+            forwardedCommandUsages.removeAll()
+            consumedFallbackCommandUsages.removeAll()
         }
     }
 
@@ -109,25 +109,16 @@ final class CaptureView: UIView {
         let keys = presses.compactMap(\.key)
         var claimed = false
 
-        // Buffer physical Control/Option/Shift only until the next source key
-        // classifies the chord. This keeps modifier order irrelevant for the
-        // Command fallback while adding no typing latency to ordinary chords.
-        for key in keys where isPreservedModifier(key.keyCode) {
-            claimed = handleModifier(key, pressed: pressed, bridge: bridge) || claimed
+        // Command is the only modifier that needs a one-key classification
+        // delay. Control, Option, Shift, and Caps Lock remain raw remote
+        // modifiers and are therefore never globally intercepted.
+        for key in keys where CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
+            if CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
+                claimed = handleCommand(key, pressed: pressed, bridge: bridge) || claimed
+            }
         }
 
-        for key in keys where !isPreservedModifier(key.keyCode) {
-            if CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
-                diagnostics?.observe(
-                    source: .rawPress,
-                    hidUsage: key.keyCode.rawValue,
-                    modifiers: key.modifierFlags.rawValue,
-                    pressed: pressed,
-                    result: pressed ? "Command consumed locally for fallback classification" : "Command released locally"
-                )
-                claimed = true
-                continue
-            }
+        for key in keys where !CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
             if let mapping = CommandFunctionKeyFallback.mapping(for: key.keyCode) {
                 if pressed, key.modifierFlags.contains(.command) {
                     claimed = handleFallbackRaw(mapping, key: key, pressed: true, bridge: bridge) || claimed
@@ -138,53 +129,54 @@ final class CaptureView: UIView {
                     continue
                 }
             }
-            let possibleVK = HIDToVK.vk(
-                for: key,
-                optionMapping: settings?.optionMapping ?? .alt,
-                commandMapping: settings?.commandMapping ?? .alt
-            )
+            flushPendingCommand(bridge)
+            let possibleVK = remoteVK(for: key)
             if let possibleVK, isFunctionVirtualKey(possibleVK) {
-                if functionDuplicateGate.suppresses(virtualKey: possibleVK, pressed: pressed, source: .rawPress) {
+                if functionDuplicateGate.suppresses(
+                    virtualKey: possibleVK,
+                    pressed: pressed,
+                    source: .rawPress,
+                    modifierFlags: key.modifierFlags.rawValue,
+                    originUsage: key.keyCode.rawValue
+                ) {
                     diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: possibleVK, result: "deduplicated against another capture path")
                     claimed = true
                     continue
                 }
-                flushPendingModifiers(bridge)
                 claimed = forwardRawKey(key, pressed: pressed, bridge: bridge, functionDedupAlreadyChecked: true) || claimed
                 continue
             }
-            flushPendingModifiers(bridge)
             claimed = forwardRawKey(key, pressed: pressed, bridge: bridge) || claimed
         }
         return claimed
     }
 
-    private func handleModifier(_ key: UIKey, pressed: Bool, bridge: BridgeClient) -> Bool {
+    private func handleCommand(_ key: UIKey, pressed: Bool, bridge: BridgeClient) -> Bool {
         let usage = key.keyCode.rawValue
         if pressed {
-            pendingModifierKeys[usage] = key
-            diagnostics?.observe(source: .rawPress, hidUsage: usage, modifiers: key.modifierFlags.rawValue, pressed: true, result: "modifier buffered for chord classification")
+            pendingCommandKeys[usage] = key
+            diagnostics?.observe(source: .rawPress, hidUsage: usage, modifiers: key.modifierFlags.rawValue, pressed: true, result: "Command buffered for fallback classification")
             return true
         }
-        if pendingModifierKeys.removeValue(forKey: usage) != nil {
-            diagnostics?.observe(source: .rawPress, hidUsage: usage, modifiers: key.modifierFlags.rawValue, pressed: false, result: "unpaired buffered modifier consumed")
+        if let pending = pendingCommandKeys.removeValue(forKey: usage) {
+            _ = forwardRawKey(pending, pressed: true, bridge: bridge)
+            return forwardRawKey(key, pressed: false, bridge: bridge)
+        }
+        if consumedFallbackCommandUsages.remove(usage) != nil {
+            diagnostics?.observe(source: .commandFallback, hidUsage: usage, modifiers: key.modifierFlags.rawValue, pressed: false, result: "fallback Command consumed")
             return true
         }
-        if fallbackModifierUsages.remove(usage) != nil {
-            diagnostics?.observe(source: .commandFallback, hidUsage: usage, modifiers: key.modifierFlags.rawValue, pressed: false, result: "fallback modifier source consumed")
-            return true
-        }
-        if forwardedModifierUsages.remove(usage) != nil {
+        if forwardedCommandUsages.remove(usage) != nil {
             return forwardRawKey(key, pressed: false, bridge: bridge)
         }
         return false
     }
 
-    private func flushPendingModifiers(_ bridge: BridgeClient) {
-        let pending = pendingModifierKeys.values.sorted { $0.keyCode.rawValue < $1.keyCode.rawValue }
-        pendingModifierKeys.removeAll()
+    private func flushPendingCommand(_ bridge: BridgeClient) {
+        let pending = pendingCommandKeys.values.sorted { $0.keyCode.rawValue < $1.keyCode.rawValue }
+        pendingCommandKeys.removeAll()
         for key in pending {
-            forwardedModifierUsages.insert(key.keyCode.rawValue)
+            forwardedCommandUsages.insert(key.keyCode.rawValue)
             _ = forwardRawKey(key, pressed: true, bridge: bridge)
         }
     }
@@ -195,11 +187,7 @@ final class CaptureView: UIView {
         bridge: BridgeClient,
         functionDedupAlreadyChecked: Bool = false
     ) -> Bool {
-        let vk = HIDToVK.vk(
-            for: key,
-            optionMapping: settings?.optionMapping ?? .alt,
-            commandMapping: settings?.commandMapping ?? .alt
-        )
+        let vk = remoteVK(for: key)
         diagnostics?.observe(
             source: .rawPress,
             hidUsage: key.keyCode.rawValue,
@@ -210,7 +198,11 @@ final class CaptureView: UIView {
         )
         guard let vk else { return false }
         if !functionDedupAlreadyChecked, isFunctionVirtualKey(vk), functionDuplicateGate.suppresses(
-            virtualKey: vk, pressed: pressed, source: .rawPress
+            virtualKey: vk,
+            pressed: pressed,
+            source: .rawPress,
+            modifierFlags: key.modifierFlags.rawValue,
+            originUsage: key.keyCode.rawValue
         ) {
             diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: "deduplicated against another capture path")
             return true
@@ -236,9 +228,15 @@ final class CaptureView: UIView {
             return true
         }
         reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
-        fallbackModifierUsages.formUnion(pendingModifierKeys.keys)
-        pendingModifierKeys.removeAll()
-        if functionDuplicateGate.suppressesFallback(virtualKey: mapping.virtualKey) {
+        consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
+        pendingCommandKeys.removeAll()
+        if functionDuplicateGate.suppresses(
+            virtualKey: mapping.virtualKey,
+            pressed: true,
+            source: .rawFallback,
+            modifierFlags: key.modifierFlags.rawValue,
+            originUsage: mapping.hidUsage.rawValue
+        ) {
             diagnostics?.observe(source: .commandFallback, hidUsage: mapping.hidUsage.rawValue, modifiers: key.modifierFlags.rawValue, virtualKey: mapping.virtualKey, result: "deduplicated fallback event")
             return true
         }
@@ -284,9 +282,15 @@ final class CaptureView: UIView {
         if command.modifierFlags.contains(.command),
            let mapping = CommandFunctionKeyFallback.mapping(forInput: input) {
             reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
-            fallbackModifierUsages.formUnion(pendingModifierKeys.keys)
-            pendingModifierKeys.removeAll()
-            if functionDuplicateGate.suppressesFallback(virtualKey: mapping.virtualKey) {
+            consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
+            pendingCommandKeys.removeAll()
+            if functionDuplicateGate.suppresses(
+                virtualKey: mapping.virtualKey,
+                pressed: true,
+                source: .keyCommandFallback,
+                modifierFlags: command.modifierFlags.rawValue,
+                originUsage: mapping.hidUsage.rawValue
+            ) {
                 diagnostics?.observe(source: .commandFallback, hidUsage: mapping.hidUsage.rawValue, modifiers: command.modifierFlags.rawValue, virtualKey: mapping.virtualKey, result: "deduplicated fallback event")
                 return
             }
@@ -300,16 +304,21 @@ final class CaptureView: UIView {
         guard let transitions = ReservedKeyForwardingPolicy.transitions(
             for: input,
             modifierFlags: command.modifierFlags,
-            optionMapping: settings?.optionMapping ?? .alt,
-            commandMapping: settings?.commandMapping ?? .alt,
-            includeCommand: false
+            optionMapping: .alt,
+            commandMapping: .win
         ) else {
             diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, result: "unmapped key command")
             return
         }
         if let functionVK = ReservedKeyForwardingPolicy.vk(forInput: input),
            isFunctionVirtualKey(functionVK),
-           functionDuplicateGate.suppresses(virtualKey: functionVK, pressed: true, source: .keyCommand) {
+           functionDuplicateGate.suppresses(
+                virtualKey: functionVK,
+                pressed: true,
+                source: .keyCommand,
+                modifierFlags: command.modifierFlags.rawValue,
+                originUsage: functionHIDUsage(for: functionVK)
+           ) {
             diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, virtualKey: functionVK, result: "deduplicated against another capture path")
             return
         }
@@ -322,7 +331,13 @@ final class CaptureView: UIView {
 
     func receiveGameControllerFunctionKey(vk: UInt16, pressed: Bool, modifiers: [UInt16]) {
         guard let bridge, bridge.forwardingEnabled else { return }
-        if functionDuplicateGate.suppresses(virtualKey: vk, pressed: pressed, source: .gameController) {
+        if functionDuplicateGate.suppresses(
+            virtualKey: vk,
+            pressed: pressed,
+            source: .gameController,
+            modifierFlags: modifierFlags(for: modifiers),
+            originUsage: functionHIDUsage(for: vk)
+        ) {
             diagnostics?.observe(source: .gameController, pressed: pressed, virtualKey: vk, result: "deduplicated against another capture path")
             return
         }
@@ -343,15 +358,19 @@ final class CaptureView: UIView {
         diagnostics?.observe(source: .gameController, result: "keyboard disconnected")
     }
 
-    private func isPreservedModifier(_ usage: UIKeyboardHIDUsage) -> Bool {
-        switch usage {
-        case .keyboardLeftControl, .keyboardRightControl,
-             .keyboardLeftAlt, .keyboardRightAlt,
-             .keyboardLeftShift, .keyboardRightShift:
-            true
-        default:
-            false
-        }
+    private func remoteVK(for key: UIKey) -> UInt16? {
+        // The active remote surface has a fixed Windows-oriented modifier
+        // contract. Settings elsewhere may be customised, but physical
+        // keyboard forwarding must keep Option=Alt and Command=Windows.
+        HIDToVK.vk(for: key, optionMapping: .alt, commandMapping: .win)
+    }
+
+    private func functionHIDUsage(for virtualKey: UInt16) -> Int {
+        Int(UIKeyboardHIDUsage.keyboardF1.rawValue) + Int(virtualKey - VK.f1)
+    }
+
+    private func modifierFlags(for modifiers: [UInt16]) -> UInt {
+        modifiers.reduce(0) { $0 | UInt($1) }
     }
 
     private func isFunctionVirtualKey(_ vk: UInt16) -> Bool {

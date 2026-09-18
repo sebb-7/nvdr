@@ -50,8 +50,7 @@ final class BridgeClient {
         didSet {
             if !forwardingEnabled, oldValue {
                 send(.releaseAll)
-                functionKeyOwnedModifiers.removeAll()
-                inputState.reset()
+                resetInputState()
             }
         }
     }
@@ -137,8 +136,7 @@ final class BridgeClient {
         commandContinuation = nil
         commandChannelID = nil
         inputReady = false
-        functionKeyOwnedModifiers.removeAll()
-        inputState.reset()
+        resetInputState()
         driver?.cancel()
         driver = nil
         activeProfileID = nil
@@ -233,12 +231,11 @@ final class BridgeClient {
     /// already held through UIKit stay owned by their physical path; only
     /// missing modifiers are synthesized and released by this tap.
     func forwardFunctionKeyTap(vk: UInt16, modifiers: [UInt16]) -> [InputForwardingResult] {
-        let owned = modifiers.filter { !inputState.contains($0) }
-        var results = owned.map { forwardKey(vk: $0, pressed: true) }
-        results.append(forwardKey(vk: vk, pressed: true))
-        results.append(forwardKey(vk: vk, pressed: false))
-        results += owned.reversed().map { forwardKey(vk: $0, pressed: false) }
-        return results
+        FunctionKeyTransmissionPlan(
+            virtualKey: vk,
+            modifiers: modifiers,
+            alreadyPressed: inputState.pressedKeys
+        ).transitions.map { forwardKey(vk: $0.vk, pressed: $0.pressed) }
     }
 
     /// Called if GCKeyboard disconnects while an F-key is held. `stop()` also
@@ -285,14 +282,13 @@ final class BridgeClient {
         commandChannelID = id
         commandContinuation = continuation
         inputReady = false
-        functionKeyOwnedModifiers.removeAll()
-        inputState.reset()
+        resetInputState()
         return (id, stream)
     }
 
     private func activateCommandChannel(id: UUID) {
         guard commandChannelID == id else { return }
-        inputState.reset()
+        resetInputState()
         inputReady = true
     }
 
@@ -300,7 +296,7 @@ final class BridgeClient {
         guard commandChannelID == id else { return }
         releaseRemoteKeysBeforeChannelClose()
         inputReady = false
-        inputState.reset()
+        resetInputState()
         commandContinuation?.finish()
         commandContinuation = nil
         commandChannelID = nil
@@ -309,7 +305,7 @@ final class BridgeClient {
     private func disconnectInputChannel() {
         releaseRemoteKeysBeforeChannelClose()
         inputReady = false
-        inputState.reset()
+        resetInputState()
         commandContinuation?.finish()
         commandContinuation = nil
         commandChannelID = nil
@@ -321,10 +317,15 @@ final class BridgeClient {
     /// suspension where UIKit may never deliver individual key-up events.
     private func releaseRemoteKeysBeforeChannelClose() {
         guard commandContinuation != nil else {
-            inputState.reset()
+            resetInputState()
             return
         }
         send(.releaseAll)
+        resetInputState()
+    }
+
+    private func resetInputState() {
+        functionKeyOwnedModifiers.removeAll()
         inputState.reset()
     }
 

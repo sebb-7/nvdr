@@ -1,88 +1,78 @@
 # Build 18 Function-Key Correction
 
-## Evidence and boundary
+## Boundary and evidence
 
-Build 17 was uploaded from `e5cdf6c1d4b3f4c1b281154de589eaf54627715c`
-by [TestFlight run 35279214895](https://github.com/sebb-7/nvdr/actions/runs/35279214895)
-(workflow run number 17, successful). Physical testing confirmed that Build
-17 restored the saved-computer, terminal, and NVDA-status interface.
+Build 17 restored the saved-computer, terminal, and NVDA-status interface,
+but physical testing showed no F1--F12 HID or `UIKeyCommand` delivery. That
+locates the observed failure before the bridge, SSH transport, Windows
+injection, and NVDA. Build 18 changes only the iOS input-delivery boundary.
 
-The same physical report proved the following:
+This document distinguishes implementation and automated evidence from
+physical delivery. Simulator and CI tests cannot prove a specific iPhone or
+iPad keyboard, VoiceOver, Windows, or NVDA receives a chord.
 
-* NVDA was connected and the keyboard capture view remained first responder.
-* Ordinary keys, Tab (HID 43), Control (224), Shift (225), and Command (227)
-  reached the UIKit diagnostic path and ordinary mapped keys were queued.
-* Neither F1–F12 HID usages 58–69 nor an F-key `UIKeyCommand` callback
-  appeared, including with Fn and Fn-lock combinations.
+## Capture and modifier policy
 
-This proves the observed failure is before the bridge, SSH transport, host,
-Windows injection, and NVDA. Build 18 therefore changes the iOS
-input-delivery boundary only. It does not redesign Rust, host injection, or
-NVDA behavior.
+Native UIKit raw presses, priority `UIKeyCommand`, and additive `GCKeyboard`
+capture remain available for F1--F12. `GCKeyboard` installs and removes its
+handler with keyboard connection lifecycle, and releases logically-held
+function keys at disconnect.
 
-## Implemented capture paths
+The remote contract is fixed on the active remote surface:
 
-1. `GameControllerKeyboardCapture` observes `GCKeyboard` connection and
-   disconnection and installs `GCKeyboardInput.keyChangedHandler` for F1–F12
-   only. It forwards key down/up, observes Control/Option/Shift through the
-   GameController keyboard profile, removes handlers during teardown, and
-   releases logically pressed F-keys if a keyboard disconnects.
-2. UIKit raw presses and `UIKeyCommand` remain in place as independent paths.
-   A 75 ms, cross-source transition gate suppresses only duplicate delivery
-   from a different API. It does not suppress same-source repeated physical
-   input. Command-fallback duplicate deliveries are similarly coalesced only
-   in that narrow window.
-
-Simulator tests verify mappings and lifecycle policy; they do **not** prove a
-physical keyboard will deliver `GCKeyboard` F-row callbacks.
-
-## Direct Command fallback
-
-The fallback is immediate and stateless:
-
-| Local chord | Remote key |
+| Apple key | Remote Windows key |
 | --- | --- |
-| Command+1 … Command+9 | F1 … F9 |
-| Command+0 | F10 |
-| Command+- | F11 |
-| Command+= | F12 |
+| Option | Alt |
+| Command | Windows |
+| Control | Control |
+| Shift | Shift |
+| Caps Lock | Caps Lock |
 
-Command is reserved as a local FarRelay transport modifier while the NVDA
-Remote keyboard surface is active. It is never forwarded as Windows. For a
-recognised fallback, both Command and the source number-row key are consumed;
-only Control, Option/Alt, and Shift are preserved. Missing modifiers are
-synthesised before the F-key and released after it; modifiers already owned by
-the raw path remain physically owned and are not released by the fallback.
+Command is normally the Windows key. It is consumed only for the twelve
+reserved fallbacks: Command+1 through Command+9 map to F1 through F9,
+Command+0 maps to F10, Command+- maps to F11, and Command+= maps to F12.
+The Command key and source key are never transmitted for a recognised
+fallback. Other physically-held modifiers remain physically owned; missing
+modifiers are balanced around the synthesized F-key tap.
 
-Control/Option/Shift are briefly held locally until the next non-modifier key
-classifies the chord. This makes modifier press order irrelevant: a recognised
-fallback synthesises the exact modifier/F-key tap, while another key flushes
-the pending modifiers first and continues through normal remote input.
+Command is briefly buffered solely to distinguish those twelve combinations.
+Option, Control, Shift, and Caps Lock are not globally intercepted. Therefore
+Command+A and Command+R continue as Windows+A and Windows+R. Option+Command+4
+is Alt+F4; Caps Lock+Command+4 is NVDA+F4 where NVDA uses Caps Lock; and
+Caps Lock+Option+Command+4 is NVDA+Alt+F4.
 
-The explicit product tradeoff is that Command is no longer a Windows-key
-shortcut on this active NVDA keyboard surface. An unrecognised Command chord
-forwards its non-Command key after normal modifier classification, but never
-leaks Command/Windows. This is required to make recognised fallback chords
-deterministic.
+VoiceOver may consume Caps Lock when it is configured as the local VoiceOver
+modifier. The recommended NVDA-oriented configuration is local VoiceOver
+Control+Option and remote NVDA Caps Lock. Physical testing must record what
+iOS delivers with each local VoiceOver configuration.
+
+## Deduplication and tests
+
+`FunctionKeyDuplicateGate` identifies a candidate by Windows virtual key,
+direction, modifier state, source HID usage, source path, and short-lived
+delivery time. It suppresses only a matching event from a different capture
+path. Same-source repeats, key-up events, changed modifiers, different keys,
+and a later physical action remain eligible.
+
+`FunctionKeyTransmissionPlan` is the single fallback sequencing authority.
+`BridgeClient.forwardFunctionKeyTap` executes that plan directly; regression
+tests assert the emitted order for plain, Alt, Control, Shift, and Caps Lock
+fallbacks, including already-held modifier ownership. There is no separate
+test-only fallback transition implementation.
 
 ## Diagnostics and provenance
 
-The opt-in, bounded diagnostic report now identifies raw UIKit, `UIKeyCommand`,
-`GCKeyboard`, and Command-fallback events; local consumption, deduplication,
-keyboard connection/disconnection, responder status, modifier preservation,
-and forwarding rejection reasons. It continues to exclude typed text,
-credentials, terminal content, passwords, and speech.
-
-The report now says `queued for transport write; host receipt unconfirmed`.
-The existing NVDA relay protocol has no per-key host acknowledgement, so Build
-18 deliberately does not overstate queued data as host-received. The
-TestFlight workflow writes the short Git revision directly into the ephemeral
-archive plist before signing, in addition to the Xcode build setting, to avoid
-the Build 17 `Source revision: not embedded` result.
+Diagnostics identify raw UIKit, priority command, `GCKeyboard`, and Command
+fallback provenance without recording typed text. A queued event is described
+as queued for transport write with host receipt unconfirmed. The TestFlight
+workflow writes the Git short SHA into the archive plist before signing, so a
+new distribution build should report an embedded source revision rather than
+`not embedded`.
 
 ## Validation record
 
-The remaining sections are filled after the Build 18 branch CI, exact-main CI,
-and TestFlight workflow complete. Physical function-key success is not claimed
-by source inspection or simulator coverage.
-
+The branch's previous CI success was run 35303266557 for
+`49be2c61bb6ab8c520f20c8dc3453cb82359af36`. The corrected commit, branch CI,
+exact-main CI, and TestFlight results are recorded after the correction is
+validated. Physical function-key success remains unclaimed until tested on a
+real iPhone or iPad, physical keyboard, Windows host, and NVDA.

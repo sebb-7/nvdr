@@ -6,41 +6,34 @@ import XCTest
 final class FunctionKeyCapturePolicyTests: XCTestCase {
     func testCommandFallbackCoversTheRequiredF1ThroughF12Mapping() {
         XCTAssertEqual(CommandFunctionKeyFallback.mappings.map(\.virtualKey), Array(VK.f1...(VK.f1 + 11)))
-        XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboard1)?.virtualKey, VK.f1)
-        XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboard0)?.virtualKey, VK.f1 + 9)
-        XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboardHyphen)?.virtualKey, VK.f1 + 10)
+        XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboard4)?.virtualKey, VK.f1 + 3)
         XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboardEqualSign)?.virtualKey, VK.f1 + 11)
     }
 
-    func testCommandFallbackStripsCommandAndBalancesPreservedModifiers() {
-        let transitions = CommandFunctionKeyFallback.transitions(
-            virtualKey: VK.f1 + 3,
-            modifierFlags: [.command, .alternate]
-        )
-        XCTAssertEqual(
-            transitions.map { "\($0.vk):\($0.pressed)" },
-            ["18:true", "115:true", "115:false", "18:false"]
-        )
-        XCTAssertFalse(transitions.contains { $0.vk == VK.lwin || $0.vk == VK.rwin })
+    func testProductionTapPlanCommandFourHasOnlyBalancedF4() {
+        XCTAssertEqual(plan(VK.f1 + 3, flags: [.command]), ["115:true", "115:false"])
     }
 
-    func testFallbackPreservesControlAltAndShiftInStableOrder() {
-        let transitions = CommandFunctionKeyFallback.transitions(
-            virtualKey: VK.f1 + 9,
-            modifierFlags: [.command, .control, .alternate, .shift]
+    func testProductionTapPlanPreservesEveryRequiredModifierInOrder() {
+        XCTAssertEqual(plan(VK.f1 + 3, flags: [.command, .alternate]), ["18:true", "115:true", "115:false", "18:false"])
+        XCTAssertEqual(plan(VK.f1, flags: [.command, .control]), ["17:true", "112:true", "112:false", "17:false"])
+        XCTAssertEqual(plan(VK.f1 + 9, flags: [.command, .shift]), ["16:true", "121:true", "121:false", "16:false"])
+        XCTAssertEqual(plan(VK.f1 + 3, flags: [.command, .alphaShift]), ["20:true", "115:true", "115:false", "20:false"])
+        XCTAssertEqual(plan(VK.f1 + 3, flags: [.command, .alternate, .alphaShift]), ["18:true", "20:true", "115:true", "115:false", "20:false", "18:false"])
+    }
+
+    func testProductionTapPlanDoesNotDuplicateOrReleasePhysicallyHeldModifiers() {
+        let plan = FunctionKeyTransmissionPlan(
+            virtualKey: VK.f1 + 3,
+            modifiers: CommandFunctionKeyFallback.preservedModifiers(for: [.command, .alternate, .alphaShift]),
+            alreadyPressed: [VK.menu, VK.capital]
         )
-        XCTAssertEqual(
-            transitions.map { "\($0.vk):\($0.pressed)" },
-            ["17:true", "18:true", "16:true", "121:true", "121:false", "16:false", "18:false", "17:false"]
-        )
+        XCTAssertEqual(plan.transitions.map { "\($0.vk):\($0.pressed)" }, ["115:true", "115:false"])
     }
 
     func testEveryGameControllerFunctionKeyHasTheExpectedWindowsVirtualKey() {
         let keyCodes: [GCKeyCode] = [.F1, .F2, .F3, .F4, .F5, .F6, .F7, .F8, .F9, .F10, .F11, .F12]
-        XCTAssertEqual(
-            keyCodes.compactMap { GameControllerFunctionKeyMapping.virtualKey(for: $0) },
-            Array(VK.f1...(VK.f1 + 11))
-        )
+        XCTAssertEqual(keyCodes.compactMap { GameControllerFunctionKeyMapping.virtualKey(for: $0) }, Array(VK.f1...(VK.f1 + 11)))
         XCTAssertNil(GameControllerFunctionKeyMapping.virtualKey(for: .F13))
     }
 
@@ -53,24 +46,35 @@ final class FunctionKeyCapturePolicyTests: XCTestCase {
         XCTAssertTrue(state.activeVirtualKeys.isEmpty)
     }
 
-    func testDuplicateGateSuppressesOnlyCrossSourceDuplicates() {
+    func testDuplicateGateSuppressesOnlyMatchingCrossSourceAction() {
         var gate = FunctionKeyDuplicateGate()
         let now = Date(timeIntervalSince1970: 10)
-        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .gameController, now: now))
-        XCTAssertTrue(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .rawPress, now: now.addingTimeInterval(0.01)))
-        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .rawPress, now: now.addingTimeInterval(0.20)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .rawPress, modifierFlags: 1, originUsage: 58, now: now))
+        XCTAssertTrue(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .gameController, modifierFlags: 1, originUsage: 58, now: now.addingTimeInterval(0.01)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .gameController, modifierFlags: 1, originUsage: 58, now: now.addingTimeInterval(0.02)))
     }
 
-    func testFallbackRepeatPolicySuppressesOnlyTheImmediateDuplicate() {
+    func testDuplicateGatePreservesRepeatReleaseModifierChangeDifferentKeyAndSeparateAction() {
         var gate = FunctionKeyDuplicateGate()
-        let now = Date(timeIntervalSince1970: 10)
-        XCTAssertFalse(gate.suppressesFallback(virtualKey: VK.f1, now: now))
-        XCTAssertTrue(gate.suppressesFallback(virtualKey: VK.f1, now: now.addingTimeInterval(0.01)))
-        XCTAssertFalse(gate.suppressesFallback(virtualKey: VK.f1, now: now.addingTimeInterval(0.20)))
+        let now = Date(timeIntervalSince1970: 20)
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .rawFallback, modifierFlags: 2, originUsage: 33, now: now))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .rawFallback, modifierFlags: 2, originUsage: 33, now: now.addingTimeInterval(0.01)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: false, source: .keyCommandFallback, modifierFlags: 2, originUsage: 33, now: now.addingTimeInterval(0.02)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .keyCommandFallback, modifierFlags: 4, originUsage: 33, now: now.addingTimeInterval(0.03)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1 + 1, pressed: true, source: .keyCommandFallback, modifierFlags: 2, originUsage: 34, now: now.addingTimeInterval(0.04)))
+        XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .keyCommandFallback, modifierFlags: 2, originUsage: 33, now: now.addingTimeInterval(0.20)))
     }
 
     func testFallbackRegistrationsDoNotRequireASequentialMode() {
         XCTAssertEqual(CommandFunctionKeyFallback.keyCommandRegistrations.count, 96)
         XCTAssertTrue(CommandFunctionKeyFallback.keyCommandRegistrations.allSatisfy { $0.modifiers.contains(.command) })
+    }
+
+    private func plan(_ virtualKey: UInt16, flags: UIKeyModifierFlags) -> [String] {
+        FunctionKeyTransmissionPlan(
+            virtualKey: virtualKey,
+            modifiers: CommandFunctionKeyFallback.preservedModifiers(for: flags),
+            alreadyPressed: []
+        ).transitions.map { "\($0.vk):\($0.pressed)" }
     }
 }
