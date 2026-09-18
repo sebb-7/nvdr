@@ -27,12 +27,25 @@ final class InputDiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("App version:"))
         XCTAssertTrue(report.contains("TestFlight build:"))
         XCTAssertTrue(report.contains("Source revision:"))
+        XCTAssertTrue(report.contains("queued to writer; host receipt unconfirmed"))
         XCTAssertTrue(report.contains("key command"))
         XCTAssertFalse(report.contains("typed text"))
     }
 
     func testForwardingResultsGiveAnActionableRejectionReason() {
-        XCTAssertEqual(InputForwardingResult.accepted.diagnosticText, "queued for transmission")
+        XCTAssertEqual(InputForwardingResult.accepted.diagnosticText, "queued for transport write; host receipt unconfirmed")
         XCTAssertEqual(InputForwardingResult.rejected("connection is not ready").diagnosticText, "rejected: connection is not ready")
+    }
+
+    func testDiagnosticsIdentifyFunctionCaptureSourcesWithoutRecordingText() {
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        diagnostics.observe(source: .gameController, pressed: true, virtualKey: VK.f1, result: "mapped")
+        diagnostics.observe(source: .commandFallback, virtualKey: VK.f1 + 3, result: "local Command and source key consumed")
+
+        let report = diagnostics.report(connectionState: "NVDA connected")
+        XCTAssertTrue(report.contains("GCKeyboard"))
+        XCTAssertTrue(report.contains("Command F-key fallback"))
+        XCTAssertFalse(report.contains("password"))
     }
 }
