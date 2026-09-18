@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import XCTest
 @testable import FarRelay
 
@@ -80,5 +81,6 @@ private struct DeterministicGenerator {
 @MainActor
 private final class ReliabilityKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady = true
+    var activeProfileID: UUID?
     func sendKey(vk: UInt16, pressed: Bool) {}
 }

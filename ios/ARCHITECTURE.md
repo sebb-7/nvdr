@@ -551,7 +551,9 @@ substitute.
 FarRelay Host v1                 ✓
 Apple HostClient transport       ✓
 macOS VoiceOver host operations  ✓ (protocol/client seam; physical proof pending)
-HostTarget                       NEXT
+HostTarget                       ✓
+RemoteIntent capability router   ✓
+Mac Remote executor              ✓ (existing lease-backed diagnostic actions only)
 ```
 
 ## Remote intent routing
@@ -580,6 +582,23 @@ unavailable until a terminal session is connected. Transcript navigation is
 native SwiftUI and VoiceOver behavior rather than a RemoteIntent review mode.
 The router returns a structured performed, unsupported, unavailable, or failed
 result rather than falling back or relying on logs.
+
+`HostTarget` is the inspectable target snapshot: stable target identity,
+optional `HostProfile` and terminal-session identities, platform, target kind,
+connection/readiness state, and static capabilities. It intentionally carries
+no transport or controller reference. A `HostTargetExecutor` holds those
+references and is the only layer allowed to adapt an intent to the existing
+owner. The router records its last no-target, capability-rejection, or dispatch
+decision so adapters can diagnose a result without probing another target.
+
+The Mac executor wraps the existing `MacRemoteSession`; it neither connects a
+host nor requests control. It exposes only the foundation's existing semantic
+diagnostic actions (next/previous VoiceOver item, activate, and next
+application). Execution requires the active controller lease and delegates HID
+injection to `MacRemoteSession`. A rejected or failed key transition invokes
+the existing remote emergency-stop operation instead of attempting another
+transport. The diagnostic Mac controls select this target explicitly and route
+through the shared router.
 
 Keyboard, controller, voice, local-agent, ACP, and OpenClaw adapters are
 future consumers of this semantic layer. They are not implemented here, and

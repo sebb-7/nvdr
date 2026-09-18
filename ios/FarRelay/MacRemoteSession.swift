@@ -16,6 +16,7 @@ final class MacRemoteSession {
     private(set) var state: State = .disconnected
     private(set) var speechSubscriptionActive = false
     private(set) var keyboardForwardingActive = false
+    private(set) var activeProfile: HostProfile?
     private let controllerID = UUID().uuidString.lowercased()
 
     @ObservationIgnored private var session: SSHSession?
@@ -33,6 +34,7 @@ final class MacRemoteSession {
 
     func connect(profile: HostProfile, credentials: HostProfileCredentials) {
         guard task == nil, profile.isMacRemoteEnabled else { return }
+        activeProfile = profile
         state = .connecting
         let session = SSHSession(configuration: profile.sshSessionConfiguration(credentials: credentials))
         let didConnect: @MainActor @Sendable (FarRelayHostClient, Bool) -> Void = { [weak self] client, subscribed in
@@ -89,6 +91,7 @@ final class MacRemoteSession {
         generation = nil
         keyboardForwardingActive = false
         speechSubscriptionActive = false
+        activeProfile = nil
         Task { await speech.cancel() }
         state = .disconnected
         Task {
@@ -135,13 +138,80 @@ final class MacRemoteSession {
     }
 
     func sendCombo(_ keys: [MacRemoteKey]) {
-        guard let client, let generation, keyboardForwardingActive else { return }
         Task {
-            do {
-                for key in keys { _ = try await client.sendMacRemoteKey(controllerID: controllerID, generation: generation, key: key, pressed: true) }
-                for key in keys.reversed() { _ = try await client.sendMacRemoteKey(controllerID: controllerID, generation: generation, key: key, pressed: false) }
-            } catch { didFail(error) }
+            _ = await sendComboForRemoteIntent(keys)
         }
+    }
+
+    var remoteIntentConnectionState: HostTarget.ConnectionState {
+        if keyboardForwardingActive { return .ready }
+        return switch state {
+        case .disconnected: .disconnected
+        case .connecting: .connecting
+        case .connected, .controlBusy: .unavailable("Mac Remote control has not been granted.")
+        case .controlGranted: .unavailable("Mac Remote keyboard forwarding is unavailable.")
+        case .failed(let message): .unavailable(message)
+        }
+    }
+
+    func performMacRemoteAction(_ action: MacRemoteAction) async -> RemoteIntentResult {
+        let keys: [MacRemoteKey] = switch action {
+        case .nextItem: [.leftControl, .leftOption, .rightArrow]
+        case .previousItem: [.leftControl, .leftOption, .leftArrow]
+        case .activate: [.leftControl, .leftOption, .space]
+        case .nextApplication: [.leftCommand, .tab]
+        }
+        return await sendComboForRemoteIntent(keys)
+    }
+
+    private func sendComboForRemoteIntent(_ keys: [MacRemoteKey]) async -> RemoteIntentResult {
+        guard let client, let generation, keyboardForwardingActive else {
+            return .unavailable("Mac Remote control has not been granted.")
+        }
+
+        var pressed: [MacRemoteKey] = []
+        do {
+            for key in keys {
+                let result = try await client.sendMacRemoteKey(
+                    controllerID: controllerID,
+                    generation: generation,
+                    key: key,
+                    pressed: true
+                )
+                guard result.accepted else {
+                    await emergencyStopAfterInputFailure(using: client)
+                    return .failed("The Mac rejected remote input.")
+                }
+                pressed.append(key)
+            }
+            for key in pressed.reversed() {
+                let result = try await client.sendMacRemoteKey(
+                    controllerID: controllerID,
+                    generation: generation,
+                    key: key,
+                    pressed: false
+                )
+                guard result.accepted else {
+                    await emergencyStopAfterInputFailure(using: client)
+                    return .failed("The Mac rejected remote input release.")
+                }
+            }
+            return .performed
+        } catch {
+            await emergencyStopAfterInputFailure(using: client)
+            didFail(error)
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func emergencyStopAfterInputFailure(using client: FarRelayHostClient) async {
+        try? await client.emergencyStopMacRemote()
+        generation = nil
+        keyboardForwardingActive = false
+        if case .failed = state {
+            return
+        }
+        state = .connected
     }
 
     private func didConnect(client: FarRelayHostClient, subscription: Bool) {
@@ -192,5 +262,8 @@ final class MacRemoteSession {
         client = nil
         session = nil
         task = nil
+        activeProfile = nil
     }
 }
+
+extension MacRemoteSession: MacRemoteIntentControlling {}

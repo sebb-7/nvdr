@@ -5,15 +5,16 @@ import Observation
 @Observable
 @MainActor
 final class RemoteIntentRouter {
-    private var targets: [RemoteTargetID: any RemoteIntentTarget] = [:]
+    private var executors: [RemoteTargetID: any HostTargetExecutor] = [:]
     private(set) var activeTargetID: RemoteTargetID?
+    private(set) var lastDecision: RemoteIntentRoutingDecision?
 
-    func register(_ target: any RemoteIntentTarget) {
-        targets[target.remoteTargetID] = target
+    func register(_ executor: any HostTargetExecutor) {
+        executors[executor.target.id] = executor
     }
 
     func removeTarget(id: RemoteTargetID) {
-        targets[id] = nil
+        executors[id] = nil
         if activeTargetID == id {
             activeTargetID = nil
         }
@@ -25,32 +26,44 @@ final class RemoteIntentRouter {
             activeTargetID = nil
             return true
         }
-        guard targets[id] != nil else { return false }
+        guard executors[id] != nil else { return false }
         activeTargetID = id
         return true
     }
 
     var activeTargetName: String? {
         guard let activeTargetID else { return nil }
-        return targets[activeTargetID]?.remoteTargetName
+        return executors[activeTargetID]?.target.displayName
+    }
+
+    func target(for id: RemoteTargetID) -> HostTarget? {
+        executors[id]?.target
     }
 
     func capabilities(for id: RemoteTargetID) -> Set<RemoteCapability>? {
-        targets[id]?.capabilities
+        executors[id]?.target.capabilities
     }
 
     var activeCapabilities: Set<RemoteCapability> {
         guard let activeTargetID else { return [] }
-        return targets[activeTargetID]?.capabilities ?? []
+        return executors[activeTargetID]?.target.capabilities ?? []
     }
 
     func route(_ intent: RemoteIntent) async -> RemoteIntentResult {
-        guard let activeTargetID, let target = targets[activeTargetID] else {
+        guard let activeTargetID, let executor = executors[activeTargetID] else {
+            lastDecision = .noActiveTarget(intent: intent)
             return .unavailable("No remote target is active.")
         }
+        let target = executor.target
         guard target.capabilities.contains(intent.requiredCapability) else {
+            lastDecision = .unsupported(
+                targetID: target.id,
+                intent: intent,
+                capability: intent.requiredCapability
+            )
             return .unsupported
         }
-        return await target.perform(intent)
+        lastDecision = .dispatched(targetID: target.id, intent: intent)
+        return await executor.perform(intent)
     }
 }
