@@ -50,6 +50,7 @@ final class BridgeClient {
         didSet {
             if !forwardingEnabled, oldValue {
                 send(.releaseAll)
+                functionKeyOwnedModifiers.removeAll()
                 inputState.reset()
             }
         }
@@ -61,6 +62,9 @@ final class BridgeClient {
     private var commandChannelID: UUID?
     private var inputReady = false
     private var inputState = SSHInputState()
+    /// Modifiers introduced solely for a GCKeyboard function-key press. They
+    /// are released with that key; physical modifiers remain owned by UIKit.
+    private var functionKeyOwnedModifiers: [UInt16: [UInt16]] = [:]
     private var driverGeneration = 0
     private(set) var activeProfileID: UUID?
     private let speech: SpeechOutput
@@ -133,6 +137,7 @@ final class BridgeClient {
         commandContinuation = nil
         commandChannelID = nil
         inputReady = false
+        functionKeyOwnedModifiers.removeAll()
         inputState.reset()
         driver?.cancel()
         driver = nil
@@ -199,6 +204,49 @@ final class BridgeClient {
         }
     }
 
+    /// For a physical GameController F-key, add only Control/Alt/Shift that
+    /// UIKit has not already forwarded. This keeps held modifiers balanced
+    /// when a function key arrives through GameController alone.
+    func forwardFunctionKey(
+        vk: UInt16,
+        pressed: Bool,
+        modifiers: [UInt16]
+    ) -> [InputForwardingResult] {
+        if pressed {
+            guard functionKeyOwnedModifiers[vk] == nil else {
+                return [.rejected("duplicate function-key down")]
+            }
+            let owned = modifiers.filter { !inputState.contains($0) }
+            var results = owned.map { forwardKey(vk: $0, pressed: true) }
+            functionKeyOwnedModifiers[vk] = owned
+            results.append(forwardKey(vk: vk, pressed: true))
+            return results
+        }
+
+        var results = [forwardKey(vk: vk, pressed: false)]
+        let owned = functionKeyOwnedModifiers.removeValue(forKey: vk) ?? []
+        results += owned.reversed().map { forwardKey(vk: $0, pressed: false) }
+        return results
+    }
+
+    /// Command-number fallback is a complete stateless remote tap. Modifiers
+    /// already held through UIKit stay owned by their physical path; only
+    /// missing modifiers are synthesized and released by this tap.
+    func forwardFunctionKeyTap(vk: UInt16, modifiers: [UInt16]) -> [InputForwardingResult] {
+        let owned = modifiers.filter { !inputState.contains($0) }
+        var results = owned.map { forwardKey(vk: $0, pressed: true) }
+        results.append(forwardKey(vk: vk, pressed: true))
+        results.append(forwardKey(vk: vk, pressed: false))
+        results += owned.reversed().map { forwardKey(vk: $0, pressed: false) }
+        return results
+    }
+
+    /// Called if GCKeyboard disconnects while an F-key is held. `stop()` also
+    /// release-alls, but an active transport gets a balanced release first.
+    func releaseFunctionKey(vk: UInt16) -> [InputForwardingResult] {
+        forwardFunctionKey(vk: vk, pressed: false, modifiers: [])
+    }
+
     /// Compatibility surface for semantic remote-intent targets. Physical
     /// capture uses `forwardKey` so it can record the result without changing
     /// the established no-result protocol contract.
@@ -237,6 +285,7 @@ final class BridgeClient {
         commandChannelID = id
         commandContinuation = continuation
         inputReady = false
+        functionKeyOwnedModifiers.removeAll()
         inputState.reset()
         return (id, stream)
     }

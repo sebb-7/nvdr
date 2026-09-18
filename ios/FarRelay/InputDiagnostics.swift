@@ -6,6 +6,8 @@ import Observation
 enum InputDiagnosticSource: String, Sendable {
     case rawPress = "raw press"
     case keyCommand = "key command"
+    case gameController = "GCKeyboard"
+    case commandFallback = "Command F-key fallback"
     case responder = "responder"
 }
 
@@ -74,6 +76,7 @@ final class InputDiagnosticStore {
             "Source revision: \(source)",
             "Connection state: \(connectionState)",
             "Host/protocol version: \(hostVersion ?? "unknown")",
+            "Transport delivery: queued to writer; host receipt unconfirmed",
             "Events:"
         ] + entries.map(\.reportLine)).joined(separator: "\n")
     }
@@ -85,7 +88,7 @@ enum InputForwardingResult: Equatable, Sendable {
 
     var diagnosticText: String {
         switch self {
-        case .accepted: "queued for transmission"
+        case .accepted: "queued for transport write; host receipt unconfirmed"
         case .rejected(let reason): "rejected: \(reason)"
         }
     }

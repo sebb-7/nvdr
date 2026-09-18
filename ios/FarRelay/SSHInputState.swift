@@ -6,6 +6,10 @@ import Foundation
 struct SSHInputState: Sendable, Equatable {
     private(set) var pressedKeys: Set<UInt16> = []
 
+    func contains(_ virtualKey: UInt16) -> Bool {
+        pressedKeys.contains(virtualKey)
+    }
+
     mutating func command(forKey vk: UInt16, pressed: Bool) -> IPCCommand? {
         if pressed {
             // UIKit emits repeated key-down events while a hardware key is

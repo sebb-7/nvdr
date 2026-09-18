@@ -1,0 +1,180 @@
+import Foundation
+import GameController
+import UIKit
+
+/// The only local Command chords reserved by the NVDA Remote keyboard surface.
+/// They are deliberately physical-key based rather than character based, so
+/// keyboard layouts cannot turn a fallback chord into remote text input.
+enum CommandFunctionKeyFallback {
+    struct Mapping: Equatable {
+        let hidUsage: UIKeyboardHIDUsage
+        let input: String
+        let virtualKey: UInt16
+    }
+
+    static let mappings: [Mapping] = [
+        .init(hidUsage: .keyboard1, input: "1", virtualKey: VK.f1),
+        .init(hidUsage: .keyboard2, input: "2", virtualKey: VK.f1 + 1),
+        .init(hidUsage: .keyboard3, input: "3", virtualKey: VK.f1 + 2),
+        .init(hidUsage: .keyboard4, input: "4", virtualKey: VK.f1 + 3),
+        .init(hidUsage: .keyboard5, input: "5", virtualKey: VK.f1 + 4),
+        .init(hidUsage: .keyboard6, input: "6", virtualKey: VK.f1 + 5),
+        .init(hidUsage: .keyboard7, input: "7", virtualKey: VK.f1 + 6),
+        .init(hidUsage: .keyboard8, input: "8", virtualKey: VK.f1 + 7),
+        .init(hidUsage: .keyboard9, input: "9", virtualKey: VK.f1 + 8),
+        .init(hidUsage: .keyboard0, input: "0", virtualKey: VK.f1 + 9),
+        .init(hidUsage: .keyboardHyphen, input: "-", virtualKey: VK.f1 + 10),
+        .init(hidUsage: .keyboardEqualSign, input: "=", virtualKey: VK.f1 + 11)
+    ]
+
+    static func mapping(for usage: UIKeyboardHIDUsage) -> Mapping? {
+        mappings.first { $0.hidUsage == usage }
+    }
+
+    static func mapping(forInput input: String) -> Mapping? {
+        mappings.first { $0.input == input }
+    }
+
+    /// Command is always consumed locally. Control, Option, and Shift remain
+    /// Windows modifiers for the synthesized F-key chord.
+    static func preservedModifiers(for flags: UIKeyModifierFlags) -> [UInt16] {
+        var modifiers: [UInt16] = []
+        if flags.contains(.control) { modifiers.append(VK.control) }
+        if flags.contains(.alternate) { modifiers.append(VK.menu) }
+        if flags.contains(.shift) { modifiers.append(VK.shift) }
+        return modifiers
+    }
+
+    static func modifierDescription(for flags: UIKeyModifierFlags) -> String {
+        var names: [String] = []
+        if flags.contains(.control) { names.append("Control") }
+        if flags.contains(.alternate) { names.append("Alt") }
+        if flags.contains(.shift) { names.append("Shift") }
+        return names.isEmpty ? "none" : names.joined(separator: ", ")
+    }
+
+    static func transitions(
+        virtualKey: UInt16,
+        modifierFlags: UIKeyModifierFlags
+    ) -> [(vk: UInt16, pressed: Bool)] {
+        let modifiers = preservedModifiers(for: modifierFlags)
+        return modifiers.map { ($0, true) }
+            + [(virtualKey, true), (virtualKey, false)]
+            + modifiers.reversed().map { ($0, false) }
+    }
+
+    static func isCommandKey(_ usage: UIKeyboardHIDUsage) -> Bool {
+        usage == .keyboardLeftGUI || usage == .keyboardRightGUI
+    }
+
+    /// UIKeyCommand needs one registration for each exact modifier set. These
+    /// are a secondary public UIKit route; the raw path remains available.
+    static var keyCommandRegistrations: [(input: String, modifiers: UIKeyModifierFlags)] {
+        let optional: [UIKeyModifierFlags] = [.control, .alternate, .shift]
+        let modifierSets = (0..<(1 << optional.count)).map { mask in
+            optional.enumerated().reduce(into: UIKeyModifierFlags.command) { flags, pair in
+                if (mask & (1 << pair.offset)) != 0 { flags.insert(pair.element) }
+            }
+        }
+        return mappings.flatMap { mapping in
+            modifierSets.map { (input: mapping.input, modifiers: $0) }
+        }
+    }
+}
+
+/// Testable state for the GCKeyboard lifecycle. The framework callback itself
+/// is not mockable in a simulator, but its F-key down/up/disconnect policy is.
+struct GameControllerFunctionKeyState: Equatable {
+    private(set) var activeVirtualKeys: Set<UInt16> = []
+
+    mutating func receive(virtualKey: UInt16, pressed: Bool) {
+        if pressed {
+            activeVirtualKeys.insert(virtualKey)
+        } else {
+            activeVirtualKeys.remove(virtualKey)
+        }
+    }
+
+    mutating func releaseAllOnDisconnect() -> [UInt16] {
+        let keys = activeVirtualKeys.sorted()
+        activeVirtualKeys.removeAll()
+        return keys
+    }
+}
+
+/// Maps only the physical F-row exposed by GameController. F13 and later are
+/// intentionally outside the Build 18 capture scope.
+enum GameControllerFunctionKeyMapping {
+    static func virtualKey(for keyCode: GCKeyCode) -> UInt16? {
+        switch keyCode {
+        case .F1: VK.f1
+        case .F2: VK.f1 + 1
+        case .F3: VK.f1 + 2
+        case .F4: VK.f1 + 3
+        case .F5: VK.f1 + 4
+        case .F6: VK.f1 + 5
+        case .F7: VK.f1 + 6
+        case .F8: VK.f1 + 7
+        case .F9: VK.f1 + 8
+        case .F10: VK.f1 + 9
+        case .F11: VK.f1 + 10
+        case .F12: VK.f1 + 11
+        default: nil
+        }
+    }
+
+    static func modifiers(from keyboard: GCKeyboardInput) -> [UInt16] {
+        let isPressed: (GCKeyCode) -> Bool = { code in
+            keyboard.button(forKeyCode: code)?.isPressed == true
+        }
+        var modifiers: [UInt16] = []
+        if isPressed(.leftControl) || isPressed(.rightControl) { modifiers.append(VK.control) }
+        if isPressed(.leftAlt) || isPressed(.rightAlt) { modifiers.append(VK.menu) }
+        if isPressed(.leftShift) || isPressed(.rightShift) { modifiers.append(VK.shift) }
+        return modifiers
+    }
+}
+
+/// A narrow, short-lived cross-source gate. It suppresses only the matching
+/// transition observed through a *different* capture API, so repeated physical
+/// F-keys from the same API remain responsive.
+struct FunctionKeyDuplicateGate {
+    enum Source: Hashable {
+        case rawPress
+        case keyCommand
+        case gameController
+        case commandFallback
+    }
+
+    private struct Event: Hashable {
+        let virtualKey: UInt16
+        let pressed: Bool
+    }
+
+    private var recent: [Event: (source: Source, at: Date)] = [:]
+    private var recentFallbacks: [UInt16: Date] = [:]
+    private let window: TimeInterval = 0.075
+
+    mutating func suppresses(
+        virtualKey: UInt16,
+        pressed: Bool,
+        source: Source,
+        now: Date = .now
+    ) -> Bool {
+        recent = recent.filter { now.timeIntervalSince($0.value.at) <= window }
+        let event = Event(virtualKey: virtualKey, pressed: pressed)
+        defer { recent[event] = (source, now) }
+        guard let prior = recent[event] else { return false }
+        return prior.source != source && now.timeIntervalSince(prior.at) <= window
+    }
+
+    mutating func suppressesFallback(
+        virtualKey: UInt16,
+        now: Date = .now
+    ) -> Bool {
+        recentFallbacks = recentFallbacks.filter { now.timeIntervalSince($0.value) <= window }
+        defer { recentFallbacks[virtualKey] = now }
+        guard let prior = recentFallbacks[virtualKey] else { return false }
+        return now.timeIntervalSince(prior) <= window
+    }
+}

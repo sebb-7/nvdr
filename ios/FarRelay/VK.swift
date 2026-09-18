@@ -276,11 +276,14 @@ enum ReservedKeyForwardingPolicy {
         for input: String,
         modifierFlags: UIKeyModifierFlags,
         optionMapping: ModifierMapping,
-        commandMapping: ModifierMapping
+        commandMapping: ModifierMapping,
+        includeCommand: Bool = true
     ) -> [(vk: UInt16, pressed: Bool)]? {
         guard let key = vk(forInput: input) else { return nil }
+        var modifierSet = modifiers(for: modifierFlags)
+        if !includeCommand { modifierSet.remove(.command) }
         let modifiers = modifierVKs(
-            for: modifiers(for: modifierFlags),
+            for: modifierSet,
             optionMapping: optionMapping,
             commandMapping: commandMapping
         )
