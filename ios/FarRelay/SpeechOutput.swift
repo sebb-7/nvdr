@@ -26,6 +26,16 @@ actor SpeechOutput {
         synth.speak(u)
     }
 
+    func speak(ssml: String?, fallback: String?) {
+        if let ssml, let utterance = AVSpeechUtterance(ssmlRepresentation: ssml) {
+            utterance.voice = voice
+            utterance.rate = rate
+            synth.speak(utterance)
+        } else if let fallback {
+            speak(fallback)
+        }
+    }
+
     func cancel() {
         synth.stopSpeaking(at: .immediate)
     }

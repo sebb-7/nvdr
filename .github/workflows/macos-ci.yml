@@ -1,0 +1,44 @@
+name: macOS CI
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ["mac/**", ".github/workflows/macos-ci.yml"]
+  pull_request:
+    paths: ["mac/**", ".github/workflows/macos-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        working-directory: mac
+        run: xcodegen generate
+      - name: Resolve packages
+        working-directory: mac
+        run: xcodebuild -resolvePackageDependencies -project FarRelay.xcodeproj -scheme FarRelay
+      - name: Build app and speech provider
+        working-directory: mac
+        run: >-
+          xcodebuild
+          -project FarRelay.xcodeproj
+          -scheme FarRelay
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+      - name: Run deterministic Mac tests
+        working-directory: mac
+        run: >-
+          xcodebuild test
+          -project FarRelay.xcodeproj
+          -scheme FarRelayTests
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO

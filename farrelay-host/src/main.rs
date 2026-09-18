@@ -9,6 +9,9 @@ mod voiceover;
 
 use std::io::{self, BufRead, Write};
 
+#[cfg(target_os = "macos")]
+mod proxy;
+
 use capabilities::Capabilities;
 use host::HostProvider;
 use platform::SystemProvider;
@@ -17,6 +20,18 @@ use protocol::{dispatch, ErrorResponse, Request, Response};
 use voiceover::VoiceOverProvider;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--proxy")
+    {
+        if let Err(error) = proxy::run() {
+            eprintln!("farrelay-host: Mac app proxy unavailable: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let provider = SystemProvider::new();
     let voiceover = platform::voiceover_host();
     let stdin = io::stdin();

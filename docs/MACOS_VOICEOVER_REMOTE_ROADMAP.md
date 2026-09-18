@@ -1,6 +1,9 @@
 # macOS VoiceOver Remote-Control Roadmap
 
-Status: Phase M0 host/protocol spike implemented; physical VoiceOver proof pending
+Status: superseded as the primary architecture by the semantic-provider-first
+[FarRelay Mac Remote foundation](FARRELAY_MAC_REMOTE.md). The fixed AppleScript
+spike described here remains only for diagnostics, resynchronization, and
+degraded state; it must not be treated as the primary output path.
 
 Priority: immediately after `TerminalSessionManager`, before Agents/Assistant implementation
 
@@ -27,7 +30,7 @@ The design goal is to control the Mac's **real VoiceOver environment**, not to b
 
 ## Research findings — September 2026
 
-### 1. Primary path: VoiceOver's supported AppleScript bridge
+### 1. Diagnostic fallback: VoiceOver's supported AppleScript bridge
 
 Current VoiceOver Utility exposes an explicit setting named **Allow VoiceOver to be controlled with AppleScript**.
 
@@ -42,7 +45,10 @@ Independent inspection of VoiceOver's scripting dictionary, including the W3C AT
 - retrieve text under the keyboard cursor
 - open VoiceOver menus and choosers
 
-This is the preferred first implementation path because **VoiceOver itself remains responsible for navigation and screen-reader semantics**.
+This remains useful for bounded diagnostics because **VoiceOver itself remains
+responsible for navigation and screen-reader semantics**. It is not the
+preferred speech-output architecture; see the semantic provider foundation for
+the current direction.
 
 References:
 
@@ -144,15 +150,12 @@ Raw chord forwarding can remain available where safe. Future controller mappings
 
 The remote-control mode must have a deterministic emergency exit action analogous in spirit to NVDA Remote's mode switch.
 
-### 5. Preferred speech/feedback strategy
+### 5. Superseded speech/feedback strategy
 
-The first implementation should prefer semantic text/state over audio streaming.
-
-Priority order:
-
-1. VoiceOver AppleScript `last phrase` and VoiceOver-cursor text when available.
-2. AX role/label/value/state as structured verification and fallback.
-3. Optional exact VoiceOver audio streaming later if semantic feedback is insufficient.
+The current foundation instead prefers a public Speech Synthesis Provider that
+receives the final VoiceOver SSML request, then controller-local synthesis.
+AppleScript last phrase and AX are minimal fallback/diagnostic sources; system
+audio is an explicit fallback experiment rather than an invisible replacement.
 
 Apple documents the user's ability to repeat/copy VoiceOver's last spoken phrase, which aligns with the scripting bridge's `last phrase` concept.
 

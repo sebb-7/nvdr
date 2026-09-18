@@ -28,12 +28,13 @@ targets:
     platform: macOS
     sources:
       - path: FarRelay
+      - path: Shared
     info:
       path: FarRelay/Info.plist
       properties:
         CFBundleDisplayName: FarRelay
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         LSMinimumSystemVersion: "26.0"
         NSPrincipalClass: NSApplication
@@ -43,6 +44,8 @@ targets:
         # reliable remote input forwarding.
         NSInputMonitoringUsageDescription: "FarRelay reads Caps Lock and function keys at the hardware level so it can reliably forward them to the remote computer."
     dependencies:
+      - target: FarRelayRemoteVoice
+        embed: true
       - package: Citadel
       - package: swift-crypto
         product: _CryptoExtras
@@ -50,14 +53,47 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay
         PRODUCT_NAME: FarRelay
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "7"
         # Developer ID / direct distribution: not sandboxed (a global event
         # tap that swallows keystrokes is incompatible with App Sandbox), but
         # hardened runtime is on so the build can be notarized.
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: FarRelay/FarRelay.entitlements
+    preBuildScripts:
+      - name: Build and embed FarRelay Host
+        script: |
+          set -euo pipefail
+          helper_root="$SRCROOT/../farrelay-host"
+          helper_output="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          if [ -n "${FARRELAY_HOST_EXECUTABLE:-}" ]; then
+            helper_binary="$FARRELAY_HOST_EXECUTABLE"
+          else
+            cargo build --manifest-path "$helper_root/Cargo.toml" --release
+            helper_binary="$helper_root/target/release/farrelay-host"
+          fi
+          mkdir -p "$helper_output"
+          cp "$helper_binary" "$helper_output/farrelay-host"
+          chmod 755 "$helper_output/farrelay-host"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/farrelay-host"
+
+  FarRelayRemoteVoice:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: RemoteVoiceExtension
+      - path: Shared
+    info:
+      path: RemoteVoiceExtension/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay.remotevoice
+        PRODUCT_NAME: FarRelayRemoteVoice
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: RemoteVoiceExtension/FarRelayRemoteVoice.entitlements
 
   FarRelayTests:
     type: bundle.unit-test

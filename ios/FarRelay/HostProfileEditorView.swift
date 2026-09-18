@@ -46,6 +46,13 @@ struct HostProfileEditorView: View {
                             Label("NVDA Remote", systemImage: "accessibility")
                         }
                     }
+                    if draft.isMacRemoteEnabled {
+                        NavigationLink {
+                            MacRemoteFeatureView(profile: draft)
+                        } label: {
+                            Label("Mac Remote", systemImage: "laptopcomputer.and.arrow.down")
+                        }
+                    }
                 }
             }
             Section("Computer") {
@@ -103,6 +110,17 @@ struct HostProfileEditorView: View {
                         TextField("NVDA bridge command", text: $draft.nvdaBridgeCommand)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
+                }
+            }
+            if draft.platform == .macOS {
+                Section("Accessibility") {
+                    Toggle("Enable Mac Remote", isOn: Binding(
+                        get: { draft.macRemote?.isEnabled ?? false },
+                        set: { enabled in draft.macRemote = MacRemoteCapability(isEnabled: enabled) }
+                    ))
+                    Text("The installed FarRelay Mac app supplies its bundled host proxy automatically. The iPhone or iPad connects through SSH; no NVDA Remote channel is used.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             if saveFailed {

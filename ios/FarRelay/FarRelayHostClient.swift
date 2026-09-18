@@ -125,6 +125,11 @@ protocol HostClientProtocol: Sendable {
     func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult
     func voiceOverPress() async throws -> VoiceOverPressResult
     func voiceOverState() async throws -> VoiceOverState
+    func subscribeToMacRemoteEvents(_ events: [String]) async throws -> MacRemoteSubscription
+    func requestMacRemoteControl(controllerID: String) async throws -> MacRemoteControlResult
+    func releaseMacRemoteControl(controllerID: String) async throws
+    func sendMacRemoteKey(controllerID: String, generation: UInt64, key: MacRemoteKey, pressed: Bool) async throws -> MacRemoteKeyResult
+    func emergencyStopMacRemote() async throws
 }
 
 /// Errors produced while framing, validating, or correlating Host v1 messages.
@@ -211,6 +216,7 @@ actor FarRelayHostClient: HostClientProtocol {
     private var stderrBuffer = Data()
     private var diagnostics: [String] = []
     private var terminalError: HostClientError?
+    private var macRemoteEventContinuation: AsyncStream<MacRemoteHostEvent>.Continuation?
 
     init(transport: any HostByteTransport) {
         self.transport = transport
@@ -252,6 +258,38 @@ actor FarRelayHostClient: HostClientProtocol {
         try await request(operation: "voiceover.state", parameters: HostEmptyParameters())
     }
 
+    func subscribeToMacRemoteEvents(_ events: [String]) async throws -> MacRemoteSubscription {
+        try await request(operation: "subscribe", parameters: MacRemoteSubscribeParameters(events: events))
+    }
+
+    func requestMacRemoteControl(controllerID: String) async throws -> MacRemoteControlResult {
+        try await request(operation: "control.request", parameters: MacRemoteControlParameters(controllerID: controllerID))
+    }
+
+    func releaseMacRemoteControl(controllerID: String) async throws {
+        struct Release: Decodable, Sendable { let released: Bool }
+        let _: Release = try await request(operation: "control.release", parameters: MacRemoteControlParameters(controllerID: controllerID))
+    }
+
+    func sendMacRemoteKey(controllerID: String, generation: UInt64, key: MacRemoteKey, pressed: Bool) async throws -> MacRemoteKeyResult {
+        try await request(
+            operation: "input.key",
+            parameters: MacRemoteKeyParameters(controllerID: controllerID, generation: generation, usage: key.usage, pressed: pressed)
+        )
+    }
+
+    func emergencyStopMacRemote() async throws {
+        struct Stop: Decodable, Sendable { let stopped: Bool }
+        let _: Stop = try await request(operation: "emergency.stop", parameters: HostEmptyParameters())
+    }
+
+    func macRemoteEvents() -> AsyncStream<MacRemoteHostEvent> {
+        AsyncStream { continuation in
+            macRemoteEventContinuation?.finish()
+            macRemoteEventContinuation = continuation
+        }
+    }
+
     /// Starts the reader before a caller begins a long-lived operation.
     func start() {
         startReaderIfNeeded()
@@ -262,6 +300,8 @@ actor FarRelayHostClient: HostClientProtocol {
         readerTask?.cancel()
         readerTask = nil
         finish(with: .connectionClosed)
+        macRemoteEventContinuation?.finish()
+        macRemoteEventContinuation = nil
     }
 
     /// Stderr is retained strictly as diagnostics and is never parsed as API data.
@@ -394,6 +434,10 @@ actor FarRelayHostClient: HostClientProtocol {
     }
 
     private func processResponseLine(_ line: Data) {
+        if let event = try? JSONDecoder().decode(MacRemoteEventEnvelope.self, from: line), event.type == "event" {
+            macRemoteEventContinuation?.yield(MacRemoteHostEvent(name: event.name, speech: event.speech))
+            return
+        }
         let response: HostResponseHeader
         do {
             response = try JSONDecoder().decode(HostResponseHeader.self, from: line)
@@ -459,6 +503,8 @@ actor FarRelayHostClient: HostClientProtocol {
         guard terminalError == nil else { return }
         terminalError = error
         failAll(with: error)
+        macRemoteEventContinuation?.finish()
+        macRemoteEventContinuation = nil
     }
 }
 
@@ -468,6 +514,7 @@ enum FarRelayHostConnection {
 
     static func withClient(
         session: SSHSession,
+        command: String = FarRelayHostConnection.command,
         operation: @escaping @Sendable (FarRelayHostClient) async throws -> Void
     ) async throws {
         try await session.withExec(command) { transport in
@@ -525,6 +572,18 @@ private struct HostResponseHeader: Decodable {
         case requestID = "request_id"
         case ok
         case error
+    }
+}
+
+private struct MacRemoteEventEnvelope: Decodable {
+    let type: String
+    let name: String
+    let speech: MacRemoteSpeechEvent?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case name = "event"
+        case speech = "payload"
     }
 }
 

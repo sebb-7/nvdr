@@ -8,6 +8,7 @@ struct FarRelayApp: App {
     @State private var remoteIntentRouter: RemoteIntentRouter
     @State private var interactionFeedback: InteractionFeedback
     @State private var inputDiagnostics: InputDiagnosticStore
+    @State private var macRemoteSession: MacRemoteSession
 
     init() {
         let s = AppSettings()
@@ -24,6 +25,7 @@ struct FarRelayApp: App {
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
         _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
         _inputDiagnostics = State(initialValue: inputDiagnostics)
+        _macRemoteSession = State(initialValue: MacRemoteSession(speech: speech))
     }
 
     var body: some Scene {
@@ -35,6 +37,7 @@ struct FarRelayApp: App {
                 .environment(remoteIntentRouter)
                 .environment(interactionFeedback)
                 .environment(inputDiagnostics)
+                .environment(macRemoteSession)
         }
     }
 }
