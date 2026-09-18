@@ -20,7 +20,7 @@ final class GameControllerKeyboardCapture {
         let center = NotificationCenter.default
         notificationTokens = [
             center.addObserver(
-                forName: GCKeyboard.GCKeyboardDidConnect,
+                forName: .GCKeyboardDidConnect,
                 object: nil,
                 queue: .main
             ) { [weak self] notification in
@@ -28,7 +28,7 @@ final class GameControllerKeyboardCapture {
                 Task { @MainActor in self?.install(keyboard) }
             },
             center.addObserver(
-                forName: GCKeyboard.GCKeyboardDidDisconnect,
+                forName: .GCKeyboardDidDisconnect,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
