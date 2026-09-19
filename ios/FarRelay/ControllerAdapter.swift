@@ -11,6 +11,7 @@ final class DualSenseControllerAdapter {
     private let settings: AppSettings
     private let router: RemoteIntentRouter
     private let diagnostics: InputDiagnosticStore
+    private let feedback: InteractionFeedback
     private var controller: GCController?
     private var connectObservation: NotificationCenter.ObservationToken?
     private var disconnectObservation: NotificationCenter.ObservationToken?
@@ -34,9 +35,15 @@ final class DualSenseControllerAdapter {
 
     private var activeActions: [ControllerInput: ActiveAction] = [:]
     private var repeatTask: Task<Void, Never>?
+    private var textOperationTail: Task<Void, Never>?
+    private var textOperationGeneration = 0
+    private var textMirrorSession = TextModeMirrorSession()
     private var nextDiagnosticEventID = 1
 
     private(set) var isTextModeActive = false
+    private(set) var textModeBuffer = ""
+    var layerStateForTesting: ControllerLayerEngine.State { layerEngine.state }
+    var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
 
     private(set) var connectedControllerName: String?
     /// This is the real surface of the currently attached controller. An
@@ -51,12 +58,14 @@ final class DualSenseControllerAdapter {
         mappings: ControllerMappingSettings,
         settings: AppSettings,
         router: RemoteIntentRouter,
-        diagnostics: InputDiagnosticStore
+        diagnostics: InputDiagnosticStore,
+        feedback: InteractionFeedback
     ) {
         self.mappings = mappings
         self.settings = settings
         self.router = router
         self.diagnostics = diagnostics
+        self.feedback = feedback
         mappings.willChangeActiveProfile = { [weak self] in self?.releaseActiveActions() }
     }
 
@@ -149,18 +158,25 @@ final class DualSenseControllerAdapter {
             case .pressed(let input):
                 let eventID = diagnosticEventID()
                 diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "GameController reception: pressed")
+                if let layer = layerControlAction(for: input) {
+                    present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
+                    continue
+                }
                 if handleModeInput(input, pressed: true, eventID: eventID) { continue }
                 guard let action = resolvedAction(for: input) else {
                     diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: no saved mapping")
                     continue
                 }
-                start(action: action, input: input, eventID: eventID)
+                let started = start(action: action, input: input, eventID: eventID)
+                if started, case .keyboard = action, let stateChange = layerEngine.consumeOneShotAfterResolvedAction() {
+                    present(stateChange)
+                }
             case .repeated(let input):
                 guard let active = activeActions[input] else { continue }
                 diagnostics.observeController(eventID: active.eventID, input: input, pressed: true, stage: "GameController lifecycle: repeat")
                 route(active, transition: .repeated)
             case .released(let input):
-                if isLayerControl(input) {
+                if layerControlAction(for: input) != nil {
                     releaseLayerControl(input)
                     continue
                 }
@@ -173,28 +189,32 @@ final class DualSenseControllerAdapter {
     }
 
     private func resolvedAction(for input: ControllerInput) -> ControllerAction? {
-        mappings.activeProfile.action(for: input, layerID: layerEngine.layerForAction(at: ProcessInfo.processInfo.systemUptime))
+        mappings.activeProfile.action(for: input, layerID: layerEngine.layerForAction())
     }
 
-    private func start(action: ControllerAction, input: ControllerInput, eventID: Int) {
+    @discardableResult
+    private func start(action: ControllerAction, input: ControllerInput, eventID: Int) -> Bool {
         switch action {
         case .keyboard(let keyboard):
             diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(keyboard.key.label); modifiers \(keyboard.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
             guard let targetID = router.activeTargetID else {
                 diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
-                return
+                return false
             }
             let active = ActiveAction(input: input, eventID: eventID, action: keyboard, targetID: targetID)
             activeActions[input] = active
             route(active, transition: .pressed)
             startRepeatLoopIfNeeded()
+            return true
         case .layer(let layer):
-            layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime)
-            announce(layerEngine.announcement ?? "Extended layer")
+            present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
+            return true
         case .quickNavigation:
             announce(quickNavigation.toggle())
+            return true
         case .farRelay(.textMode):
             setTextMode(!isTextModeActive)
+            return true
         }
     }
 
@@ -205,7 +225,7 @@ final class DualSenseControllerAdapter {
             case .touchpadPress, .circle:
                 setTextMode(false)
             case .rightStickPress:
-                start(action: .keyboard(.init(key: .backspace)), input: input, eventID: eventID)
+                sendTextModeRemoteBackspace()
             default:
                 diagnostics.observeController(eventID: eventID, input: input, pressed: pressed, stage: "Text Mode: controller input gated")
             }
@@ -232,19 +252,24 @@ final class DualSenseControllerAdapter {
         return false
     }
 
-    private func isLayerControl(_ input: ControllerInput) -> Bool {
-        if case .layer = mappings.activeProfile.action(for: input) { return true }
-        return false
+    private func layerControlAction(for input: ControllerInput) -> ControllerLayerAction? {
+        guard case .layer(let layer)? = mappings.activeProfile.action(for: input) else { return nil }
+        return layer
     }
 
     private func releaseLayerControl(_ input: ControllerInput) {
-        guard case .layer(let layer)? = mappings.activeProfile.action(for: input) else { return }
-        layerEngine.release(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime)
-        if let announcement = layerEngine.announcement { announce(announcement) }
+        guard let layer = layerControlAction(for: input) else { return }
+        if let stateChange = layerEngine.release(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime) {
+            present(stateChange)
+        }
     }
 
     private func setTextMode(_ active: Bool) {
         isTextModeActive = active
+        textMirrorSession.reset()
+        textModeBuffer = ""
+        cancelTextOperations()
+        if active { _ = quickNavigation.exit() }
         if !active { releaseActiveActions() }
         announce(active ? "Text Mode" : "Text Mode off")
     }
@@ -254,16 +279,37 @@ final class DualSenseControllerAdapter {
     /// Mirrors local BSI/editor deltas one character at a time through the
     /// same router used by controller bindings. It intentionally records only
     /// counts and outcomes, never text content.
+    /// Text Mode v1 deliberately accepts append-at-end and suffix deletion
+    /// only. Other edits are rejected locally instead of guessing a remote
+    /// cursor operation from a whole-string diff.
+    @discardableResult
+    func applyTextModeEditorValue(_ proposedValue: String) -> String {
+        guard isTextModeActive else { return textModeBuffer }
+        let old = Array(textModeBuffer)
+        let proposed = Array(proposedValue)
+        if proposed.starts(with: old) {
+            mirrorTextInsertion(Array(proposed.dropFirst(old.count)))
+        } else if old.starts(with: proposed) {
+            mirrorTextBackspace(count: old.count - proposed.count)
+        } else {
+            announce("Text Mode supports appending and deleting from the end")
+        }
+        return textModeBuffer
+    }
+
     func mirrorTextInsertion(_ characters: [Character]) {
         guard isTextModeActive else { return }
         var unsupported = 0
         for character in characters {
-            guard let action = ControllerTextCharacterMapper.action(for: character) else {
+            if let action = ControllerTextCharacterMapper.action(for: character) {
+                textMirrorSession.append(character, mirrored: true)
+                enqueueTextTap(action, diagnostic: "Text Mode: character transmitted")
+            } else {
+                textMirrorSession.append(character, mirrored: false)
                 unsupported += 1
-                continue
             }
-            routeTap(action, diagnostic: "Text Mode: character transmitted")
         }
+        textModeBuffer = textMirrorSession.text
         if unsupported > 0 {
             announce("Unsupported character")
             diagnostics.observe(source: .controller, result: "Text Mode: \(unsupported) unsupported character")
@@ -272,12 +318,36 @@ final class DualSenseControllerAdapter {
 
     func mirrorTextBackspace(count: Int = 1) {
         guard isTextModeActive, count > 0 else { return }
-        for _ in 0..<count {
-            routeTap(.init(key: .backspace), diagnostic: "Text Mode: remote backspace transmitted")
+        let remoteBackspaces = textMirrorSession.deleteSuffix(count: count)
+        textModeBuffer = textMirrorSession.text
+        for _ in 0..<remoteBackspaces {
+            enqueueTextTap(.init(key: .backspace), diagnostic: "Text Mode: remote backspace transmitted")
         }
     }
 
-    private func routeTap(_ action: KeyboardAction, diagnostic: String) {
+    private func sendTextModeRemoteBackspace() {
+        guard isTextModeActive else { return }
+        if textMirrorSession.remoteBackspace() { textModeBuffer = textMirrorSession.text }
+        enqueueTextTap(.init(key: .backspace), diagnostic: "Text Mode: remote backspace transmitted")
+    }
+
+    private func enqueueTextTap(_ action: KeyboardAction, diagnostic: String) {
+        let previous = textOperationTail
+        let generation = textOperationGeneration
+        textOperationTail = Task { @MainActor [weak self, previous] in
+            _ = await previous?.value
+            guard let self, generation == self.textOperationGeneration, !Task.isCancelled else { return }
+            await self.routeTextTap(action, diagnostic: diagnostic)
+        }
+    }
+
+    private func cancelTextOperations() {
+        textOperationGeneration += 1
+        textOperationTail?.cancel()
+        textOperationTail = nil
+    }
+
+    private func routeTextTap(_ action: KeyboardAction, diagnostic: String) async {
         guard let targetID = router.activeTargetID else {
             diagnostics.observe(source: .controller, result: "\(diagnostic); no active target")
             return
@@ -288,7 +358,17 @@ final class DualSenseControllerAdapter {
             ? .sendKey(key)
             : .sendChord(.init(modifiers: modifiers, key: key))
         diagnostics.observe(source: .controller, result: diagnostic)
-        Task { @MainActor [router, targetID] in _ = await router.route(intent, to: targetID) }
+        _ = await router.route(intent, to: targetID)
+    }
+
+    private func present(_ stateChange: LayerFeedback) {
+        let kind: InteractionFeedbackKind = switch stateChange {
+        case .activated, .oneShot: .selectionAccepted
+        case .locked: .success
+        case .base: .warning
+        }
+        feedback.play(kind)
+        announce(stateChange.announcement)
     }
 
     private func announce(_ text: String) {
@@ -365,6 +445,10 @@ final class DualSenseControllerAdapter {
         receiveDpadState(up: up, down: down, left: left, right: right, at: time)
     }
 
+    func waitForTextOperationsForTesting() async {
+        await textOperationTail?.value
+    }
+
     private func receiveDpadState(
         up: Bool,
         down: Bool,
@@ -415,6 +499,10 @@ final class DualSenseControllerAdapter {
         rightStick.reset()
         layerEngine.reset()
         _ = quickNavigation.exit()
+        isTextModeActive = false
+        textMirrorSession.reset()
+        textModeBuffer = ""
+        cancelTextOperations()
         repeatTask?.cancel()
         repeatTask = nil
         for (_, active) in actions { route(active, transition: .released) }

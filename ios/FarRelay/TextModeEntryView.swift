@@ -5,20 +5,20 @@ import SwiftUI
 /// full buffer is never sent or logged.
 struct TextModeEntryView: View {
     @Bindable var controller: DualSenseControllerAdapter
-    @State private var text = ""
-    @State private var previousText = ""
     @FocusState private var focused: Bool
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Remote text entry", text: $text, axis: .vertical)
+                    TextField("Remote text entry", text: Binding(
+                        get: { controller.textModeBuffer },
+                        set: { _ = controller.applyTextModeEditorValue($0) }
+                    ), axis: .vertical)
                         .focused($focused)
-                        .accessibilityHint("Text is sent to the focused field on the remote computer as you type.")
+                        .accessibilityHint("Text is sent live. Text Mode supports appending and deleting from the end.")
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .onChange(of: text) { _, newValue in mirrorChange(to: newValue) }
                 } footer: {
                     Text("Text is sent live. R3 sends a remote Backspace even when this field is empty.")
                 }
@@ -33,15 +33,4 @@ struct TextModeEntryView: View {
         }
     }
 
-    private func mirrorChange(to newValue: String) {
-        let old = Array(previousText)
-        let new = Array(newValue)
-        let prefix = zip(old, new).prefix { $0 == $1 }.count
-        if new.count > old.count {
-            controller.mirrorTextInsertion(Array(new.dropFirst(prefix)))
-        } else if new.count < old.count {
-            controller.mirrorTextBackspace(count: old.count - new.count)
-        }
-        previousText = newValue
-    }
 }

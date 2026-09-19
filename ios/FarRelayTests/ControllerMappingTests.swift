@@ -114,6 +114,38 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(migrated.layers.first?.id, ControllerLayerDefinition.extendedID)
     }
 
+    func testLegacyProfileFixturePreservesEveryExistingBinding() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        let id = UUID()
+        let fixture = """
+        {"schemaVersion":1,"id":"\(id.uuidString)","name":"Legacy","controller":"dualSense","bindings":[{"sourceInput":"dpadUp","action":{"keyboard":{"_0":{"key":"tab","modifiers":["shift"]}}}},{"sourceInput":"circle","action":null}]}
+        """
+        defaults.set(Data(fixture.utf8), forKey: "profile")
+        guard case .profile(let migrated) = store.load() else { return XCTFail("Expected legacy fixture to load") }
+        XCTAssertEqual(migrated.id, id)
+        XCTAssertEqual(migrated.name, "Legacy")
+        XCTAssertEqual(migrated.controller, .dualSense)
+        XCTAssertEqual(migrated.action(for: .dpadUp), .keyboard(.init(key: .tab, modifiers: [.shift])))
+        XCTAssertNil(migrated.action(for: .circle))
+        XCTAssertNil(migrated.action(for: .options))
+        XCTAssertEqual(migrated.layers.map(\.id), [ControllerLayerDefinition.extendedID])
+        XCTAssertEqual(migrated.schemaVersion, ControllerProfile.currentSchemaVersion)
+    }
+
+    func testDuplicateLayerIdentifiersFailClosed() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        var profile = ControllerProfile()
+        let bindings = ControllerInput.allCases.map { ControllerBinding(sourceInput: $0, action: nil) }
+        profile.layers = [
+            .init(id: "extended", name: "Extended", bindings: bindings),
+            .init(id: "extended", name: "Duplicate", bindings: bindings)
+        ]
+        store.save(profile)
+        XCTAssertEqual(store.load(), .malformedOrUnsupported)
+    }
+
     func testMissingNewBindingSlotLoadsAsUnassignedButDuplicateSlotsFailClosed() throws {
         let defaults = makeDefaults()
         let store = ControllerProfileStore(defaults: defaults, key: "profile")

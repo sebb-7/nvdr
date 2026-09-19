@@ -30,7 +30,8 @@ struct FarRelayApp: App {
         remoteIntentRouter.register(MacRemoteIntentTarget(controller: macRemoteSession))
         _terminals = State(initialValue: terminals)
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
-        _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
+        let interactionFeedback = InteractionFeedback(settings: s)
+        _interactionFeedback = State(initialValue: interactionFeedback)
         _inputDiagnostics = State(initialValue: inputDiagnostics)
         _macRemoteSession = State(initialValue: macRemoteSession)
         _events = State(initialValue: events)
@@ -40,7 +41,8 @@ struct FarRelayApp: App {
             mappings: controllerMappings,
             settings: s,
             router: remoteIntentRouter,
-            diagnostics: inputDiagnostics
+            diagnostics: inputDiagnostics,
+            feedback: interactionFeedback
         ))
     }
 

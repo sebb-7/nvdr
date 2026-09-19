@@ -13,70 +13,125 @@ struct ControllerLayerEngine: Sendable {
 
     private(set) var state: State = .base
     private var pressedLayerID: String?
-    private var pressStartedAt: TimeInterval?
     private var lastTapAt: TimeInterval?
+    private var suppressNextReleaseForLayerID: String?
     private let doubleTapWindow: TimeInterval
 
     init(doubleTapWindow: TimeInterval = 0.35) {
         self.doubleTapWindow = doubleTapWindow
     }
 
-    mutating func press(layerID: String, at time: TimeInterval) {
+    /// The adapter calls this before resolving ordinary mappings. A layer
+    /// control is therefore never shadowed by its active layer.
+    mutating func press(layerID: String, at time: TimeInterval) -> LayerFeedback {
         if case .locked(let lockedID) = state, lockedID == layerID {
             state = .base
             lastTapAt = nil
-            return
+            suppressNextReleaseForLayerID = layerID
+            return .base
         }
         pressedLayerID = layerID
-        pressStartedAt = time
+        return .activated(layerID)
     }
 
-    mutating func release(layerID: String, at time: TimeInterval) {
-        guard pressedLayerID == layerID else { return }
-        defer { pressedLayerID = nil; pressStartedAt = nil }
+    mutating func release(layerID: String, at time: TimeInterval) -> LayerFeedback? {
+        if suppressNextReleaseForLayerID == layerID {
+            suppressNextReleaseForLayerID = nil
+            return nil
+        }
+        guard pressedLayerID == layerID else { return nil }
+        defer { pressedLayerID = nil }
         if case .holding(let heldID) = state, heldID == layerID {
             state = .base
             lastTapAt = nil
-            return
+            return .base
         }
         if let lastTapAt, time - lastTapAt <= doubleTapWindow {
             state = .locked(layerID)
             self.lastTapAt = nil
-        } else {
-            state = .oneShot(layerID)
-            lastTapAt = time
+            return .locked(layerID)
         }
+        state = .oneShot(layerID)
+        lastTapAt = time
+        return .oneShot(layerID)
     }
 
-    mutating func layerForAction(at time: TimeInterval) -> String? {
-        if let id = pressedLayerID, let started = pressStartedAt, time - started >= 0 {
+    /// Resolves the active layer without consuming one-shot state. The caller
+    /// consumes it only after a mapped non-control action has begun.
+    mutating func layerForAction() -> String? {
+        if let id = pressedLayerID {
             state = .holding(id)
         }
         switch state {
         case .base: return nil
-        case .holding(let id), .locked(let id): return id
-        case .oneShot(let id):
-            state = .base
-            lastTapAt = nil
-            return id
+        case .holding(let id), .oneShot(let id), .locked(let id): return id
         }
+    }
+
+    mutating func consumeOneShotAfterResolvedAction() -> LayerFeedback? {
+        guard case .oneShot = state else { return nil }
+        state = .base
+        lastTapAt = nil
+        return .base
     }
 
     mutating func reset() {
         state = .base
         pressedLayerID = nil
-        pressStartedAt = nil
         lastTapAt = nil
+        suppressNextReleaseForLayerID = nil
     }
+}
 
-    var announcement: String? {
-        switch state {
-        case .base: "Base layer"
-        case .holding(let id): "\(id.capitalized) layer"
-        case .oneShot(let id): "\(id.capitalized) layer one-shot active"
+enum LayerFeedback: Equatable, Sendable {
+    case activated(String)
+    case oneShot(String)
+    case locked(String)
+    case base
+
+    var announcement: String {
+        switch self {
+        case .activated(let id): "\(id.capitalized) layer"
+        case .oneShot(let id): "\(id.capitalized) layer one-shot"
         case .locked(let id): "\(id.capitalized) layer locked"
+        case .base: "Base layer"
         }
     }
+}
+
+/// Text Mode v1 intentionally supports append-at-end and suffix deletion.
+/// The ledger remembers which local entries own remote characters, so local
+/// unsupported text can never delete unrelated remote text later.
+struct TextModeMirrorSession: Sendable {
+    private enum Status: Sendable { case mirrored, localOnly, remotelyDeleted }
+    private var entries: [(character: Character, status: Status)] = []
+
+    var text: String { String(entries.map(\.character)) }
+
+    mutating func append(_ character: Character, mirrored: Bool) {
+        entries.append((character, mirrored ? .mirrored : .localOnly))
+    }
+
+    mutating func deleteSuffix(count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let removed = entries.suffix(count)
+        entries.removeLast(min(count, entries.count))
+        return removed.filter { $0.status == .mirrored }.count
+    }
+
+    /// Returns true when the visible buffer's end was a known mirrored entry.
+    /// A remote Backspace is still sent if no local correspondence exists.
+    mutating func remoteBackspace() -> Bool {
+        guard let index = entries.lastIndex(where: { $0.status == .mirrored }) else { return false }
+        if index == entries.index(before: entries.endIndex) {
+            entries.removeLast()
+            return true
+        }
+        entries[index].status = .remotelyDeleted
+        return false
+    }
+
+    mutating func reset() { entries.removeAll() }
 }
 
 enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
