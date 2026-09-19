@@ -27,7 +27,7 @@ final class InputDiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("App version:"))
         XCTAssertTrue(report.contains("TestFlight build:"))
         XCTAssertTrue(report.contains("Source revision:"))
-        XCTAssertTrue(report.contains("queued to writer; host receipt unconfirmed"))
+        XCTAssertTrue(report.contains("Transport delivery: see per-event routing and transport stages below"))
         XCTAssertTrue(report.contains("key command"))
         XCTAssertFalse(report.contains("typed text"))
     }
