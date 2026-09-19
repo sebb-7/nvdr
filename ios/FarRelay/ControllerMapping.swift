@@ -67,7 +67,43 @@ struct KeyboardAction: Codable, Hashable, Sendable {
     var modifiers: Set<ControllerKeyboardModifier> = []
 }
 
-enum ControllerAction: Codable, Hashable, Sendable { case keyboard(KeyboardAction) }
+/// A profile action remains platform-independent until the adapter resolves it
+/// to a RemoteIntent. The non-keyboard cases are intentionally local modes,
+/// so a future semantic NVDA protocol can replace keyboard shims without
+/// changing controller UX or profile data.
+enum ControllerAction: Codable, Hashable, Sendable {
+    case keyboard(KeyboardAction)
+    case layer(ControllerLayerAction)
+    case quickNavigation(QuickNavigationAction)
+    case farRelay(FarRelayControllerAction)
+}
+
+struct ControllerLayerAction: Codable, Hashable, Sendable {
+    var layerID: String
+    init(layerID: String = ControllerLayerDefinition.extendedID) { self.layerID = layerID }
+}
+
+enum QuickNavigationAction: String, Codable, Hashable, Sendable { case toggle }
+enum FarRelayControllerAction: String, Codable, Hashable, Sendable { case textMode }
+
+struct ControllerLayerDefinition: Codable, Hashable, Identifiable, Sendable {
+    static let extendedID = "extended"
+    var id: String
+    var name: String
+    var bindings: [ControllerBinding]
+
+    func action(for input: ControllerInput) -> ControllerAction? {
+        bindings.first { $0.sourceInput == input }?.action
+    }
+
+    mutating func setAction(_ action: ControllerAction?, for input: ControllerInput) {
+        if let index = bindings.firstIndex(where: { $0.sourceInput == input }) {
+            bindings[index].action = action
+        } else {
+            bindings.append(.init(sourceInput: input, action: action))
+        }
+    }
+}
 
 struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
     var sourceInput: ControllerInput
@@ -76,17 +112,95 @@ struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct ControllerProfile: Codable, Hashable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
     var schemaVersion: Int = currentSchemaVersion
     var id: UUID = UUID()
     var name: String = "Default Controller Profile"
     var controller: ControllerHardware = .dualSense
     var bindings: [ControllerBinding] = ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+    /// Base remains `bindings` for backward-compatible v1 migration. Named
+    /// layers keep their own stable input slots for future custom layers.
+    var layers: [ControllerLayerDefinition] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, id, name, controller, bindings, layers
+    }
+
+    init(
+        schemaVersion: Int = ControllerProfile.currentSchemaVersion,
+        id: UUID = UUID(),
+        name: String = "Default Controller Profile",
+        controller: ControllerHardware = .dualSense,
+        bindings: [ControllerBinding] = ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) },
+        layers: [ControllerLayerDefinition] = []
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.name = name
+        self.controller = controller
+        self.bindings = bindings
+        self.layers = layers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Default Controller Profile"
+        controller = try container.decodeIfPresent(ControllerHardware.self, forKey: .controller) ?? .dualSense
+        bindings = try container.decodeIfPresent([ControllerBinding].self, forKey: .bindings) ?? []
+        // v1 pre-dates named layers. Treat absence as an empty layer list so
+        // the explicit migration below can preserve the base profile safely.
+        layers = try container.decodeIfPresent([ControllerLayerDefinition].self, forKey: .layers) ?? []
+    }
 
     func action(for input: ControllerInput) -> ControllerAction? { bindings.first { $0.sourceInput == input }?.action }
     mutating func setAction(_ action: ControllerAction?, for input: ControllerInput) {
         if let index = bindings.firstIndex(where: { $0.sourceInput == input }) { bindings[index].action = action }
         else { bindings.append(.init(sourceInput: input, action: action)) }
+    }
+
+    func action(for input: ControllerInput, layerID: String?) -> ControllerAction? {
+        guard let layerID else { return action(for: input) }
+        return layers.first { $0.id == layerID }?.action(for: input)
+    }
+
+    static func newDefault() -> ControllerProfile {
+        var profile = ControllerProfile()
+        profile.schemaVersion = currentSchemaVersion
+        profile.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
+        profile.setAction(.keyboard(.init(key: .down)), for: .dpadDown)
+        profile.setAction(.keyboard(.init(key: .left)), for: .dpadLeft)
+        profile.setAction(.keyboard(.init(key: .right)), for: .dpadRight)
+        profile.setAction(.keyboard(.init(key: .enter)), for: .cross)
+        profile.setAction(.keyboard(.init(key: .escape)), for: .circle)
+        profile.setAction(.keyboard(.init(key: .tab)), for: .leftShoulder)
+        profile.setAction(.keyboard(.init(key: .tab, modifiers: [.shift])), for: .leftTrigger)
+        profile.setAction(.keyboard(.init(key: .space, modifiers: [.nvda])), for: .square)
+        profile.setAction(.keyboard(.init(key: .n, modifiers: [.nvda])), for: .triangle)
+        profile.setAction(.keyboard(.init(key: .pageUp)), for: .rightStickUp)
+        profile.setAction(.keyboard(.init(key: .pageDown)), for: .rightStickDown)
+        profile.setAction(.keyboard(.init(key: .home)), for: .rightStickLeft)
+        profile.setAction(.keyboard(.init(key: .end)), for: .rightStickRight)
+        profile.setAction(.keyboard(.init(key: .w, modifiers: [.control])), for: .rightShoulder)
+        profile.setAction(.keyboard(.init(key: .f4, modifiers: [.alt])), for: .rightTrigger)
+        profile.setAction(.keyboard(.init(key: .backspace)), for: .rightStickPress)
+        profile.setAction(.layer(.init()), for: .options)
+        profile.setAction(.quickNavigation(.toggle), for: .create)
+        profile.setAction(.farRelay(.textMode), for: .touchpadPress)
+        var extended = ControllerLayerDefinition(
+            id: ControllerLayerDefinition.extendedID,
+            name: "Extended",
+            bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+        )
+        extended.setAction(.keyboard(.init(key: .pageUp)), for: .dpadUp)
+        extended.setAction(.keyboard(.init(key: .pageDown)), for: .dpadDown)
+        extended.setAction(.keyboard(.init(key: .home)), for: .dpadLeft)
+        extended.setAction(.keyboard(.init(key: .end)), for: .dpadRight)
+        extended.setAction(.keyboard(.init(key: .w, modifiers: [.control])), for: .cross)
+        extended.setAction(.keyboard(.init(key: .f4, modifiers: [.alt])), for: .circle)
+        profile.layers = [extended]
+        return profile
     }
 
     /// Older profile bytes can omit a controller input introduced by a later
@@ -97,6 +211,12 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         var normalized = self
         for input in ControllerInput.allCases where normalized.bindings.contains(where: { $0.sourceInput == input }) == false {
             normalized.bindings.append(.init(sourceInput: input, action: nil))
+        }
+        for index in normalized.layers.indices {
+            guard Set(normalized.layers[index].bindings.map(\.sourceInput)).count == normalized.layers[index].bindings.count else { return nil }
+            for input in ControllerInput.allCases where normalized.layers[index].bindings.contains(where: { $0.sourceInput == input }) == false {
+                normalized.layers[index].bindings.append(.init(sourceInput: input, action: nil))
+            }
         }
         return normalized
     }
@@ -109,10 +229,21 @@ struct ControllerProfileStore {
     let key: String
     func load() -> ControllerProfileLoadResult {
         guard let data = defaults.data(forKey: key) else { return .uninitialized }
-        guard let profile = try? JSONDecoder().decode(ControllerProfile.self, from: data),
-              profile.schemaVersion == ControllerProfile.currentSchemaVersion,
+        guard var profile = try? JSONDecoder().decode(ControllerProfile.self, from: data),
+              profile.schemaVersion <= ControllerProfile.currentSchemaVersion,
               let normalized = profile.normalizedBindingSlots() else { return .malformedOrUnsupported }
-        return .profile(normalized)
+        profile = normalized
+        if profile.schemaVersion == 1 {
+            // v1 profiles contained only base keyboard bindings. Preserve them
+            // exactly; add an editable empty Extended layer rather than
+            // overwriting a user's established mapping choices.
+            profile.schemaVersion = ControllerProfile.currentSchemaVersion
+            if profile.layers.isEmpty {
+                profile.layers = [.init(id: ControllerLayerDefinition.extendedID, name: "Extended", bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) })]
+            }
+        }
+        guard profile.schemaVersion == ControllerProfile.currentSchemaVersion else { return .malformedOrUnsupported }
+        return .profile(profile)
     }
     func save(_ profile: ControllerProfile) { defaults.set(try? JSONEncoder().encode(profile), forKey: key) }
 }
@@ -136,7 +267,7 @@ final class ControllerMappingSettings {
         case .profile(let loadedProfile):
             profile = loadedProfile
         case .uninitialized, .malformedOrUnsupported:
-            profile = .init()
+            profile = .newDefault()
         }
         activeProfile = profile
         draftProfile = profile
@@ -154,6 +285,15 @@ final class ControllerMappingSettings {
 
     func setAction(_ action: ControllerAction?, for input: ControllerInput) {
         draftProfile.setAction(action, for: input)
+    }
+
+    func setAction(_ action: ControllerAction?, for input: ControllerInput, layerID: String?) {
+        guard let layerID else {
+            setAction(action, for: input)
+            return
+        }
+        guard let index = draftProfile.layers.firstIndex(where: { $0.id == layerID }) else { return }
+        draftProfile.layers[index].setAction(action, for: input)
     }
 
     func saveDraft() {

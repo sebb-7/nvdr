@@ -1,6 +1,7 @@
 import Foundation
 import GameController
 import Observation
+import UIKit
 
 /// Owns Apple controller objects and turns their values into stable FarRelay
 /// inputs. It deliberately has no SSH, NVDA, or host-protocol dependency.
@@ -14,6 +15,8 @@ final class DualSenseControllerAdapter {
     private var connectObservation: NotificationCenter.ObservationToken?
     private var disconnectObservation: NotificationCenter.ObservationToken?
     private var inputLifecycle = ControllerInputLifecycle()
+    private var layerEngine = ControllerLayerEngine()
+    private var quickNavigation = QuickNavigationEngine()
     private var leftStick = ControllerStickDirectionClassifier(
         left: .leftStickLeft, right: .leftStickRight,
         up: .leftStickUp, down: .leftStickDown
@@ -32,6 +35,8 @@ final class DualSenseControllerAdapter {
     private var activeActions: [ControllerInput: ActiveAction] = [:]
     private var repeatTask: Task<Void, Never>?
     private var nextDiagnosticEventID = 1
+
+    private(set) var isTextModeActive = false
 
     private(set) var connectedControllerName: String?
     /// This is the real surface of the currently attached controller. An
@@ -72,6 +77,7 @@ final class DualSenseControllerAdapter {
 
     func stop() {
         releaseActiveActions()
+        isTextModeActive = false
         if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
         if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
         connectObservation = nil
@@ -143,30 +149,151 @@ final class DualSenseControllerAdapter {
             case .pressed(let input):
                 let eventID = diagnosticEventID()
                 diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "GameController reception: pressed")
-                guard case .keyboard(let action)? = mappings.activeProfile.action(for: input) else {
+                if handleModeInput(input, pressed: true, eventID: eventID) { continue }
+                guard let action = resolvedAction(for: input) else {
                     diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: no saved mapping")
                     continue
                 }
-                diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(action.key.label); modifiers \(action.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
-                guard let targetID = router.activeTargetID else {
-                    diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
-                    continue
-                }
-                let active = ActiveAction(input: input, eventID: eventID, action: action, targetID: targetID)
-                activeActions[input] = active
-                route(active, transition: .pressed)
-                startRepeatLoopIfNeeded()
+                start(action: action, input: input, eventID: eventID)
             case .repeated(let input):
                 guard let active = activeActions[input] else { continue }
                 diagnostics.observeController(eventID: active.eventID, input: input, pressed: true, stage: "GameController lifecycle: repeat")
                 route(active, transition: .repeated)
             case .released(let input):
+                if isLayerControl(input) {
+                    releaseLayerControl(input)
+                    continue
+                }
                 guard let active = activeActions.removeValue(forKey: input) else { continue }
                 diagnostics.observeController(eventID: active.eventID, input: input, pressed: false, stage: "GameController reception: released")
                 route(active, transition: .released)
             }
         }
         stopRepeatLoopIfIdle()
+    }
+
+    private func resolvedAction(for input: ControllerInput) -> ControllerAction? {
+        mappings.activeProfile.action(for: input, layerID: layerEngine.layerForAction(at: ProcessInfo.processInfo.systemUptime))
+    }
+
+    private func start(action: ControllerAction, input: ControllerInput, eventID: Int) {
+        switch action {
+        case .keyboard(let keyboard):
+            diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(keyboard.key.label); modifiers \(keyboard.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
+            guard let targetID = router.activeTargetID else {
+                diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
+                return
+            }
+            let active = ActiveAction(input: input, eventID: eventID, action: keyboard, targetID: targetID)
+            activeActions[input] = active
+            route(active, transition: .pressed)
+            startRepeatLoopIfNeeded()
+        case .layer(let layer):
+            layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime)
+            announce(layerEngine.announcement ?? "Extended layer")
+        case .quickNavigation:
+            announce(quickNavigation.toggle())
+        case .farRelay(.textMode):
+            setTextMode(!isTextModeActive)
+        }
+    }
+
+    /// Returns true if a local mode fully consumed the input.
+    private func handleModeInput(_ input: ControllerInput, pressed: Bool, eventID: Int) -> Bool {
+        if isTextModeActive {
+            switch input {
+            case .touchpadPress, .circle:
+                setTextMode(false)
+            case .rightStickPress:
+                start(action: .keyboard(.init(key: .backspace)), input: input, eventID: eventID)
+            default:
+                diagnostics.observeController(eventID: eventID, input: input, pressed: pressed, stage: "Text Mode: controller input gated")
+            }
+            return true
+        }
+        if quickNavigation.isActive {
+            switch input {
+            case .create, .circle:
+                announce(quickNavigation.exit() ?? "Quick Navigation off.")
+            case .leftStickUp:
+                announce(quickNavigation.previousCategory())
+            case .leftStickDown:
+                announce(quickNavigation.nextCategory())
+            case .leftStickRight:
+                start(action: .keyboard(.init(key: quickNavigation.category.key)), input: input, eventID: eventID)
+            case .leftStickLeft:
+                start(action: .keyboard(.init(key: quickNavigation.category.key, modifiers: [.shift])), input: input, eventID: eventID)
+            case .cross:
+                start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
+            default: return false
+            }
+            return true
+        }
+        return false
+    }
+
+    private func isLayerControl(_ input: ControllerInput) -> Bool {
+        if case .layer = mappings.activeProfile.action(for: input) { return true }
+        return false
+    }
+
+    private func releaseLayerControl(_ input: ControllerInput) {
+        guard case .layer(let layer)? = mappings.activeProfile.action(for: input) else { return }
+        layerEngine.release(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime)
+        if let announcement = layerEngine.announcement { announce(announcement) }
+    }
+
+    private func setTextMode(_ active: Bool) {
+        isTextModeActive = active
+        if !active { releaseActiveActions() }
+        announce(active ? "Text Mode" : "Text Mode off")
+    }
+
+    func exitTextMode() { setTextMode(false) }
+
+    /// Mirrors local BSI/editor deltas one character at a time through the
+    /// same router used by controller bindings. It intentionally records only
+    /// counts and outcomes, never text content.
+    func mirrorTextInsertion(_ characters: [Character]) {
+        guard isTextModeActive else { return }
+        var unsupported = 0
+        for character in characters {
+            guard let action = ControllerTextCharacterMapper.action(for: character) else {
+                unsupported += 1
+                continue
+            }
+            routeTap(action, diagnostic: "Text Mode: character transmitted")
+        }
+        if unsupported > 0 {
+            announce("Unsupported character")
+            diagnostics.observe(source: .controller, result: "Text Mode: \(unsupported) unsupported character")
+        }
+    }
+
+    func mirrorTextBackspace(count: Int = 1) {
+        guard isTextModeActive, count > 0 else { return }
+        for _ in 0..<count {
+            routeTap(.init(key: .backspace), diagnostic: "Text Mode: remote backspace transmitted")
+        }
+    }
+
+    private func routeTap(_ action: KeyboardAction, diagnostic: String) {
+        guard let targetID = router.activeTargetID else {
+            diagnostics.observe(source: .controller, result: "\(diagnostic); no active target")
+            return
+        }
+        let key = RemoteKey.windowsVirtualKey(action.key.virtualKey)
+        let modifiers = resolvedModifiers(action.modifiers)
+        let intent: RemoteIntent = modifiers.isEmpty
+            ? .sendKey(key)
+            : .sendChord(.init(modifiers: modifiers, key: key))
+        diagnostics.observe(source: .controller, result: diagnostic)
+        Task { @MainActor [router, targetID] in _ = await router.route(intent, to: targetID) }
+    }
+
+    private func announce(_ text: String) {
+        diagnostics.observe(source: .controller, result: text)
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 
     private enum ActionTransition { case pressed, repeated, released }
@@ -286,6 +413,8 @@ final class DualSenseControllerAdapter {
         _ = inputLifecycle.releaseAll()
         leftStick.reset()
         rightStick.reset()
+        layerEngine.reset()
+        _ = quickNavigation.exit()
         repeatTask?.cancel()
         repeatTask = nil
         for (_, active) in actions { route(active, transition: .released) }

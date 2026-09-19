@@ -62,18 +62,18 @@ final class ControllerMappingTests: XCTestCase {
         let defaults = makeDefaults()
         let settings = ControllerMappingSettings(defaults: defaults)
 
-        settings.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
-        settings.setAction(.keyboard(.init(key: .down)), for: .dpadDown)
+        settings.setAction(.keyboard(.init(key: .tab)), for: .dpadUp)
+        settings.setAction(.keyboard(.init(key: .escape)), for: .dpadDown)
 
         XCTAssertTrue(settings.hasUnsavedChanges)
-        XCTAssertNil(settings.activeProfile.action(for: .dpadUp))
-        XCTAssertEqual(settings.draftProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
+        XCTAssertEqual(settings.activeProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
+        XCTAssertEqual(settings.draftProfile.action(for: .dpadUp), .keyboard(.init(key: .tab)))
 
         settings.saveDraft()
 
         XCTAssertFalse(settings.hasUnsavedChanges)
-        XCTAssertEqual(settings.activeProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
-        XCTAssertEqual(settings.activeProfile.action(for: .dpadDown), .keyboard(.init(key: .down)))
+        XCTAssertEqual(settings.activeProfile.action(for: .dpadUp), .keyboard(.init(key: .tab)))
+        XCTAssertEqual(settings.activeProfile.action(for: .dpadDown), .keyboard(.init(key: .escape)))
         let reloaded = ControllerMappingSettings(defaults: defaults)
         XCTAssertEqual(reloaded.activeProfile, settings.activeProfile)
     }
@@ -81,11 +81,11 @@ final class ControllerMappingTests: XCTestCase {
     func testDiscardingDraftNeverPersistsIt() {
         let defaults = makeDefaults()
         let settings = ControllerMappingSettings(defaults: defaults)
-        settings.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
+        settings.setAction(.keyboard(.init(key: .tab)), for: .dpadUp)
         settings.discardDraft()
 
         XCTAssertFalse(settings.hasUnsavedChanges)
-        XCTAssertNil(ControllerMappingSettings(defaults: defaults).activeProfile.action(for: .dpadUp))
+        XCTAssertEqual(ControllerMappingSettings(defaults: defaults).activeProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
     }
 
     func testCorruptOrFutureProfileFailsClosed() throws {
@@ -97,6 +97,21 @@ final class ControllerMappingTests: XCTestCase {
         profile.schemaVersion += 1
         defaults.set(try JSONEncoder().encode(profile), forKey: "profile")
         XCTAssertEqual(store.load(), .malformedOrUnsupported)
+    }
+
+    func testV1ProfileMigratesWithoutChangingExistingBaseBinding() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        var legacy = ControllerProfile(schemaVersion: 1)
+        legacy.setAction(.keyboard(.init(key: .escape)), for: .circle)
+        store.save(legacy)
+
+        guard case .profile(let migrated) = store.load() else {
+            return XCTFail("Expected v1 profile migration")
+        }
+        XCTAssertEqual(migrated.schemaVersion, ControllerProfile.currentSchemaVersion)
+        XCTAssertEqual(migrated.action(for: .circle), .keyboard(.init(key: .escape)))
+        XCTAssertEqual(migrated.layers.first?.id, ControllerLayerDefinition.extendedID)
     }
 
     func testMissingNewBindingSlotLoadsAsUnassignedButDuplicateSlotsFailClosed() throws {
