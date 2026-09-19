@@ -131,13 +131,15 @@ final class ControllerMappingSettings {
     var willChangeActiveProfile: (@MainActor () -> Void)?
     init(defaults: UserDefaults = .standard) {
         store = .init(defaults: defaults, key: "farrelay.controllerProfile.v1")
+        let profile: ControllerProfile
         switch store.load() {
-        case .profile(let profile):
-            activeProfile = profile
+        case .profile(let loadedProfile):
+            profile = loadedProfile
         case .uninitialized, .malformedOrUnsupported:
-            activeProfile = .init()
+            profile = .init()
         }
-        draftProfile = activeProfile
+        activeProfile = profile
+        draftProfile = profile
     }
 
     var hasUnsavedChanges: Bool { draftProfile != activeProfile }
