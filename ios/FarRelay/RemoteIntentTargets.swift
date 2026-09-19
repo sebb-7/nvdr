@@ -140,6 +140,8 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
 /// Translates semantic intent into the bridge's existing Windows key events.
 @MainActor
 final class NVDARemoteIntentTarget: HostTargetExecutor {
+    static let defaultID = RemoteTargetID("nvda")
+
     let remoteTargetID: RemoteTargetID
     let capabilities: Set<RemoteCapability> = [
         .genericNavigation,
@@ -154,7 +156,7 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
 
     init(
         keySink: any RemoteWindowsKeySink,
-        id: RemoteTargetID = RemoteTargetID("nvda")
+        id: RemoteTargetID = defaultID
     ) {
         self.keySink = keySink
         remoteTargetID = id

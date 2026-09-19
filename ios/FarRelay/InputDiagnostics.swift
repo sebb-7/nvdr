@@ -107,7 +107,7 @@ final class InputDiagnosticStore {
             "Source revision: \(source)",
             "Connection state: \(connectionState)",
             "Host/protocol version: \(hostVersion ?? "unknown")",
-            "Transport delivery: queued to writer; host receipt unconfirmed",
+            "Transport delivery: see per-event routing and transport stages below",
             "Events:"
         ]
         lines += entries.map(\.reportLine)
