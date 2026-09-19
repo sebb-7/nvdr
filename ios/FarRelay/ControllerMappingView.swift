@@ -45,7 +45,7 @@ struct ControllerMappingView: View {
 
     private func summary(for action: ControllerAction?) -> String {
         switch action {
-        case nil: "Unassigned"
+        case nil: return "Unassigned"
         case .keyboard(let keyboard):
             let modifiers = keyboard.modifiers.map(\.label).sorted()
             return (modifiers + [keyboard.key.label]).joined(separator: "+")
