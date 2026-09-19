@@ -57,7 +57,7 @@ private struct ControllerTransition: Equatable {
 private final class ControllerTestKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady = true
     var activeProfileID: UUID?
-    var inputSessionID = UUID()
+    var inputSessionID: UUID? = UUID()
     var lastInputForwardingResult: InputForwardingResult? = .accepted
     var forwardKeyboardEnabled = true
     var transitions: [ControllerTransition] = []
