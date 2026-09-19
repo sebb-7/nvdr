@@ -20,13 +20,13 @@ final class DualSenseControllerAdapter {
 
     func start() {
         connectObserver = NotificationCenter.default.addObserver(
-            forName: GCController.didConnectNotification, object: nil, queue: .main
+            forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] notification in
             guard let controller = notification.object as? GCController else { return }
             Task { @MainActor in self?.attach(controller) }
         }
         disconnectObserver = NotificationCenter.default.addObserver(
-            forName: GCController.didDisconnectNotification, object: nil, queue: .main
+            forName: .GCControllerDidDisconnect, object: nil, queue: .main
         ) { [weak self] notification in
             guard let controller = notification.object as? GCController else { return }
             Task { @MainActor in self?.detach(controller) }
