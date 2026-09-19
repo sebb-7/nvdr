@@ -245,6 +245,7 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
             guard let scalar = scalars.first, (65...90).contains(scalar.value) else { return nil }
             return UInt16(scalar.value)
         }
+        if let virtualKey = key.windowsVirtualKey { return virtualKey }
         return nil
     }
 }
