@@ -76,6 +76,7 @@ struct RemoteKey: Hashable, Sendable {
         case named(RemoteNamedKey)
         case function(Int)
         case letter(Character)
+        case windowsVirtualKey(UInt16)
     }
 
     static let tab = RemoteKey(storage: .named(.tab))
@@ -86,6 +87,7 @@ struct RemoteKey: Hashable, Sendable {
     static let rightArrow = RemoteKey(storage: .named(.rightArrow))
     static let upArrow = RemoteKey(storage: .named(.upArrow))
     static let downArrow = RemoteKey(storage: .named(.downArrow))
+    static func windowsVirtualKey(_ value: UInt16) -> RemoteKey { RemoteKey(storage: .windowsVirtualKey(value)) }
 
     private let storage: Storage
 
@@ -122,6 +124,11 @@ struct RemoteKey: Hashable, Sendable {
     var letterCharacter: Character? {
         guard case .letter(let character) = storage else { return nil }
         return character
+    }
+
+    var windowsVirtualKey: UInt16? {
+        guard case .windowsVirtualKey(let value) = storage else { return nil }
+        return value
     }
 
 }

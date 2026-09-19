@@ -11,6 +11,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Local input") {
+                    NavigationLink("Controller Mapping") { ControllerMappingView() }
                     Picker("NVDA modifier", selection: $settings.nvdaModifier) {
                         ForEach(NvdaModifier.allCases) { m in
                             Text(m.label).tag(m)
