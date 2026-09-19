@@ -96,7 +96,7 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
         case .reviewPrevious, .reviewNext, .returnToLive,
              .nextItem, .previousItem,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
-             .sendChord:
+             .sendChord, .macRemote:
             return .unsupported
         }
     }
@@ -196,7 +196,8 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         case .sendChord(let chord):
             guard let key = windowsVirtualKey(for: chord.key) else { return .unsupported }
             emitChord(modifiers: chord.modifiers, key: key)
-        case .reviewPrevious, .reviewNext, .returnToLive, .terminalInterrupt, .terminalEOF:
+        case .reviewPrevious, .reviewNext, .returnToLive, .terminalInterrupt, .terminalEOF,
+             .macRemote:
             return .unsupported
         }
         return .performed

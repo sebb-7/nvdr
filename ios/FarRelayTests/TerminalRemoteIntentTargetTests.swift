@@ -54,6 +54,16 @@ final class TerminalRemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(result, .unsupported)
     }
 
+    func testMacRemoteIntentIsUnsupportedWithoutSendingTerminalInput() async {
+        let session = FakeTerminalIntentSession()
+        let target = TerminalRemoteIntentTarget(presentation: connectedModel(session: session))
+
+        let result = await target.perform(.macRemote(.nextItem))
+
+        XCTAssertEqual(result, .unsupported)
+        XCTAssertTrue(session.sentBytes.isEmpty)
+    }
+
     func testDisconnectedTerminalIsUnavailable() async {
         let target = TerminalRemoteIntentTarget(presentation: TerminalPresentationModel())
 

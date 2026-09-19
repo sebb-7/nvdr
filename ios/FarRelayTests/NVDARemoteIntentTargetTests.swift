@@ -75,6 +75,16 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(result, .unsupported)
         XCTAssertTrue(sink.transitions.isEmpty)
     }
+
+    func testMacRemoteIntentIsUnsupportedWithoutEmittingWindowsKeys() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+
+        let result = await target.perform(.macRemote(.nextItem))
+
+        XCTAssertEqual(result, .unsupported)
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
 }
 
 private struct KeyTransition: Equatable {
