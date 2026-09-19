@@ -1,66 +1,55 @@
 import SwiftUI
-import UIKit
 
 /// A standard list-based editor so every mapping remains reachable with VoiceOver.
 struct ControllerMappingView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
     @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
 
-    @State private var saveConfirmation: String?
-
     var body: some View {
-        List(ControllerInput.allCases) { input in
-            // Keep the destination on the row itself. The former value-based
-            // link relied on a destination attached to the enclosing list,
-            // which could defer VoiceOver activation until that list was
-            // being popped.
-            NavigationLink {
-                ControllerBindingEditor(input: input)
-            } label: {
-                VStack(alignment: .leading) {
-                    Text(input.label)
-                    Text(summary(for: mappings.draftProfile.action(for: input)))
-                        .foregroundStyle(.secondary)
-                    Text(availability(for: input))
-                        .font(.footnote)
-                        .foregroundStyle(.tertiary)
+        List {
+            ForEach(ControllerInput.allCases) { input in
+                NavigationLink {
+                    ControllerBindingEditor(input: input)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(input.label)
+                        Text(summary(for: mappings.draftProfile.action(for: input)))
+                            .foregroundStyle(.secondary)
+                        Text(availability(for: input))
+                            .font(.footnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .accessibilityElement(children: .combine)
                 }
-                .accessibilityElement(children: .combine)
             }
-        }
-        .navigationTitle("Controller Mapping")
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 8) {
-                if mappings.hasUnsavedChanges {
-                    Text("Unsaved mapping changes")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+
+            if mappings.hasUnsavedChanges {
+                Section("Unsaved changes") {
                     Button("Discard Unsaved Changes", role: .destructive) {
                         mappings.discardDraft()
                     }
                 }
+            }
+
+            if controllerAdapter.controllerHasRemappedElements {
+                Section("Controller") {
+                    Text("This controller follows its current iOS button remapping.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Controller Mapping")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("Save Mappings") {
                     mappings.saveDraft()
-                    saveConfirmation = "Controller mappings saved."
-                    UIAccessibility.post(
-                        notification: .announcement,
-                        argument: "Controller mappings saved."
-                    )
+                    AccessibilityNotification.Announcement(
+                        "Controller mappings saved."
+                    ).post()
                 }
                 .disabled(!mappings.hasUnsavedChanges)
                 .accessibilityHint("Saves every edited controller binding.")
-                if controllerAdapter.controllerHasRemappedElements {
-                    Text("This controller follows its current iOS button remapping.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                if let saveConfirmation {
-                    Text(saveConfirmation)
-                        .font(.footnote)
-                        .accessibilityAddTraits(.isStaticText)
-                }
             }
-            .padding()
         }
         .onAppear { mappings.beginEditing() }
     }
@@ -81,46 +70,73 @@ struct ControllerMappingView: View {
     }
 }
 
+struct ControllerBindingEditorState: Equatable {
+    var key: WindowsKeyboardKey?
+    var modifiers: Set<ControllerKeyboardModifier>
+
+    init(action: ControllerAction?) {
+        if case .keyboard(let keyboard) = action {
+            key = keyboard.key
+            modifiers = keyboard.modifiers
+        } else {
+            key = nil
+            modifiers = []
+        }
+    }
+
+    var action: ControllerAction? {
+        guard let key else { return nil }
+        return .keyboard(.init(key: key, modifiers: modifiers))
+    }
+}
+
 struct ControllerBindingEditor: View {
     let input: ControllerInput
     @Environment(ControllerMappingSettings.self) private var mappings
-    @State private var key: WindowsKeyboardKey = .up
-    @State private var modifiers: Set<ControllerKeyboardModifier> = []
+    @State private var editorState = ControllerBindingEditorState(action: nil)
 
     var body: some View {
         Form {
             Section("Controller input") { Text(input.label) }
             Section("Keyboard") {
-                Picker("Primary key", selection: $key) {
-                    ForEach(WindowsKeyboardKey.allCases) { key in Text(key.label).tag(key) }
+                Picker("Primary key", selection: $editorState.key) {
+                    Text("Unassigned").tag(WindowsKeyboardKey?.none)
+                    ForEach(WindowsKeyboardKey.allCases) { key in
+                        Text(key.label).tag(Optional(key))
+                    }
                 }
                 ForEach(ControllerKeyboardModifier.allCases) { modifier in
                     Toggle(modifier.label, isOn: modifierBinding(modifier))
+                        .disabled(editorState.key == nil)
                 }
             }
             Section {
-                Button("Clear Mapping", role: .destructive) { mappings.setAction(nil, for: input) }
+                Button("Clear Mapping", role: .destructive) {
+                    editorState = ControllerBindingEditorState(action: nil)
+                }
             }
         }
         .navigationTitle(input.label)
-        .onAppear { loadCurrentBinding() }
-        .onChange(of: key) { _, _ in saveDraftBinding() }
-        .onChange(of: modifiers) { _, _ in saveDraftBinding() }
+        .onAppear {
+            editorState = ControllerBindingEditorState(
+                action: mappings.draftProfile.action(for: input)
+            )
+        }
+        .onChange(of: editorState) { _, newValue in
+            mappings.setAction(newValue.action, for: input)
+        }
     }
 
     private func modifierBinding(_ modifier: ControllerKeyboardModifier) -> Binding<Bool> {
-        Binding(get: { modifiers.contains(modifier) }, set: { selected in
-            if selected { modifiers.insert(modifier) } else { modifiers.remove(modifier) }
-        })
-    }
-
-    private func loadCurrentBinding() {
-        guard case .keyboard(let action) = mappings.draftProfile.action(for: input) else { return }
-        key = action.key
-        modifiers = action.modifiers
-    }
-
-    private func saveDraftBinding() {
-        mappings.setAction(.keyboard(.init(key: key, modifiers: modifiers)), for: input)
+        Binding(
+            get: { editorState.modifiers.contains(modifier) },
+            set: { selected in
+                if selected {
+                    editorState.modifiers.insert(modifier)
+                } else {
+                    editorState.modifiers.remove(modifier)
+                }
+            }
+        )
     }
 }
