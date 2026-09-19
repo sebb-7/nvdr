@@ -33,7 +33,12 @@ struct FarRelayApp: App {
         _macRemoteSession = State(initialValue: macRemoteSession)
         let controllerMappings = ControllerMappingSettings()
         _controllerMappings = State(initialValue: controllerMappings)
-        _controllerAdapter = State(initialValue: DualSenseControllerAdapter(mappings: controllerMappings, settings: s, router: remoteIntentRouter))
+        _controllerAdapter = State(initialValue: DualSenseControllerAdapter(
+            mappings: controllerMappings,
+            settings: s,
+            router: remoteIntentRouter,
+            diagnostics: inputDiagnostics
+        ))
     }
 
     var body: some Scene {

@@ -40,7 +40,10 @@ struct NVDARemoteFeatureView: View {
                 Text("Records only key metadata and forwarding results. It never records typed text, credentials, terminal content, or speech.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("Copy input diagnostic report", systemImage: "doc.on.doc") {
-                    AppClipboard.copy(inputDiagnostics.report(connectionState: statusLabel))
+                    AppClipboard.copy(inputDiagnostics.report(
+                        connectionState: statusLabel,
+                        hostInputEvidence: bridge.inputTransportDiagnostics
+                    ))
                 }
                 Button("Clear input diagnostics", role: .destructive) {
                     inputDiagnostics.clear()

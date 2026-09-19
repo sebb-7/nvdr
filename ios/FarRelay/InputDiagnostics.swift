@@ -9,6 +9,7 @@ enum InputDiagnosticSource: String, Sendable {
     case gameController = "GCKeyboard"
     case commandFallback = "Command F-key fallback"
     case responder = "responder"
+    case controller = "controller"
 }
 
 struct InputDiagnosticEntry: Identifiable, Sendable {
@@ -19,13 +20,17 @@ struct InputDiagnosticEntry: Identifiable, Sendable {
     let modifiers: Int
     let pressed: Bool?
     let virtualKey: UInt16?
+    let correlationID: Int?
+    let controllerInput: ControllerInput?
     let result: String
 
     var reportLine: String {
         let direction = pressed.map { $0 ? "down" : "up" } ?? "state"
         let hid = hidUsage.map(String.init) ?? "unavailable"
         let vk = virtualKey.map(String.init) ?? "unmapped"
-        return "#\(sequence) \(source.rawValue); HID \(hid); modifiers \(modifiers); \(direction); VK \(vk); \(result)"
+        let correlation = correlationID.map { "; controller event #\($0)" } ?? ""
+        let input = controllerInput.map { "; controller:\($0.rawValue)" } ?? ""
+        return "#\(sequence) source=\(source.rawValue)\(correlation)\(input); HID \(hid); modifiers \(modifiers); \(direction); VK \(vk); \(result)"
     }
 }
 
@@ -44,6 +49,8 @@ final class InputDiagnosticStore {
         modifiers: Int = 0,
         pressed: Bool? = nil,
         virtualKey: UInt16? = nil,
+        correlationID: Int? = nil,
+        controllerInput: ControllerInput? = nil,
         result: String
     ) {
         guard isEnabled else { return }
@@ -54,6 +61,8 @@ final class InputDiagnosticStore {
             modifiers: modifiers,
             pressed: pressed,
             virtualKey: virtualKey,
+            correlationID: correlationID,
+            controllerInput: controllerInput,
             result: result
         ))
         nextSequence += 1
@@ -65,11 +74,33 @@ final class InputDiagnosticStore {
         nextSequence = 1
     }
 
-    func report(connectionState: String, hostVersion: String? = nil) -> String {
+    /// The controller path is deliberately separate from responder and
+    /// GCKeyboard records so a physical gamepad reception can be proven from
+    /// the copied report.
+    func observeController(
+        eventID: Int,
+        input: ControllerInput,
+        pressed: Bool? = nil,
+        stage: String
+    ) {
+        observe(
+            source: .controller,
+            pressed: pressed,
+            correlationID: eventID,
+            controllerInput: input,
+            result: stage
+        )
+    }
+
+    func report(
+        connectionState: String,
+        hostVersion: String? = nil,
+        hostInputEvidence: [String] = []
+    ) -> String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         let source = Bundle.main.object(forInfoDictionaryKey: "FarRelaySourceRevision") as? String ?? "not embedded"
-        return ([
+        var lines = [
             "FarRelay input diagnostic report",
             "App version: \(version)",
             "TestFlight build: \(build)",
@@ -78,7 +109,13 @@ final class InputDiagnosticStore {
             "Host/protocol version: \(hostVersion ?? "unknown")",
             "Transport delivery: queued to writer; host receipt unconfirmed",
             "Events:"
-        ] + entries.map(\.reportLine)).joined(separator: "\n")
+        ]
+        lines += entries.map(\.reportLine)
+        if hostInputEvidence.isEmpty == false {
+            lines.append("Host input evidence (existing IPC stderr; NVDA execution unconfirmed):")
+            lines += hostInputEvidence
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
