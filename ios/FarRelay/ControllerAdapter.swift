@@ -22,14 +22,18 @@ final class DualSenseControllerAdapter {
         connectObserver = NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let controller = notification.object as? GCController else { return }
-            Task { @MainActor in self?.attach(controller) }
+            MainActor.assumeIsolated {
+                guard let controller = notification.object as? GCController else { return }
+                self?.attach(controller)
+            }
         }
         disconnectObserver = NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let controller = notification.object as? GCController else { return }
-            Task { @MainActor in self?.detach(controller) }
+            MainActor.assumeIsolated {
+                guard let controller = notification.object as? GCController else { return }
+                self?.detach(controller)
+            }
         }
         GCController.controllers().forEach(attach)
     }
