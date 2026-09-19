@@ -2,23 +2,51 @@ import Foundation
 import GameController
 import Observation
 
-/// Owns Apple controller objects and turns their values into stable FarRelay inputs.
-/// It deliberately has no SSH, NVDA, or host-protocol dependency.
+/// Owns Apple controller objects and turns their values into stable FarRelay
+/// inputs. It deliberately has no SSH, NVDA, or host-protocol dependency.
 @Observable @MainActor
 final class DualSenseControllerAdapter {
     private let mappings: ControllerMappingSettings
+    private let settings: AppSettings
     private let router: RemoteIntentRouter
     private var controller: GCController?
     private var connectObservation: NotificationCenter.ObservationToken?
     private var disconnectObservation: NotificationCenter.ObservationToken?
-    private(set) var connectedControllerName: String?
+    private var inputLifecycle = ControllerInputLifecycle()
+    private var leftStick = ControllerStickDirectionClassifier(
+        left: .leftStickLeft, right: .leftStickRight,
+        up: .leftStickUp, down: .leftStickDown
+    )
+    private var rightStick = ControllerStickDirectionClassifier(
+        left: .rightStickLeft, right: .rightStickRight,
+        up: .rightStickUp, down: .rightStickDown
+    )
+    private struct ActiveAction {
+        let action: KeyboardAction
+        let targetID: RemoteTargetID
+    }
 
-    init(mappings: ControllerMappingSettings, router: RemoteIntentRouter) {
+    private var activeActions: [ControllerInput: ActiveAction] = [:]
+    private var repeatTask: Task<Void, Never>?
+
+    private(set) var connectedControllerName: String?
+    /// This is the real surface of the currently attached controller. An
+    /// unpaired controller leaves the profile editable but marks every input
+    /// as runtime-unavailable rather than pretending it can be pressed.
+    private(set) var availableInputs: Set<ControllerInput> = []
+    /// Bindings follow GameController's logical elements. This flags when iOS
+    /// has remapped them so the mapping screen can state that semantic clearly.
+    private(set) var controllerHasRemappedElements = false
+
+    init(mappings: ControllerMappingSettings, settings: AppSettings, router: RemoteIntentRouter) {
         self.mappings = mappings
+        self.settings = settings
         self.router = router
+        mappings.willChangeActiveProfile = { [weak self] in self?.releaseActiveActions() }
     }
 
     func start() {
+        guard connectObservation == nil, disconnectObservation == nil else { return }
         connectObservation = NotificationCenter.default.addObserver(
             of: GCController.self, for: .didConnect
         ) { [weak self] message in
@@ -33,6 +61,7 @@ final class DualSenseControllerAdapter {
     }
 
     func stop() {
+        releaseActiveActions()
         if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
         if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
         connectObservation = nil
@@ -40,12 +69,16 @@ final class DualSenseControllerAdapter {
         controller?.extendedGamepad?.valueChangedHandler = nil
         controller = nil
         connectedControllerName = nil
+        availableInputs = []
+        controllerHasRemappedElements = false
     }
 
     private func attach(_ candidate: GCController) {
         guard controller == nil, let gamepad = candidate.extendedGamepad else { return }
         controller = candidate
         connectedControllerName = candidate.vendorName ?? "Controller"
+        availableInputs = inputsExposed(by: gamepad)
+        controllerHasRemappedElements = gamepad.hasRemappedElements
         gamepad.valueChangedHandler = { [weak self] gamepad, element in
             Task { @MainActor in self?.process(element: element, gamepad: gamepad) }
         }
@@ -53,20 +86,103 @@ final class DualSenseControllerAdapter {
 
     private func detach(_ candidate: GCController) {
         guard candidate == controller else { return }
+        releaseActiveActions()
         controller?.extendedGamepad?.valueChangedHandler = nil
         controller = nil
         connectedControllerName = nil
+        availableInputs = []
+        controllerHasRemappedElements = false
     }
 
     private func process(element: GCControllerElement, gamepad: GCExtendedGamepad) {
-        guard let input = input(for: element, gamepad: gamepad), let button = element as? GCControllerButtonInput else { return }
-        guard button.isPressed, case .keyboard(let action)? = mappings.activeProfile.action(for: input) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        controllerHasRemappedElements = gamepad.hasRemappedElements
+        if let input = buttonInput(for: element, gamepad: gamepad), let button = element as? GCControllerButtonInput {
+            handle(inputLifecycle.receive(input, pressed: button.isPressed, at: now))
+        }
+
+        // Direction-pad child callbacks are not consistent across controller
+        // families. Reading the axes on every profile callback gives one
+        // stable, hysteretic source for stick-direction mappings.
+        handle(leftStick.update(
+            x: gamepad.leftThumbstick.xAxis.value,
+            y: gamepad.leftThumbstick.yAxis.value,
+            at: now
+        ))
+        handle(rightStick.update(
+            x: gamepad.rightThumbstick.xAxis.value,
+            y: gamepad.rightThumbstick.yAxis.value,
+            at: now
+        ))
+    }
+
+    private func handle(_ phases: [ControllerInputPhase]) {
+        for phase in phases {
+            switch phase {
+            case .pressed(let input):
+                guard case .keyboard(let action)? = mappings.activeProfile.action(for: input),
+                      let targetID = router.activeTargetID else { continue }
+                let active = ActiveAction(action: action, targetID: targetID)
+                activeActions[input] = active
+                route(active, transition: .pressed)
+                startRepeatLoopIfNeeded()
+            case .repeated(let input):
+                guard let active = activeActions[input] else { continue }
+                route(active, transition: .repeated)
+            case .released(let input):
+                guard let active = activeActions.removeValue(forKey: input) else { continue }
+                route(active, transition: .released)
+            }
+        }
+        stopRepeatLoopIfIdle()
+    }
+
+    private enum ActionTransition { case pressed, repeated, released }
+
+    private func route(_ active: ActiveAction, transition: ActionTransition) {
+        let action = active.action
         let key = RemoteKey.windowsVirtualKey(action.key.virtualKey)
         let modifiers = resolvedModifiers(action.modifiers)
-        Task { @MainActor in
-            let intent: RemoteIntent = modifiers.isEmpty ? .sendKey(key) : .sendChord(.init(modifiers: modifiers, key: key))
-            _ = await router.route(intent)
+        let intent: RemoteIntent
+        switch (modifiers.isEmpty, transition) {
+        case (true, .pressed): intent = .sendKeyTransition(key, pressed: true)
+        case (true, .repeated): intent = .repeatKey(key)
+        case (true, .released): intent = .sendKeyTransition(key, pressed: false)
+        case (false, .pressed): intent = .sendChordTransition(.init(modifiers: modifiers, key: key), pressed: true)
+        case (false, .repeated): intent = .repeatChord(.init(modifiers: modifiers, key: key))
+        case (false, .released): intent = .sendChordTransition(.init(modifiers: modifiers, key: key), pressed: false)
         }
+        Task { @MainActor [router, targetID = active.targetID] in _ = await router.route(intent, to: targetID) }
+    }
+
+    private func startRepeatLoopIfNeeded() {
+        guard repeatTask == nil else { return }
+        repeatTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 40_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.handle(self.inputLifecycle.repeatEvents(at: ProcessInfo.processInfo.systemUptime))
+            }
+        }
+    }
+
+    private func stopRepeatLoopIfIdle() {
+        guard activeActions.isEmpty else { return }
+        repeatTask?.cancel()
+        repeatTask = nil
+    }
+
+    private func releaseActiveActions() {
+        let actions = ControllerInput.allCases.compactMap { input in
+            activeActions[input].map { (input, $0) }
+        }
+        activeActions.removeAll()
+        _ = inputLifecycle.releaseAll()
+        leftStick.reset()
+        rightStick.reset()
+        repeatTask?.cancel()
+        repeatTask = nil
+        for (_, active) in actions { route(active, transition: .released) }
     }
 
     private func resolvedModifiers(_ modifiers: Set<ControllerKeyboardModifier>) -> Set<RemoteModifier> {
@@ -77,12 +193,32 @@ final class DualSenseControllerAdapter {
             case .alt: result.insert(.alt)
             case .windows: result.insert(.commandOrWindows)
             case .nvda:
-                switch AppSettings().nvdaModifier { case .capsLock: break; case .voKeys: result.formUnion([.control, .alt]) }
+                switch settings.nvdaModifier {
+                case .capsLock: result.insert(.capsLock)
+                case .voKeys: result.formUnion([.control, .alt])
+                }
             }
         }
     }
 
-    private func input(for element: GCControllerElement, gamepad: GCExtendedGamepad) -> ControllerInput? {
+    private func inputsExposed(by gamepad: GCExtendedGamepad) -> Set<ControllerInput> {
+        var inputs: Set<ControllerInput> = [
+            .dpadUp, .dpadDown, .dpadLeft, .dpadRight,
+            .cross, .circle, .square, .triangle,
+            .leftShoulder, .rightShoulder, .leftTrigger, .rightTrigger,
+            .leftStickUp, .leftStickDown, .leftStickLeft, .leftStickRight,
+            .rightStickUp, .rightStickDown, .rightStickLeft, .rightStickRight,
+            .create
+        ]
+        if gamepad.buttonOptions != nil { inputs.insert(.options) }
+        if gamepad.buttonHome != nil { inputs.insert(.home) }
+        if gamepad.leftThumbstickButton != nil { inputs.insert(.leftStickPress) }
+        if gamepad.rightThumbstickButton != nil { inputs.insert(.rightStickPress) }
+        if gamepad is GCDualSenseGamepad { inputs.insert(.touchpadPress) }
+        return inputs
+    }
+
+    private func buttonInput(for element: GCControllerElement, gamepad: GCExtendedGamepad) -> ControllerInput? {
         if element === gamepad.dpad.up { return .dpadUp }
         if element === gamepad.dpad.down { return .dpadDown }
         if element === gamepad.dpad.left { return .dpadLeft }
@@ -95,16 +231,9 @@ final class DualSenseControllerAdapter {
         if element === gamepad.rightShoulder { return .rightShoulder }
         if element === gamepad.leftTrigger { return .leftTrigger }
         if element === gamepad.rightTrigger { return .rightTrigger }
-        if element === gamepad.leftThumbstick.up { return .leftStickUp }
-        if element === gamepad.leftThumbstick.down { return .leftStickDown }
-        if element === gamepad.leftThumbstick.left { return .leftStickLeft }
-        if element === gamepad.leftThumbstick.right { return .leftStickRight }
-        if element === gamepad.rightThumbstick.up { return .rightStickUp }
-        if element === gamepad.rightThumbstick.down { return .rightStickDown }
-        if element === gamepad.rightThumbstick.left { return .rightStickLeft }
-        if element === gamepad.rightThumbstick.right { return .rightStickRight }
         if element === gamepad.buttonMenu { return .create }
         if let options = gamepad.buttonOptions, element === options { return .options }
+        if let home = gamepad.buttonHome, element === home { return .home }
         if let leftStick = gamepad.leftThumbstickButton, element === leftStick { return .leftStickPress }
         if let rightStick = gamepad.rightThumbstickButton, element === rightStick { return .rightStickPress }
         if let dualSense = gamepad as? GCDualSenseGamepad, element === dualSense.touchpadButton { return .touchpadPress }

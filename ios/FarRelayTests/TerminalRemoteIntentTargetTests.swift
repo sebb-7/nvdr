@@ -46,6 +46,16 @@ final class TerminalRemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(session.sentBytes, [Data([0x09])])
     }
 
+    func testStatefulControllerKeyIsUnsupportedWithoutSendingTerminalInput() async {
+        let session = FakeTerminalIntentSession()
+        let target = TerminalRemoteIntentTarget(presentation: connectedModel(session: session))
+
+        let result = await target.perform(.sendKeyTransition(.tab, pressed: true))
+
+        XCTAssertEqual(result, .unsupported)
+        XCTAssertTrue(session.sentBytes.isEmpty)
+    }
+
     func testApplicationIntentIsUnsupportedByTerminalTarget() async {
         let target = TerminalRemoteIntentTarget(presentation: connectedModel(session: FakeTerminalIntentSession()))
 

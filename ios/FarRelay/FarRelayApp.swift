@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct FarRelayApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var settings: AppSettings
     @State private var bridge: BridgeClient
     @State private var terminals: TerminalSessionManager
@@ -32,7 +33,7 @@ struct FarRelayApp: App {
         _macRemoteSession = State(initialValue: macRemoteSession)
         let controllerMappings = ControllerMappingSettings()
         _controllerMappings = State(initialValue: controllerMappings)
-        _controllerAdapter = State(initialValue: DualSenseControllerAdapter(mappings: controllerMappings, router: remoteIntentRouter))
+        _controllerAdapter = State(initialValue: DualSenseControllerAdapter(mappings: controllerMappings, settings: s, router: remoteIntentRouter))
     }
 
     var body: some Scene {
@@ -48,6 +49,10 @@ struct FarRelayApp: App {
                 .environment(controllerMappings)
                 .environment(controllerAdapter)
                 .task { controllerAdapter.start() }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { controllerAdapter.start() }
+                    else { controllerAdapter.stop() }
+                }
         }
     }
 }

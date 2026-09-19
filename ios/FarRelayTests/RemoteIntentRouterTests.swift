@@ -57,6 +57,25 @@ final class RemoteIntentRouterTests: XCTestCase {
         XCTAssertEqual(second.performedIntents, [.cancel])
     }
 
+    func testExplicitLifecycleContinuationReturnsToItsOriginalTarget() async {
+        let router = RemoteIntentRouter()
+        let first = FakeRemoteIntentTarget(id: RemoteTargetID("first"), capabilities: [.rawKeyInput])
+        let second = FakeRemoteIntentTarget(id: RemoteTargetID("second"), capabilities: [.rawKeyInput])
+        router.register(first)
+        router.register(second)
+        XCTAssertTrue(router.setActiveTarget(id: first.remoteTargetID))
+
+        _ = await router.route(.sendKeyTransition(.tab, pressed: true))
+        XCTAssertTrue(router.setActiveTarget(id: second.remoteTargetID))
+        _ = await router.route(.sendKeyTransition(.tab, pressed: false), to: first.remoteTargetID)
+
+        XCTAssertEqual(
+            first.performedIntents,
+            [.sendKeyTransition(.tab, pressed: true), .sendKeyTransition(.tab, pressed: false)]
+        )
+        XCTAssertTrue(second.performedIntents.isEmpty)
+    }
+
     func testUnsupportedAndUnavailableResultsRemainDeterministic() async {
         let router = RemoteIntentRouter()
         let target = FakeRemoteIntentTarget(

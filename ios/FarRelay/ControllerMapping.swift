@@ -9,7 +9,7 @@ enum ControllerInput: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     case leftStickPress, rightStickPress
     case leftStickUp, leftStickDown, leftStickLeft, leftStickRight
     case rightStickUp, rightStickDown, rightStickLeft, rightStickRight
-    case options, create, touchpadPress
+    case options, create, home, touchpadPress
 
     var id: String { rawValue }
     var label: String {
@@ -20,7 +20,7 @@ enum ControllerInput: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         case .leftStickPress: "L3 / Left Stick Press"; case .rightStickPress: "R3 / Right Stick Press"
         case .leftStickUp: "Left Stick Up"; case .leftStickDown: "Left Stick Down"; case .leftStickLeft: "Left Stick Left"; case .leftStickRight: "Left Stick Right"
         case .rightStickUp: "Right Stick Up"; case .rightStickDown: "Right Stick Down"; case .rightStickLeft: "Right Stick Left"; case .rightStickRight: "Right Stick Right"
-        case .options: "Options"; case .create: "Create / Share"; case .touchpadPress: "Touchpad Press"
+        case .options: "Options"; case .create: "Create / Share"; case .home: "Home"; case .touchpadPress: "Touchpad Press"
         }
     }
 }
@@ -88,6 +88,18 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         if let index = bindings.firstIndex(where: { $0.sourceInput == input }) { bindings[index].action = action }
         else { bindings.append(.init(sourceInput: input, action: action)) }
     }
+
+    /// Older profile bytes can omit a controller input introduced by a later
+    /// app build. Add only unassigned slots; duplicate source identifiers are
+    /// ambiguous and are rejected rather than silently choosing one mapping.
+    func normalizedBindingSlots() -> ControllerProfile? {
+        guard Set(bindings.map(\.sourceInput)).count == bindings.count else { return nil }
+        var normalized = self
+        for input in ControllerInput.allCases where normalized.bindings.contains(where: { $0.sourceInput == input }) == false {
+            normalized.bindings.append(.init(sourceInput: input, action: nil))
+        }
+        return normalized
+    }
 }
 
 enum ControllerProfileLoadResult: Equatable { case profile(ControllerProfile), uninitialized, malformedOrUnsupported }
@@ -97,8 +109,10 @@ struct ControllerProfileStore {
     let key: String
     func load() -> ControllerProfileLoadResult {
         guard let data = defaults.data(forKey: key) else { return .uninitialized }
-        guard let profile = try? JSONDecoder().decode(ControllerProfile.self, from: data), profile.schemaVersion == ControllerProfile.currentSchemaVersion else { return .malformedOrUnsupported }
-        return .profile(profile)
+        guard let profile = try? JSONDecoder().decode(ControllerProfile.self, from: data),
+              profile.schemaVersion == ControllerProfile.currentSchemaVersion,
+              let normalized = profile.normalizedBindingSlots() else { return .malformedOrUnsupported }
+        return .profile(normalized)
     }
     func save(_ profile: ControllerProfile) { defaults.set(try? JSONEncoder().encode(profile), forKey: key) }
 }
@@ -107,9 +121,16 @@ struct ControllerProfileStore {
 final class ControllerMappingSettings {
     private(set) var activeProfile: ControllerProfile
     private let store: ControllerProfileStore
+    /// The adapter releases any action it began before an edit is applied, so
+    /// changing or clearing a mapping cannot leave its former remote key held.
+    var willChangeActiveProfile: (@MainActor () -> Void)?
     init(defaults: UserDefaults = .standard) {
         store = .init(defaults: defaults, key: "farrelay.controllerProfile.v1")
         switch store.load() { case .profile(let profile): activeProfile = profile; case .uninitialized, .malformedOrUnsupported: activeProfile = .init() }
     }
-    func setAction(_ action: ControllerAction?, for input: ControllerInput) { activeProfile.setAction(action, for: input); store.save(activeProfile) }
+    func setAction(_ action: ControllerAction?, for input: ControllerInput) {
+        willChangeActiveProfile?()
+        activeProfile.setAction(action, for: input)
+        store.save(activeProfile)
+    }
 }

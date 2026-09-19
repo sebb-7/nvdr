@@ -257,6 +257,8 @@ final class BridgeClient {
         forwardingEnabled && status == .ready && inputReady
     }
 
+    var inputSessionID: UUID? { commandChannelID }
+
     private func register(
         supervisor: SSHConnectionSupervisor<SSHSession>,
         generation: Int

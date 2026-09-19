@@ -50,9 +50,20 @@ final class RemoteIntentRouter {
     }
 
     func route(_ intent: RemoteIntent) async -> RemoteIntentResult {
-        guard let activeTargetID, let executor = executors[activeTargetID] else {
+        guard let activeTargetID else {
             lastDecision = .noActiveTarget(intent: intent)
             return .unavailable("No remote target is active.")
+        }
+        return await route(intent, to: activeTargetID)
+    }
+
+    /// Delivers a lifecycle continuation to the target which accepted its
+    /// press. This prevents a later target selection from receiving an
+    /// unrelated release and leaving the original target's key held.
+    func route(_ intent: RemoteIntent, to targetID: RemoteTargetID) async -> RemoteIntentResult {
+        guard let executor = executors[targetID] else {
+            lastDecision = .noActiveTarget(intent: intent)
+            return .unavailable("The original remote target is no longer available.")
         }
         let target = executor.target
         guard target.capabilities.contains(intent.requiredCapability) else {

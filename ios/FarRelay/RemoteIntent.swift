@@ -21,6 +21,15 @@ enum RemoteIntent: Equatable, Sendable {
 
     case sendKey(RemoteKey)
     case sendChord(RemoteChord)
+    /// Stateful raw input used by controller adapters. A matching release is
+    /// required so a remote modifier or key cannot remain held after a local
+    /// controller lifecycle change.
+    case sendKeyTransition(RemoteKey, pressed: Bool)
+    case sendChordTransition(RemoteChord, pressed: Bool)
+    /// A repeat is an additional down transition for an already held action.
+    /// It deliberately never changes held-key ownership.
+    case repeatKey(RemoteKey)
+    case repeatChord(RemoteChord)
     case macRemote(MacRemoteAction)
 
     var requiredCapability: RemoteCapability {
@@ -33,9 +42,9 @@ enum RemoteIntent: Equatable, Sendable {
             .terminalReview
         case .terminalInterrupt, .terminalEOF:
             .terminalControl
-        case .sendKey:
+        case .sendKey, .sendKeyTransition, .repeatKey:
             .rawKeyInput
-        case .sendChord:
+        case .sendChord, .sendChordTransition, .repeatChord:
             .rawChordInput
         case .macRemote:
             .macRemoteControl
@@ -57,6 +66,7 @@ enum RemoteModifier: Hashable, Sendable {
     case control
     case alt
     case commandOrWindows
+    case capsLock
 }
 
 enum RemoteNamedKey: Hashable, Sendable {

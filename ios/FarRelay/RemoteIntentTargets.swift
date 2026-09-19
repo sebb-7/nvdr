@@ -4,6 +4,9 @@ import Foundation
 protocol RemoteWindowsKeySink: AnyObject {
     var isInputForwardingReady: Bool { get }
     var activeProfileID: UUID? { get }
+    /// Changes whenever the bridge replaces its IPC command channel. Held
+    /// controller state must never cross this transport boundary.
+    var inputSessionID: UUID? { get }
     func sendKey(vk: UInt16, pressed: Bool)
 }
 
@@ -96,7 +99,8 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
         case .reviewPrevious, .reviewNext, .returnToLive,
              .nextItem, .previousItem,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
-             .sendChord, .macRemote:
+             .sendChord, .sendKeyTransition, .sendChordTransition,
+             .repeatKey, .repeatChord, .macRemote:
             return .unsupported
         }
     }
@@ -141,6 +145,8 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
     ]
 
     private let keySink: any RemoteWindowsKeySink
+    private var heldVirtualKeys: [UInt16: Int] = [:]
+    private var heldInputSessionID: UUID?
 
     init(
         keySink: any RemoteWindowsKeySink,
@@ -168,8 +174,11 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
         guard capabilities.contains(intent.requiredCapability) else { return .unsupported }
         guard keySink.isInputForwardingReady else {
+            heldVirtualKeys.removeAll()
+            heldInputSessionID = nil
             return .unavailable("NVDA input forwarding is unavailable.")
         }
+        synchronizeHeldInputSession()
 
         switch intent {
         case .nextItem:
@@ -196,6 +205,18 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         case .sendChord(let chord):
             guard let key = windowsVirtualKey(for: chord.key) else { return .unsupported }
             emitChord(modifiers: chord.modifiers, key: key)
+        case .sendKeyTransition(let key, let pressed):
+            guard let key = windowsVirtualKey(for: key) else { return .unsupported }
+            transition(key, pressed: pressed)
+        case .sendChordTransition(let chord, let pressed):
+            guard let key = windowsVirtualKey(for: chord.key) else { return .unsupported }
+            transition(chord: chord, key: key, pressed: pressed)
+        case .repeatKey(let key):
+            guard let key = windowsVirtualKey(for: key), heldVirtualKeys[key, default: 0] > 0 else { return .unsupported }
+            keySink.sendKey(vk: key, pressed: true)
+        case .repeatChord(let chord):
+            guard let key = windowsVirtualKey(for: chord.key), heldVirtualKeys[key, default: 0] > 0 else { return .unsupported }
+            keySink.sendKey(vk: key, pressed: true)
         case .reviewPrevious, .reviewNext, .returnToLive, .terminalInterrupt, .terminalEOF,
              .macRemote:
             return .unsupported
@@ -217,6 +238,51 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         keySink.sendKey(vk: key, pressed: false)
         for modifier in orderedModifiers.reversed() {
             keySink.sendKey(vk: modifier.windowsVirtualKey, pressed: false)
+        }
+    }
+
+    private func transition(_ key: UInt16, pressed: Bool) {
+        if pressed {
+            retain(key)
+        } else {
+            release(key)
+        }
+    }
+
+    private func synchronizeHeldInputSession() {
+        let currentID = keySink.inputSessionID
+        guard currentID != heldInputSessionID else { return }
+        // BridgeClient has already issued protocol-level release_all before
+        // replacing a channel. Discard only local ownership here; never send
+        // a release into the new channel for a key it did not receive.
+        heldVirtualKeys.removeAll()
+        heldInputSessionID = currentID
+    }
+
+    private func transition(chord: RemoteChord, key: UInt16, pressed: Bool) {
+        let modifiers = RemoteModifier.emissionOrder.filter { chord.modifiers.contains($0) }
+        if pressed {
+            modifiers.forEach { retain($0.windowsVirtualKey) }
+            retain(key)
+        } else {
+            release(key)
+            modifiers.reversed().forEach { release($0.windowsVirtualKey) }
+        }
+    }
+
+    private func retain(_ key: UInt16) {
+        let count = heldVirtualKeys[key, default: 0]
+        heldVirtualKeys[key] = count + 1
+        if count == 0 { keySink.sendKey(vk: key, pressed: true) }
+    }
+
+    private func release(_ key: UInt16) {
+        guard let count = heldVirtualKeys[key], count > 0 else { return }
+        if count == 1 {
+            heldVirtualKeys[key] = nil
+            keySink.sendKey(vk: key, pressed: false)
+        } else {
+            heldVirtualKeys[key] = count - 1
         }
     }
 
@@ -299,7 +365,7 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
 }
 
 private extension RemoteModifier {
-    static let emissionOrder: [RemoteModifier] = [.alt, .shift, .control, .commandOrWindows]
+    static let emissionOrder: [RemoteModifier] = [.alt, .shift, .control, .commandOrWindows, .capsLock]
 
     var windowsVirtualKey: UInt16 {
         switch self {
@@ -307,6 +373,7 @@ private extension RemoteModifier {
         case .control: VK.control
         case .alt: VK.menu
         case .commandOrWindows: VK.lwin
+        case .capsLock: VK.capital
         }
     }
 }

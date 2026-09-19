@@ -43,6 +43,7 @@ regression test unless the exception and the physical-only reason are recorded.
 | INPUT-004 | Partially enforced | macOS function-row F1-F12 use the USB HID fallback because the OS can consume hardware-control keys before CGEvent delivery. |
 | INPUT-005 | Enforced | A disconnect, session replacement, controller loss, or disabled forwarding must release every remotely held key/modifier. |
 | INPUT-006 | Partially enforced | Left/right modifiers are preserved on raw platform paths; priority-command fallbacks use an explicitly documented left-side logical mapping. |
+| INPUT-007 | Enforced in automated model/target scope | Controller mappings use typed press/repeat/release transitions; remapping, controller loss, inactivity, and adapter teardown release the original target’s held action. Physical DualSense and Windows/NVDA confirmation remains required. |
 
 ## App, host, diagnostics, and security
 

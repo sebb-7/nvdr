@@ -3,6 +3,7 @@ import SwiftUI
 /// A standard list-based editor so every mapping remains reachable with VoiceOver.
 struct ControllerMappingView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
+    @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
 
     var body: some View {
         List(ControllerInput.allCases) { input in
@@ -11,10 +12,22 @@ struct ControllerMappingView: View {
                     Text(input.label)
                     Text(summary(for: mappings.activeProfile.action(for: input)))
                         .foregroundStyle(.secondary)
+                    Text(availability(for: input))
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
                 }
+                .accessibilityElement(children: .combine)
             }
         }
         .navigationTitle("Controller Mapping")
+        .safeAreaInset(edge: .bottom) {
+            if controllerAdapter.controllerHasRemappedElements {
+                Text("This controller follows its current iOS button remapping.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding()
+            }
+        }
         .navigationDestination(for: ControllerInput.self) { input in
             ControllerBindingEditor(input: input)
         }
@@ -24,6 +37,15 @@ struct ControllerMappingView: View {
         guard case .keyboard(let keyboard) = action else { return "Unassigned" }
         let modifiers = keyboard.modifiers.map(\.label).sorted()
         return (modifiers + [keyboard.key.label]).joined(separator: "+")
+    }
+
+    private func availability(for input: ControllerInput) -> String {
+        guard controllerAdapter.connectedControllerName != nil else {
+            return "No controller connected — mapping can still be edited"
+        }
+        return controllerAdapter.availableInputs.contains(input)
+            ? "Available on this controller"
+            : "Unavailable on this controller"
     }
 }
 
