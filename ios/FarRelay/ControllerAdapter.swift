@@ -9,8 +9,8 @@ final class DualSenseControllerAdapter {
     private let mappings: ControllerMappingSettings
     private let router: RemoteIntentRouter
     private var controller: GCController?
-    private var connectObserver: NSObjectProtocol?
-    private var disconnectObserver: NSObjectProtocol?
+    private var connectObservation: NotificationCenter.ObservationToken?
+    private var disconnectObservation: NotificationCenter.ObservationToken?
     private(set) var connectedControllerName: String?
 
     init(mappings: ControllerMappingSettings, router: RemoteIntentRouter) {
@@ -19,30 +19,24 @@ final class DualSenseControllerAdapter {
     }
 
     func start() {
-        connectObserver = NotificationCenter.default.addObserver(
-            forName: .GCControllerDidConnect, object: nil, queue: .main
-        ) { [weak self] notification in
-            MainActor.assumeIsolated {
-                guard let controller = notification.object as? GCController else { return }
-                self?.attach(controller)
-            }
+        connectObservation = NotificationCenter.default.addObserver(
+            of: GCController.self, for: .didConnect
+        ) { [weak self] message in
+            self?.attach(message.controller)
         }
-        disconnectObserver = NotificationCenter.default.addObserver(
-            forName: .GCControllerDidDisconnect, object: nil, queue: .main
-        ) { [weak self] notification in
-            MainActor.assumeIsolated {
-                guard let controller = notification.object as? GCController else { return }
-                self?.detach(controller)
-            }
+        disconnectObservation = NotificationCenter.default.addObserver(
+            of: GCController.self, for: .didDisconnect
+        ) { [weak self] message in
+            self?.detach(message.controller)
         }
         GCController.controllers().forEach(attach)
     }
 
     func stop() {
-        if let connectObserver { NotificationCenter.default.removeObserver(connectObserver) }
-        if let disconnectObserver { NotificationCenter.default.removeObserver(disconnectObserver) }
-        connectObserver = nil
-        disconnectObserver = nil
+        if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
+        if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
+        connectObservation = nil
+        disconnectObservation = nil
         controller?.extendedGamepad?.valueChangedHandler = nil
         controller = nil
         connectedControllerName = nil
