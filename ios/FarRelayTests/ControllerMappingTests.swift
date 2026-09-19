@@ -10,6 +10,8 @@ final class ControllerMappingTests: XCTestCase {
         profile.setAction(.keyboard(.init(key: .windows, modifiers: [.control])), for: .dpadDown)
         XCTAssertEqual(profile.action(for: .dpadUp), .keyboard(.init(key: .up)))
         XCTAssertEqual(profile.action(for: .dpadDown), .keyboard(.init(key: .windows, modifiers: [.control])))
+        profile.setAction(.keyboard(.init(key: .escape)), for: .home)
+        XCTAssertEqual(profile.action(for: .home), .keyboard(.init(key: .escape)))
     }
 
     func testEverySupportedKeyboardDestinationHasAUniqueWindowsVirtualKey() {
@@ -20,6 +22,11 @@ final class ControllerMappingTests: XCTestCase {
     func testChordCodableRoundTripPreservesModifiers() throws {
         let binding = ControllerBinding(sourceInput: .triangle, action: .keyboard(.init(key: .d, modifiers: [.windows, .control])))
         XCTAssertEqual(try JSONDecoder().decode(ControllerBinding.self, from: JSONEncoder().encode(binding)), binding)
+    }
+
+    func testEveryControllerInputHasAStableCodableIdentifier() throws {
+        let encoded = try JSONEncoder().encode(ControllerInput.allCases)
+        XCTAssertEqual(try JSONDecoder().decode([ControllerInput].self, from: encoded), ControllerInput.allCases)
     }
 
     func testProfilePersistsAndReloads() {
@@ -39,6 +46,21 @@ final class ControllerMappingTests: XCTestCase {
         var profile = ControllerProfile()
         profile.schemaVersion += 1
         defaults.set(try JSONEncoder().encode(profile), forKey: "profile")
+        XCTAssertEqual(store.load(), .malformedOrUnsupported)
+    }
+
+    func testMissingNewBindingSlotLoadsAsUnassignedButDuplicateSlotsFailClosed() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        var olderShape = ControllerProfile()
+        olderShape.bindings.removeAll { $0.sourceInput == .home }
+        defaults.set(try JSONEncoder().encode(olderShape), forKey: "profile")
+        guard case .profile(let normalized) = store.load() else { return XCTFail("Expected safe slot normalization") }
+        XCTAssertNil(normalized.action(for: .home))
+
+        var duplicate = ControllerProfile()
+        duplicate.bindings.append(.init(sourceInput: .dpadUp, action: .keyboard(.init(key: .escape))))
+        defaults.set(try JSONEncoder().encode(duplicate), forKey: "profile")
         XCTAssertEqual(store.load(), .malformedOrUnsupported)
     }
 

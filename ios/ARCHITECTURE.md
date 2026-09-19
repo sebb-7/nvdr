@@ -601,6 +601,29 @@ transport. The diagnostic Mac controls select this target explicitly and route
 through the shared router.
 
 Keyboard, controller, voice, local-agent, ACP, and OpenClaw adapters are
-future consumers of this semantic layer. They are not implemented here, and
-the existing keyboard capture, NVDA IPC, SSH lifecycle, terminal parsing, and
-terminal accessibility layers retain their current ownership.
+independent consumers of this semantic layer. The existing keyboard capture,
+NVDA IPC, SSH lifecycle, terminal parsing, and terminal accessibility layers
+retain their current ownership.
+
+## iOS controller adapter
+
+`DualSenseControllerAdapter` is the current GameController consumer. It maps
+the logical elements reported by iOS (including a user’s system controller
+remapping) to FarRelay-owned `ControllerInput` identifiers, resolves only the
+active versioned `ControllerProfile`, and emits `RemoteIntent` values through
+the router. It never reaches `BridgeClient` or a host executor directly.
+
+The controller mapping screen stays editable when no controller is paired, but
+reports the runtime surface of the attached extended-gamepad profile. Optional
+Options, Home, stick-click, and DualSense touchpad-press controls are only
+reported available when GameController exposes them. Analog sticks use a 0.65
+press / 0.45 release hysteresis pair to produce stable cardinal inputs.
+
+Controller actions use explicit press, repeat, and release intents. The
+adapter remembers both the chosen action and target identity at press time;
+release therefore returns to the original target even if the active UI target
+changes. Editing a mapping, controller disconnect, app inactivity, or adapter
+teardown releases every action begun by the adapter. The NVDA target reference
+counts held keys and modifiers, preserving shared modifier ownership across
+overlapping chords. Bridge channel teardown remains the final `release_all`
+safety boundary for transport loss.

@@ -85,6 +85,60 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(result, .unsupported)
         XCTAssertTrue(sink.transitions.isEmpty)
     }
+
+    func testStatefulChordBalancesModifierAndKeyOnRelease() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+        let chord = RemoteChord(modifiers: [.alt, .shift], key: .tab)
+
+        let press = await target.perform(.sendChordTransition(chord, pressed: true))
+        let repeatResult = await target.perform(.repeatChord(chord))
+        let release = await target.perform(.sendChordTransition(chord, pressed: false))
+        XCTAssertEqual(press, .performed)
+        XCTAssertEqual(repeatResult, .performed)
+        XCTAssertEqual(release, .performed)
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.menu, true), .init(VK.shift, true), .init(VK.tab, true),
+                .init(VK.tab, true), .init(VK.tab, false), .init(VK.shift, false), .init(VK.menu, false)
+            ]
+        )
+    }
+
+    func testOverlappingChordsKeepSharedModifierHeldUntilLastRelease() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+        let tab = RemoteChord(modifiers: [.alt], key: .tab)
+        guard let letterF = RemoteKey.letter("f") else { return XCTFail("Expected F") }
+        let f = RemoteChord(modifiers: [.alt], key: letterF)
+
+        _ = await target.perform(.sendChordTransition(tab, pressed: true))
+        _ = await target.perform(.sendChordTransition(f, pressed: true))
+        _ = await target.perform(.sendChordTransition(tab, pressed: false))
+        _ = await target.perform(.sendChordTransition(f, pressed: false))
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.menu, true), .init(VK.tab, true), .init(0x46, true),
+                .init(VK.tab, false), .init(0x46, false), .init(VK.menu, false)
+            ]
+        )
+    }
+
+    func testNewInputChannelDoesNotInheritHeldControllerKey() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+        let key = RemoteKey.tab
+
+        _ = await target.perform(.sendKeyTransition(key, pressed: true))
+        sink.inputSessionID = UUID()
+        _ = await target.perform(.sendKeyTransition(key, pressed: true))
+
+        XCTAssertEqual(sink.transitions, [.init(VK.tab, true), .init(VK.tab, true)])
+    }
 }
 
 private struct KeyTransition: Equatable {
@@ -101,6 +155,7 @@ private struct KeyTransition: Equatable {
 private final class FakeWindowsKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady: Bool
     var activeProfileID: UUID?
+    var inputSessionID: UUID?
     var transitions: [KeyTransition] = []
 
     init(isInputForwardingReady: Bool = true) {
