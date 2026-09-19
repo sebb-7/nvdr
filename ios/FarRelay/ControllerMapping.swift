@@ -33,7 +33,7 @@ enum WindowsKeyboardKey: String, CaseIterable, Codable, Hashable, Identifiable, 
     case backspace, tab, enter, escape, space, pageUp, pageDown, end, home, left, up, right, down, insert, delete
     case capsLock, pause, printScreen, scrollLock, numLock, contextMenu
     case shift, leftShift, rightShift, control, leftControl, rightControl, alt, leftAlt, rightAlt, windows
-    case numpad0, numpad1, numpad2, numpad3, numpad4, numpad5, numpad6, numpad7, numpad8, numpad9, numpadMultiply, numpadAdd, numpadSubtract, numpadDecimal, numpadDivide, numpadEnter
+    case numpad0, numpad1, numpad2, numpad3, numpad4, numpad5, numpad6, numpad7, numpad8, numpad9, numpadMultiply, numpadAdd, numpadSubtract, numpadDecimal, numpadDivide
     case semicolon, equal, comma, minus, period, slash, grave, leftBracket, backslash, rightBracket, quote
     case a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z
     case digit0, digit1, digit2, digit3, digit4, digit5, digit6, digit7, digit8, digit9
@@ -43,7 +43,7 @@ enum WindowsKeyboardKey: String, CaseIterable, Codable, Hashable, Identifiable, 
     var label: String { rawValue.replacing("digit", with: "").uppercased().replacing("Numpad", with: "Numpad ") }
     var virtualKey: UInt16 {
         switch self {
-        case .backspace: 0x08; case .tab: 0x09; case .enter, .numpadEnter: 0x0D; case .shift: 0x10; case .control: 0x11; case .alt: 0x12
+        case .backspace: 0x08; case .tab: 0x09; case .enter: 0x0D; case .shift: 0x10; case .control: 0x11; case .alt: 0x12
         case .pause: 0x13; case .capsLock: 0x14; case .escape: 0x1B; case .space: 0x20; case .pageUp: 0x21; case .pageDown: 0x22; case .end: 0x23; case .home: 0x24
         case .left: 0x25; case .up: 0x26; case .right: 0x27; case .down: 0x28; case .printScreen: 0x2C; case .insert: 0x2D; case .delete: 0x2E
         case .windows: 0x5B; case .contextMenu: 0x5D; case .numpad0: 0x60; case .numpad1: 0x61; case .numpad2: 0x62; case .numpad3: 0x63; case .numpad4: 0x64; case .numpad5: 0x65; case .numpad6: 0x66; case .numpad7: 0x67; case .numpad8: 0x68; case .numpad9: 0x69; case .numpadMultiply: 0x6A; case .numpadAdd: 0x6B; case .numpadSubtract: 0x6D; case .numpadDecimal: 0x6E; case .numpadDivide: 0x6F
