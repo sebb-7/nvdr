@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A standard list-based editor so every mapping remains reachable with VoiceOver.
 struct ControllerMappingView: View {
@@ -41,6 +42,10 @@ struct ControllerMappingView: View {
                 Button("Save Mappings") {
                     mappings.saveDraft()
                     saveConfirmation = "Controller mappings saved."
+                    UIAccessibility.post(
+                        notification: .announcement,
+                        argument: "Controller mappings saved."
+                    )
                 }
                 .disabled(!mappings.hasUnsavedChanges)
                 .accessibilityHint("Saves every edited controller binding.")
@@ -53,7 +58,6 @@ struct ControllerMappingView: View {
                     Text(saveConfirmation)
                         .font(.footnote)
                         .accessibilityAddTraits(.isStaticText)
-                        .accessibilityLiveRegion(.polite)
                 }
             }
             .padding()
