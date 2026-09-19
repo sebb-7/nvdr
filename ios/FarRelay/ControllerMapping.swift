@@ -208,6 +208,7 @@ struct ControllerProfile: Codable, Hashable, Sendable {
     /// ambiguous and are rejected rather than silently choosing one mapping.
     func normalizedBindingSlots() -> ControllerProfile? {
         guard Set(bindings.map(\.sourceInput)).count == bindings.count else { return nil }
+        guard Set(layers.map(\.id)).count == layers.count else { return nil }
         var normalized = self
         for input in ControllerInput.allCases where normalized.bindings.contains(where: { $0.sourceInput == input }) == false {
             normalized.bindings.append(.init(sourceInput: input, action: nil))

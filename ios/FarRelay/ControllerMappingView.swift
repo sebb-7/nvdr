@@ -95,8 +95,18 @@ enum ControllerMappingActionType: String, CaseIterable, Identifiable {
 }
 
 struct ControllerBindingEditorState: Equatable {
-    var type: ControllerMappingActionType
-    var key: WindowsKeyboardKey?
+    var type: ControllerMappingActionType {
+        didSet {
+            guard type != .keyboard else { return }
+            key = nil
+            modifiers = []
+        }
+    }
+    var key: WindowsKeyboardKey? {
+        didSet {
+            if key != nil, type == .unassigned { type = .keyboard }
+        }
+    }
     var modifiers: Set<ControllerKeyboardModifier>
 
     init(action: ControllerAction?) {
