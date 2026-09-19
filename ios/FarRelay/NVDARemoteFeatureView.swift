@@ -5,6 +5,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(BridgeClient.self) private var bridge
     @Environment(InteractionFeedback.self) private var interactionFeedback
     @Environment(InputDiagnosticStore.self) private var inputDiagnostics
+    @Environment(RemoteIntentRouter.self) private var router
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
@@ -18,6 +19,7 @@ struct NVDARemoteFeatureView: View {
                 Button(connectionAction.title, systemImage: "network") {
                     switch connectionAction {
                     case .connect:
+                        activateNVDAControlTarget()
                         bridge.start(settings: settings, profile: profile)
                     case .cancel, .disconnect:
                         bridge.stop()
@@ -71,6 +73,9 @@ struct NVDARemoteFeatureView: View {
                 // API for a UIView's `keyCommands` override.
                 .id(bridge.forwardingEnabled)
         }
+        .onAppear {
+            activateNVDAControlTarget()
+        }
         .onChange(of: bridge.status) { old, new in
             handleStatusChange(from: old, to: new)
         }
@@ -81,9 +86,22 @@ struct NVDARemoteFeatureView: View {
         }
         .userFacingIssueAlert($presentedIssue) { _ in
             presentedIssue = nil
+            activateNVDAControlTarget()
             bridge.start(settings: settings, profile: profile)
         }
-        .onDisappear { bridge.suspendInputForInactiveContext() }
+        .onDisappear {
+            bridge.suspendInputForInactiveContext()
+            deactivateNVDAControlTargetIfOwned()
+        }
+    }
+
+    private func activateNVDAControlTarget() {
+        _ = router.setActiveTarget(id: NVDARemoteIntentTarget.defaultID)
+    }
+
+    private func deactivateNVDAControlTargetIfOwned() {
+        guard router.activeTargetID == NVDARemoteIntentTarget.defaultID else { return }
+        _ = router.setActiveTarget(id: nil)
     }
 
     private var forwardingBinding: Binding<Bool> {

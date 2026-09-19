@@ -23,14 +23,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # Keep the runtime diagnostic provenance independent of Xcode build
-      # setting expansion. This edits only the ephemeral checkout before the
-      # signed archive is built; the committed plist keeps its development
-      # placeholder for local builds.
-      - name: Embed source revision in distribution build
-        working-directory: ios
-        run: /usr/libexec/PlistBuddy -c "Set :FarRelaySourceRevision ${GITHUB_SHA:0:12}" FarRelay/Info.plist
-
       - name: Configure temporary paths
         run: |
           echo "KEYCHAIN_PATH=$RUNNER_TEMP/farrelay-signing.keychain-db" >> "$GITHUB_ENV"

@@ -115,6 +115,34 @@ final class RemoteIntentRouterTests: XCTestCase {
         XCTAssertTrue(other.performedIntents.isEmpty)
     }
 
+    func testNVDAContextSelectionClearsOnlyWhenStillOwned() {
+        let router = RemoteIntentRouter()
+        let nvda = FakeRemoteIntentTarget(
+            id: NVDARemoteIntentTarget.defaultID,
+            capabilities: [.rawKeyInput]
+        )
+        let other = FakeRemoteIntentTarget(
+            id: RemoteTargetID("other"),
+            capabilities: [.rawKeyInput]
+        )
+        router.register(nvda)
+        router.register(other)
+
+        XCTAssertTrue(router.setActiveTarget(id: NVDARemoteIntentTarget.defaultID))
+        XCTAssertEqual(router.activeTargetID, NVDARemoteIntentTarget.defaultID)
+
+        if router.activeTargetID == NVDARemoteIntentTarget.defaultID {
+            _ = router.setActiveTarget(id: nil)
+        }
+        XCTAssertNil(router.activeTargetID)
+
+        XCTAssertTrue(router.setActiveTarget(id: other.remoteTargetID))
+        if router.activeTargetID == NVDARemoteIntentTarget.defaultID {
+            _ = router.setActiveTarget(id: nil)
+        }
+        XCTAssertEqual(router.activeTargetID, other.remoteTargetID)
+    }
+
     func testRawKeyValidationRejectsInvalidValues() {
         XCTAssertNil(RemoteKey.function(0))
         XCTAssertNil(RemoteKey.function(25))
