@@ -54,6 +54,12 @@ struct FarRelayApp: App {
                 .environment(controllerMappings)
                 .environment(controllerAdapter)
                 .task { controllerAdapter.start() }
+                .sheet(isPresented: Binding(
+                    get: { controllerAdapter.isTextModeActive },
+                    set: { if !$0 { controllerAdapter.exitTextMode() } }
+                )) {
+                    TextModeEntryView(controller: controllerAdapter)
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { controllerAdapter.start() }
                     else { controllerAdapter.stop() }
