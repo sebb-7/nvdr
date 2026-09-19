@@ -3,6 +3,26 @@ import XCTest
 
 @MainActor
 final class ControllerMappingTests: XCTestCase {
+    func testBindingEditorStateKeepsUnassignedDistinctFromUpArrow() {
+        let unassigned = ControllerBindingEditorState(action: nil)
+        XCTAssertNil(unassigned.key)
+        XCTAssertNil(unassigned.action)
+
+        var upArrow = unassigned
+        upArrow.key = .up
+        XCTAssertEqual(upArrow.action, .keyboard(.init(key: .up)))
+
+        let existing = ControllerBindingEditorState(
+            action: .keyboard(.init(key: .tab, modifiers: [.shift]))
+        )
+        XCTAssertEqual(existing.key, .tab)
+        XCTAssertEqual(existing.modifiers, [.shift])
+        XCTAssertEqual(
+            existing.action,
+            .keyboard(.init(key: .tab, modifiers: [.shift]))
+        )
+    }
+
     func testEveryDualSenseInputHasAnIndependentBindingSlot() {
         var profile = ControllerProfile()
         XCTAssertEqual(Set(profile.bindings.map(\.sourceInput)), Set(ControllerInput.allCases))

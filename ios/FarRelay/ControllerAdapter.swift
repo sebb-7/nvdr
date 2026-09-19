@@ -111,8 +111,19 @@ final class DualSenseControllerAdapter {
             handle(inputLifecycle.receive(input, pressed: button.isPressed, at: now))
         }
 
-        // Direction-pad child callbacks are not consistent across controller
-        // families. Reading the axes on every profile callback gives one
+        // GCExtendedGamepad reports the containing GCControllerDirectionPad
+        // when one of its directional subelements changes. Sample the four
+        // D-pad buttons on every profile callback instead of depending on a
+        // child GCControllerButtonInput being delivered as the changed element.
+        receiveDpadState(
+            up: gamepad.dpad.up.isPressed,
+            down: gamepad.dpad.down.isPressed,
+            left: gamepad.dpad.left.isPressed,
+            right: gamepad.dpad.right.isPressed,
+            at: now
+        )
+
+        // Reading the thumbstick axes on every profile callback gives one
         // stable, hysteretic source for stick-direction mappings.
         handle(leftStick.update(
             x: gamepad.leftThumbstick.xAxis.value,
@@ -216,6 +227,35 @@ final class DualSenseControllerAdapter {
         handle(inputLifecycle.receive(input, pressed: pressed, at: time))
     }
 
+    /// Test seam for the production D-pad normalization path.
+    func receiveDpadForTesting(
+        up: Bool,
+        down: Bool,
+        left: Bool,
+        right: Bool,
+        at time: TimeInterval
+    ) {
+        receiveDpadState(up: up, down: down, left: left, right: right, at: time)
+    }
+
+    private func receiveDpadState(
+        up: Bool,
+        down: Bool,
+        left: Bool,
+        right: Bool,
+        at time: TimeInterval
+    ) {
+        let states: [(ControllerInput, Bool)] = [
+            (.dpadUp, up),
+            (.dpadDown, down),
+            (.dpadLeft, left),
+            (.dpadRight, right)
+        ]
+        for (input, pressed) in states {
+            handle(inputLifecycle.receive(input, pressed: pressed, at: time))
+        }
+    }
+
     private func diagnosticEventID() -> Int {
         defer { nextDiagnosticEventID += 1 }
         return nextDiagnosticEventID
@@ -285,10 +325,6 @@ final class DualSenseControllerAdapter {
     }
 
     private func buttonInput(for element: GCControllerElement, gamepad: GCExtendedGamepad) -> ControllerInput? {
-        if element === gamepad.dpad.up { return .dpadUp }
-        if element === gamepad.dpad.down { return .dpadDown }
-        if element === gamepad.dpad.left { return .dpadLeft }
-        if element === gamepad.dpad.right { return .dpadRight }
         if element === gamepad.buttonA { return .cross }
         if element === gamepad.buttonB { return .circle }
         if element === gamepad.buttonX { return .square }
