@@ -2,11 +2,15 @@ import Foundation
 
 @MainActor
 protocol RemoteWindowsKeySink: AnyObject {
+    /// Readiness of the remote command channel. It intentionally excludes the
+    /// local responder's Forward Keyboard preference: semantic inputs (such
+    /// as a controller) have their own source and must not be gated by it.
     var isInputForwardingReady: Bool { get }
     var activeProfileID: UUID? { get }
     /// Changes whenever the bridge replaces its IPC command channel. Held
     /// controller state must never cross this transport boundary.
     var inputSessionID: UUID? { get }
+    var lastInputForwardingResult: InputForwardingResult? { get }
     func sendKey(vk: UInt16, pressed: Bool)
 }
 
@@ -220,6 +224,9 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         case .reviewPrevious, .reviewNext, .returnToLive, .terminalInterrupt, .terminalEOF,
              .macRemote:
             return .unsupported
+        }
+        if case .some(.rejected(let reason)) = keySink.lastInputForwardingResult {
+            return .failed("NVDA transport rejected the key: \(reason)")
         }
         return .performed
     }

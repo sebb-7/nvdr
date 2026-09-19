@@ -61,6 +61,9 @@ final class BridgeClient {
     private var commandChannelID: UUID?
     private var inputReady = false
     private var inputState = SSHInputState()
+    /// Result of the most recent semantic remote transition. This is only
+    /// diagnostic/result plumbing; it never changes input routing.
+    private(set) var lastInputForwardingResult: InputForwardingResult?
     /// Modifiers introduced solely for a GCKeyboard function-key press. They
     /// are released with that key; physical modifiers remain owned by UIKit.
     private var functionKeyOwnedModifiers: [UInt16: [UInt16]] = [:]
@@ -183,6 +186,15 @@ final class BridgeClient {
         guard forwardingEnabled else {
             return .rejected("forwarding is off")
         }
+        return forwardRemoteKey(vk: vk, pressed: pressed)
+    }
+
+    /// Semantic remote sources (controller and future explicit remote
+    /// controls) bypass the local responder's Forward Keyboard preference.
+    /// They still require the same ready IPC channel and paired transition
+    /// validation as physical keyboard forwarding.
+    @discardableResult
+    func forwardRemoteKey(vk: UInt16, pressed: Bool) -> InputForwardingResult {
         guard status == .ready else {
             return .rejected("connection is not ready")
         }
@@ -247,16 +259,16 @@ final class BridgeClient {
     }
 
     /// Compatibility surface for semantic remote-intent targets. Physical
-    /// capture uses `forwardKey` so it can record the result without changing
-    /// the established no-result protocol contract.
+    /// capture uses `forwardKey`, which remains governed by Forward Keyboard.
     func sendKey(vk: UInt16, pressed: Bool) {
-        _ = forwardKey(vk: vk, pressed: pressed)
+        lastInputForwardingResult = forwardRemoteKey(vk: vk, pressed: pressed)
     }
 
-    /// Read-only input readiness for semantic adapters. This never changes
-    /// forwarding state or attempts to establish the NVDA input channel.
+    /// Read-only remote-channel readiness for semantic adapters. This never
+    /// changes forwarding state or attempts to establish the NVDA input
+    /// channel, and deliberately does not include `forwardingEnabled`.
     var isInputForwardingReady: Bool {
-        forwardingEnabled && status == .ready && inputReady
+        status == .ready && inputReady
     }
 
     var inputSessionID: UUID? { commandChannelID }
@@ -641,6 +653,17 @@ final class BridgeClient {
     private func appendLog(_ line: String) {
         log.append(line)
         if log.count > 200 { log.removeFirst(log.count - 200) }
+    }
+
+    /// Bounded, non-content diagnostic evidence emitted by the existing
+    /// `farrelay --ipc` host process. These lines establish host stdin receipt
+    /// and relay enqueue when available; they do not claim NVDA execution.
+    var inputTransportDiagnostics: [String] {
+        log.filter {
+            $0.contains("farrelay-ipc: stdin got: key ") ||
+            $0.contains("farrelay-ipc: relay key vk=") ||
+            $0.contains("farrelay-ipc: key suppressed")
+        }.suffix(20).map { $0 }
     }
 
     nonisolated private func appendLogAsync(_ line: String) async {

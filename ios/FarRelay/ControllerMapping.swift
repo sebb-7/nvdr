@@ -119,18 +119,49 @@ struct ControllerProfileStore {
 
 @Observable @MainActor
 final class ControllerMappingSettings {
+    /// The profile currently used by the controller adapter. It changes only
+    /// after the user explicitly saves the mapping session.
     private(set) var activeProfile: ControllerProfile
+    /// The editable copy used by Controller Mapping. Keeping it separate from
+    /// `activeProfile` makes a mapping session one atomic profile write.
+    private(set) var draftProfile: ControllerProfile
     private let store: ControllerProfileStore
     /// The adapter releases any action it began before an edit is applied, so
     /// changing or clearing a mapping cannot leave its former remote key held.
     var willChangeActiveProfile: (@MainActor () -> Void)?
     init(defaults: UserDefaults = .standard) {
         store = .init(defaults: defaults, key: "farrelay.controllerProfile.v1")
-        switch store.load() { case .profile(let profile): activeProfile = profile; case .uninitialized, .malformedOrUnsupported: activeProfile = .init() }
+        switch store.load() {
+        case .profile(let profile):
+            activeProfile = profile
+        case .uninitialized, .malformedOrUnsupported:
+            activeProfile = .init()
+        }
+        draftProfile = activeProfile
     }
+
+    var hasUnsavedChanges: Bool { draftProfile != activeProfile }
+
+    /// Starts a new edit session only when there is no existing draft. An
+    /// interrupted session therefore remains available rather than being
+    /// silently discarded when the user returns to this screen.
+    func beginEditing() {
+        guard !hasUnsavedChanges else { return }
+        draftProfile = activeProfile
+    }
+
     func setAction(_ action: ControllerAction?, for input: ControllerInput) {
+        draftProfile.setAction(action, for: input)
+    }
+
+    func saveDraft() {
+        guard hasUnsavedChanges else { return }
         willChangeActiveProfile?()
-        activeProfile.setAction(action, for: input)
+        activeProfile = draftProfile
         store.save(activeProfile)
+    }
+
+    func discardDraft() {
+        draftProfile = activeProfile
     }
 }

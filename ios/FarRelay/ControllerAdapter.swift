@@ -9,6 +9,7 @@ final class DualSenseControllerAdapter {
     private let mappings: ControllerMappingSettings
     private let settings: AppSettings
     private let router: RemoteIntentRouter
+    private let diagnostics: InputDiagnosticStore
     private var controller: GCController?
     private var connectObservation: NotificationCenter.ObservationToken?
     private var disconnectObservation: NotificationCenter.ObservationToken?
@@ -22,12 +23,15 @@ final class DualSenseControllerAdapter {
         up: .rightStickUp, down: .rightStickDown
     )
     private struct ActiveAction {
+        let input: ControllerInput
+        let eventID: Int
         let action: KeyboardAction
         let targetID: RemoteTargetID
     }
 
     private var activeActions: [ControllerInput: ActiveAction] = [:]
     private var repeatTask: Task<Void, Never>?
+    private var nextDiagnosticEventID = 1
 
     private(set) var connectedControllerName: String?
     /// This is the real surface of the currently attached controller. An
@@ -38,10 +42,16 @@ final class DualSenseControllerAdapter {
     /// has remapped them so the mapping screen can state that semantic clearly.
     private(set) var controllerHasRemappedElements = false
 
-    init(mappings: ControllerMappingSettings, settings: AppSettings, router: RemoteIntentRouter) {
+    init(
+        mappings: ControllerMappingSettings,
+        settings: AppSettings,
+        router: RemoteIntentRouter,
+        diagnostics: InputDiagnosticStore
+    ) {
         self.mappings = mappings
         self.settings = settings
         self.router = router
+        self.diagnostics = diagnostics
         mappings.willChangeActiveProfile = { [weak self] in self?.releaseActiveActions() }
     }
 
@@ -120,17 +130,28 @@ final class DualSenseControllerAdapter {
         for phase in phases {
             switch phase {
             case .pressed(let input):
-                guard case .keyboard(let action)? = mappings.activeProfile.action(for: input),
-                      let targetID = router.activeTargetID else { continue }
-                let active = ActiveAction(action: action, targetID: targetID)
+                let eventID = diagnosticEventID()
+                diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "GameController reception: pressed")
+                guard case .keyboard(let action)? = mappings.activeProfile.action(for: input) else {
+                    diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: no saved mapping")
+                    continue
+                }
+                diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(action.key.label); modifiers \(action.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
+                guard let targetID = router.activeTargetID else {
+                    diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
+                    continue
+                }
+                let active = ActiveAction(input: input, eventID: eventID, action: action, targetID: targetID)
                 activeActions[input] = active
                 route(active, transition: .pressed)
                 startRepeatLoopIfNeeded()
             case .repeated(let input):
                 guard let active = activeActions[input] else { continue }
+                diagnostics.observeController(eventID: active.eventID, input: input, pressed: true, stage: "GameController lifecycle: repeat")
                 route(active, transition: .repeated)
             case .released(let input):
                 guard let active = activeActions.removeValue(forKey: input) else { continue }
+                diagnostics.observeController(eventID: active.eventID, input: input, pressed: false, stage: "GameController reception: released")
                 route(active, transition: .released)
             }
         }
@@ -152,7 +173,52 @@ final class DualSenseControllerAdapter {
         case (false, .repeated): intent = .repeatChord(.init(modifiers: modifiers, key: key))
         case (false, .released): intent = .sendChordTransition(.init(modifiers: modifiers, key: key), pressed: false)
         }
-        Task { @MainActor [router, targetID = active.targetID] in _ = await router.route(intent, to: targetID) }
+        let stage = switch transition {
+        case .pressed: "press"
+        case .repeated: "repeat"
+        case .released: "release"
+        }
+        let pressed = stage != "release"
+        diagnostics.observeController(
+            eventID: active.eventID,
+            input: active.input,
+            pressed: pressed,
+            stage: "RemoteIntent created: \(stage) keyboard virtual key \(action.key.virtualKey)"
+        )
+        guard let target = router.target(for: active.targetID) else {
+            diagnostics.observeController(eventID: active.eventID, input: active.input, pressed: pressed, stage: "Capability routing: original target unavailable; no fallback")
+            return
+        }
+        guard target.capabilities.contains(intent.requiredCapability) else {
+            diagnostics.observeController(eventID: active.eventID, input: active.input, pressed: pressed, stage: "Capability routing: target \(target.id.rawValue) unsupported; no fallback")
+            return
+        }
+        diagnostics.observeController(eventID: active.eventID, input: active.input, pressed: pressed, stage: "Capability routing: supported; target \(target.displayName); executor \(target.kind.rawValue)")
+        Task { @MainActor [router, diagnostics, targetID = active.targetID, input = active.input, eventID = active.eventID] in
+            let result = await router.route(intent, to: targetID)
+            let completion: String = switch result {
+            case .performed:
+                "Transport: queued; host receipt/execution: unconfirmed by the existing IPC protocol"
+            case .unsupported:
+                "Capability routing: executor reported unsupported; no fallback"
+            case .unavailable(let reason):
+                "Executor unavailable: \(reason)"
+            case .failed(let reason):
+                "Transport/execution failed: \(reason)"
+            }
+            diagnostics.observeController(eventID: eventID, input: input, pressed: pressed, stage: completion)
+        }
+    }
+
+    /// Test seam for deterministic controller-pipeline coverage. Production
+    /// controller callbacks enter the same lifecycle through `process`.
+    func receiveForTesting(input: ControllerInput, pressed: Bool, at time: TimeInterval) {
+        handle(inputLifecycle.receive(input, pressed: pressed, at: time))
+    }
+
+    private func diagnosticEventID() -> Int {
+        defer { nextDiagnosticEventID += 1 }
+        return nextDiagnosticEventID
     }
 
     private func startRepeatLoopIfNeeded() {
@@ -238,5 +304,11 @@ final class DualSenseControllerAdapter {
         if let rightStick = gamepad.rightThumbstickButton, element === rightStick { return .rightStickPress }
         if let dualSense = gamepad as? GCDualSenseGamepad, element === dualSense.touchpadButton { return .touchpadPress }
         return nil
+    }
+}
+
+private extension String {
+    func ifEmpty(_ replacement: @autoclosure () -> String) -> String {
+        isEmpty ? replacement() : self
     }
 }

@@ -38,6 +38,36 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(store.load(), .profile(profile))
     }
 
+    func testEditsRemainInDraftUntilSaveMappingsThenReloadAtomically() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        settings.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
+        settings.setAction(.keyboard(.init(key: .down)), for: .dpadDown)
+
+        XCTAssertTrue(settings.hasUnsavedChanges)
+        XCTAssertNil(settings.activeProfile.action(for: .dpadUp))
+        XCTAssertEqual(settings.draftProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
+
+        settings.saveDraft()
+
+        XCTAssertFalse(settings.hasUnsavedChanges)
+        XCTAssertEqual(settings.activeProfile.action(for: .dpadUp), .keyboard(.init(key: .up)))
+        XCTAssertEqual(settings.activeProfile.action(for: .dpadDown), .keyboard(.init(key: .down)))
+        let reloaded = ControllerMappingSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.activeProfile, settings.activeProfile)
+    }
+
+    func testDiscardingDraftNeverPersistsIt() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+        settings.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
+        settings.discardDraft()
+
+        XCTAssertFalse(settings.hasUnsavedChanges)
+        XCTAssertNil(ControllerMappingSettings(defaults: defaults).activeProfile.action(for: .dpadUp))
+    }
+
     func testCorruptOrFutureProfileFailsClosed() throws {
         let defaults = makeDefaults()
         let store = ControllerProfileStore(defaults: defaults, key: "profile")

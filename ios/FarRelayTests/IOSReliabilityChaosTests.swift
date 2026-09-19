@@ -83,5 +83,6 @@ private final class ReliabilityKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady = true
     var activeProfileID: UUID?
     var inputSessionID: UUID?
+    var lastInputForwardingResult: InputForwardingResult? = .accepted
     func sendKey(vk: UInt16, pressed: Bool) {}
 }

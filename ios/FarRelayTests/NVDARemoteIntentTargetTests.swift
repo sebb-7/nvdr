@@ -156,6 +156,7 @@ private final class FakeWindowsKeySink: RemoteWindowsKeySink {
     var isInputForwardingReady: Bool
     var activeProfileID: UUID?
     var inputSessionID: UUID?
+    var lastInputForwardingResult: InputForwardingResult? = .accepted
     var transitions: [KeyTransition] = []
 
     init(isInputForwardingReady: Bool = true) {

@@ -48,4 +48,32 @@ final class InputDiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("Command F-key fallback"))
         XCTAssertFalse(report.contains("password"))
     }
+
+    func testControllerDiagnosticHasStableSourceInputAndCorrelation() {
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        diagnostics.observeController(
+            eventID: 42,
+            input: .dpadUp,
+            pressed: true,
+            stage: "Binding lookup: matched Keyboard primary key UP"
+        )
+
+        let line = try! XCTUnwrap(diagnostics.entries.first?.reportLine)
+        XCTAssertTrue(line.contains("source=controller"))
+        XCTAssertTrue(line.contains("controller event #42"))
+        XCTAssertTrue(line.contains("controller:dpadUp"))
+        XCTAssertTrue(line.contains("Binding lookup: matched"))
+    }
+
+    func testReportIncludesExistingHostInputEvidenceWithoutClaimingNVDAExecution() {
+        let report = InputDiagnosticStore().report(
+            connectionState: "NVDA connected",
+            hostInputEvidence: ["farrelay: farrelay-ipc: stdin got: key 38 1"]
+        )
+
+        XCTAssertTrue(report.contains("Host input evidence"))
+        XCTAssertTrue(report.contains("stdin got: key 38 1"))
+        XCTAssertTrue(report.contains("NVDA execution unconfirmed"))
+    }
 }
