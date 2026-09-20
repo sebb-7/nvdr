@@ -38,7 +38,7 @@ impl Capabilities {
         Self {
             protocol_version: 1,
             host_implementation: "farrelay-host".into(),
-            host_version: env!("CARGO_PKG_VERSION").into(),
+            host_version: crate::DISTRIBUTION_VERSION.into(),
             operations,
         }
     }

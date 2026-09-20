@@ -2,6 +2,22 @@
 
 CI success is necessary evidence, not physical validation.
 
+## Windows distribution gate
+
+The manually dispatched **Windows Distribution Release** workflow is the only
+Windows publishing path. Before publishing a channel asset, its root, host, and
+updater tests must pass, the updater manifest/hash/staging tests must pass, and
+the generated installer must build on the GitHub Windows runner. Verify the
+published `SHA256SUMS.txt`, install on a non-developer Windows tester machine,
+confirm `farrelay --version`, `farrelay-host --version`, and
+`farrelay-updater status` in a fresh SSH session, then verify that the fixed
+recovery task remains Interactive/Limited when NVDA UIAccess is installed.
+
+The release workflow has no signing secret. Until Authenticode credentials are
+provisioned, beta artifacts may show SmartScreen warnings and must be treated as
+internal/tester builds. A failed update must be tested by the local updater's
+rollback path before a travel-critical release is promoted.
+
 | Maturity | Required evidence |
 | --- | --- |
 | Developer build | Builds, deterministic unit/reliability tests, and `git diff --check` pass. |

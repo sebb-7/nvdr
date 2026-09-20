@@ -1,0 +1,93 @@
+name: Windows Distribution Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Distribution version, for example 0.2.0-beta.1
+        required: true
+        type: string
+      channel:
+        description: Release channel
+        required: true
+        default: beta
+        type: choice
+        options: [beta, stable]
+      publish_release:
+        description: Publish assets to the matching GitHub Release tag
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      CHANNEL: ${{ inputs.channel }}
+      DIST: windows/dist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-msvc }
+      - name: Test update policy and staging transaction
+        working-directory: farrelay-updater
+        run: cargo test --locked
+      - name: Build distribution binaries
+        shell: pwsh
+        run: |
+          $env:FARRELAY_DIST_VERSION = $env:VERSION
+          cargo build --release --locked
+          cargo build --release --locked --manifest-path farrelay-host/Cargo.toml
+          cargo build --release --locked --manifest-path farrelay-updater/Cargo.toml
+          New-Item -ItemType Directory -Force $env:DIST | Out-Null
+          Copy-Item target/release/farrelay.exe $env:DIST
+          Copy-Item farrelay-host/target/release/farrelay-host.exe $env:DIST
+          Copy-Item farrelay-updater/target/release/farrelay-updater.exe $env:DIST
+      - name: Build NVDA add-on
+        shell: pwsh
+        run: |
+          Copy-Item addon addon-build -Recurse
+          (Get-Content addon-build/manifest.ini) -replace '^version = .*$', "version = $env:VERSION" | Set-Content addon-build/manifest.ini
+          $addon = Join-Path $env:DIST "FarRelayBridge-$env:VERSION.nvda-addon"
+          Compress-Archive -Path addon-build/* -DestinationPath $addon -Force
+      - name: Create updater payload and portable archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe" -DestinationPath "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip" -Force
+          Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe", "$env:DIST/FarRelayBridge-$env:VERSION.nvda-addon" -DestinationPath "$env:DIST/FarRelay-Windows-Portable-$env:VERSION.zip" -Force
+      - name: Write strict update manifest and checksums
+        shell: pwsh
+        run: |
+          $payload = Get-Item "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip"
+          $hash = (Get-FileHash $payload.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $assetUrl = "https://github.com/sebb-7/nvdr/releases/download/farrelay-$env:CHANNEL/FarRelay-Windows-Update-$env:VERSION.zip"
+          @{ schema_version = 1; channel = $env:CHANNEL; version = $env:VERSION; published_at = (Get-Date).ToUniversalTime().ToString('o'); assets = @{ windows_x86_64 = @{ archive_url = $assetUrl; sha256 = $hash; size = $payload.Length } } } | ConvertTo-Json -Depth 5 | Set-Content "$env:DIST/update-$env:CHANNEL.json" -NoNewline
+          Copy-Item "$env:DIST/update-$env:CHANNEL.json" "$env:DIST/update-manifest.json"
+          Get-ChildItem "$env:DIST/*" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "{0}  {1}" -f $_.Hash.ToLowerInvariant(), $_.Path.Split([IO.Path]::DirectorySeparatorChar)[-1] } | Set-Content "$env:DIST/SHA256SUMS.txt"
+      - name: Build accessible Inno Setup installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          iscc "/DAppVersion=$env:VERSION" "/DChannel=$env:CHANNEL" windows/installer/FarRelay.iss
+          Copy-Item "windows/output/FarRelay-Setup-$env:VERSION.exe" $env:DIST
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarRelay-Windows-${{ inputs.version }}
+          path: windows/dist/*
+          if-no-files-found: error
+      - name: Publish release assets when requested
+        if: inputs.publish_release
+        env: { GH_TOKEN: ${{ github.token }} }
+        shell: pwsh
+        run: |
+          $tag = "farrelay-$env:CHANNEL"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            if ($env:CHANNEL -eq 'beta') { gh release create $tag --title "FarRelay $env:CHANNEL channel" --prerelease }
+            else { gh release create $tag --title "FarRelay $env:CHANNEL channel" }
+          }
+          gh release upload $tag windows/dist/* --clobber

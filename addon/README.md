@@ -22,9 +22,11 @@ machine — only to the bridge box.
 
 ## Prereqs
 
-- **Bridge box**: any reachable host with `farrelay` built and on its `PATH`
-  (`cargo build --release` produces `target/release/farrelay`). Linux or macOS or
-  Windows — any platform that can run an OpenSSH server and the binary.
+- **Bridge box**: any reachable host with `farrelay` on its `PATH`. On Windows,
+  the FarRelay installer puts the stable installed binary in
+  `C:\Program Files\FarRelay` and adds that directory to PATH; no Rust build
+  directory is required. Linux or macOS can use their platform-appropriate
+  binary distribution or a developer build.
 - **Your NVDA machine**: OpenSSH client on `PATH` (Windows 10+ ships one).
   Key-based auth set up so SSH doesn't prompt for a password — NVDA can't
   service an interactive prompt. Add the key to `ssh-agent`, or point at it
@@ -32,8 +34,9 @@ machine — only to the bridge box.
 
 ## Install
 
-1. Zip the contents of this `addon/` directory (so `manifest.ini` is at the
-   top level of the archive) and rename to `farrelayBridge.nvda-addon`.
+1. Download the release artifact `FarRelayBridge-<version>.nvda-addon`. For a
+   developer build, zip the contents of this `addon/` directory (so
+   `manifest.ini` is at the top level) and rename it to `farrelayBridge.nvda-addon`.
 2. NVDA → Tools → Add-on Store → Install from external source.
 3. Restart NVDA.
 

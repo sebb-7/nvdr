@@ -21,7 +21,20 @@ use protocol::{dispatch, ErrorResponse, Request, Response};
 use recovery::NvdaRecoveryProvider;
 use voiceover::VoiceOverProvider;
 
+pub const DISTRIBUTION_VERSION: &str = match option_env!("FARRELAY_DIST_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 fn main() {
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--version")
+    {
+        println!("farrelay-host {DISTRIBUTION_VERSION}");
+        return;
+    }
+
     #[cfg(target_os = "macos")]
     if std::env::args()
         .skip(1)
