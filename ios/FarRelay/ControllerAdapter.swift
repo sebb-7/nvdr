@@ -197,11 +197,11 @@ final class DualSenseControllerAdapter {
         switch action {
         case .keyboard(let keyboard):
             diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(keyboard.key.label); modifiers \(keyboard.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
-            guard let targetID = router.activeTargetID, let route = router.routeLease(for: targetID) else {
+            guard let targetID = router.activeTargetID, let routeLease = router.routeLease(for: targetID) else {
                 diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
                 return false
             }
-            let active = ActiveAction(input: input, eventID: eventID, action: keyboard, route: route)
+            let active = ActiveAction(input: input, eventID: eventID, action: keyboard, route: routeLease)
             activeActions[input] = active
             route(active, transition: .pressed)
             startRepeatLoopIfNeeded()
