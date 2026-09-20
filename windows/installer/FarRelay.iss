@@ -63,13 +63,15 @@ end;
 procedure WriteInstallConfiguration;
 var
   ConfigDir, ConfigPath, Content, ExistingContent, SelectedChannel, UpdateUrl, InstallPath: String;
+  ExistingContentUtf8, ContentUtf8: AnsiString;
 begin
   ConfigDir := ExpandConstant('{commonappdata}\FarRelay');
   ForceDirectories(ConfigDir);
   ConfigPath := AddBackslash(ConfigDir) + 'install.json';
   SelectedChannel := '{#Channel}';
   { Preserve an explicitly installed tester channel during an upgrade. }
-  if LoadStringFromFile(ConfigPath, ExistingContent) then begin
+  if LoadStringFromFile(ConfigPath, ExistingContentUtf8) then begin
+    ExistingContent := Utf8Decode(ExistingContentUtf8);
     if Pos('"channel":"stable"', ExistingContent) > 0 then SelectedChannel := 'stable';
     if Pos('"channel":"beta"', ExistingContent) > 0 then SelectedChannel := 'beta';
   end;
@@ -77,8 +79,10 @@ begin
   StringChangeEx(InstallPath, '\', '/', True);
   UpdateUrl := 'https://github.com/sebb-7/nvdr/releases/download/farrelay-' + SelectedChannel + '/update-' + SelectedChannel + '.json';
   Content := '{"schema_version":1,"channel":"' + SelectedChannel + '","installed_version":"{#AppVersion}","install_dir":"' + InstallPath + '","manifest_url":"' + UpdateUrl + '"}';
+  ContentUtf8 := Utf8Encode(Content);
   { ProgramData is retained by uninstall; a later installer updates only distribution metadata. }
-  SaveStringToFile(ConfigPath, Content, False);
+  if not SaveStringToFile(ConfigPath, ContentUtf8, False) then
+    RaiseException('Unable to write FarRelay install configuration.');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
