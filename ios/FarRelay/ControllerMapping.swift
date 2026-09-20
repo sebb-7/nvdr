@@ -182,9 +182,10 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         profile.setAction(.keyboard(.init(key: .pageDown)), for: .rightStickDown)
         profile.setAction(.keyboard(.init(key: .home)), for: .rightStickLeft)
         profile.setAction(.keyboard(.init(key: .end)), for: .rightStickRight)
-        profile.setAction(.layer(.init()), for: .rightShoulder)
+        profile.setAction(.keyboard(.init(key: .w, modifiers: [.control])), for: .rightShoulder)
         profile.setAction(.keyboard(.init(key: .f4, modifiers: [.alt])), for: .rightTrigger)
         profile.setAction(.keyboard(.init(key: .backspace)), for: .rightStickPress)
+        profile.setAction(.layer(.init()), for: .options)
         profile.setAction(.quickNavigation(.toggle), for: .create)
         profile.setAction(.farRelay(.textMode), for: .touchpadPress)
         var extended = ControllerLayerDefinition(
