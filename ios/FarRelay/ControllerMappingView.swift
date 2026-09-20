@@ -4,9 +4,28 @@ import SwiftUI
 struct ControllerMappingView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
     @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         List {
+            Section("How it works") {
+                Text("Base mappings are always active. Extended mappings are used through any button assigned to Layer: hold it for momentary Extended, tap it for one Extended action, or double-tap it to lock Extended until you press the Layer button again.")
+                Text("NVDA Quick Navigation is the rotor-style Browse Mode. In that mode, move the left stick up or down to choose Headings, Links, Form controls, Edit fields, Buttons, Landmarks, Tables, or Lists; left or right moves to the previous or next item.")
+            }
+
+            Section("Recommended layout") {
+                Button("Fill Unassigned with Recommended Layout") {
+                    let count = mappings.fillUnassignedWithRecommendedLayout()
+                    let message = count == 0
+                        ? "Recommended layout is already filled."
+                        : "\(count) unassigned controller mappings filled. Review them, then choose Save Mappings."
+                    AccessibilityNotification.Announcement(message).post()
+                }
+                .accessibilityHint("Adds the recommended Base and Extended mappings without replacing any mapping you already configured.")
+                Text("This never overwrites an existing mapping. If no Layer button exists, R1 is preferred and Options is used only if R1 is already occupied.")
+                    .foregroundStyle(.secondary)
+            }
+
             mappingSection(title: "Base", layerID: nil)
             ForEach(mappings.draftProfile.layers) { layer in
                 mappingSection(title: layer.name, layerID: layer.id)
@@ -32,12 +51,14 @@ struct ControllerMappingView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Save Mappings") {
                     mappings.saveDraft()
-                    AccessibilityNotification.Announcement(
-                        "Controller mappings saved."
-                    ).post()
+                    dismiss()
+                    DispatchQueue.main.async {
+                        AccessibilityNotification.Announcement(
+                            "Controller mappings saved. Settings."
+                        ).post()
+                    }
                 }
-                .disabled(!mappings.hasUnsavedChanges)
-                .accessibilityHint("Saves every edited controller binding.")
+                .accessibilityHint("Saves every edited controller binding and returns to Settings.")
             }
         }
         .onAppear { mappings.beginEditing() }
@@ -50,7 +71,7 @@ struct ControllerMappingView: View {
             let modifiers = keyboard.modifiers.map(\.label).sorted()
             return (modifiers + [keyboard.key.label]).joined(separator: "+")
         case .layer(let layer): return "\(layer.layerID.capitalized) layer"
-        case .quickNavigation: return "Quick Navigation"
+        case .quickNavigation: return "NVDA Quick Navigation"
         case .farRelay(.textMode): return "Text Mode"
         }
     }
@@ -90,7 +111,7 @@ struct ControllerMappingView: View {
 
 enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     case unassigned = "Unassigned", keyboard = "Keyboard", layer = "Layer"
-    case quickNavigation = "Quick Navigation", farRelay = "Text Mode"
+    case quickNavigation = "NVDA Quick Navigation", farRelay = "Text Mode"
     var id: String { rawValue }
 }
 
@@ -157,21 +178,39 @@ struct ControllerBindingEditor: View {
                 }
             }
             if editorState.type == .keyboard {
-            Section("Keyboard") {
-                Picker("Primary key", selection: $editorState.key) {
-                    Text("Unassigned").tag(WindowsKeyboardKey?.none)
-                    ForEach(WindowsKeyboardKey.allCases) { key in
-                        Text(key.label).tag(Optional(key))
+                Section("Keyboard") {
+                    Picker("Primary key", selection: $editorState.key) {
+                        Text("Unassigned").tag(WindowsKeyboardKey?.none)
+                        ForEach(WindowsKeyboardKey.allCases) { key in
+                            Text(key.label).tag(Optional(key))
+                        }
+                    }
+                    ForEach(ControllerKeyboardModifier.allCases) { modifier in
+                        Toggle(modifier.label, isOn: modifierBinding(modifier))
+                            .disabled(editorState.key == nil)
                     }
                 }
-                ForEach(ControllerKeyboardModifier.allCases) { modifier in
-                    Toggle(modifier.label, isOn: modifierBinding(modifier))
-                        .disabled(editorState.key == nil)
-                }
-            }
             }
             if editorState.type == .layer {
-                Section("Layer") { Text("Extended") }
+                Section("Layer") {
+                    Text("Extended")
+                    Text("Hold this button for momentary Extended, tap it for one Extended action, or double-tap it to lock Extended until you press the Layer button again.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if editorState.type == .quickNavigation {
+                Section("NVDA Quick Navigation") {
+                    Text("Rotor-style Browse Mode navigation. Left stick up or down changes element type; left or right moves to the previous or next item. Cross activates and Circle or this same Quick Navigation button exits.")
+                        .foregroundStyle(.secondary)
+                    Text("This version uses NVDA Browse Mode keyboard shortcuts, so use it while NVDA is in Browse Mode.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if editorState.type == .farRelay {
+                Section("Text Mode") {
+                    Text("Opens the local iPhone text editor for VoiceOver Braille Screen Input and mirrors supported text live to the remote field.")
+                        .foregroundStyle(.secondary)
+                }
             }
             Section {
                 Button("Clear Mapping", role: .destructive) {

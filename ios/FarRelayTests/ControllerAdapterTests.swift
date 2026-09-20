@@ -226,6 +226,30 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertFalse(diagnostics.entries.contains { $0.result.contains("SECRET_SENTINEL_123") })
     }
 
+    func testNativeBSIDeleteWithEmptyLocalBufferBackspacesPreexistingRemoteText() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        XCTAssertEqual(adapter.textModeBuffer, "")
+
+        adapter.handleTextModeDeleteBackwardWhenLocalBufferEmpty()
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(adapter.textModeBuffer, "")
+        XCTAssertEqual(sink.transitions, [.init(VK.back, true), .init(VK.back, false)])
+    }
+
+    func testNativeBSIDeleteEmptyHookFiresWithoutLocalTextMutation() {
+        let textView = RemoteTextModeTextView()
+        var emptyDeleteCount = 0
+        textView.onDeleteBackwardWhenEmpty = { emptyDeleteCount += 1 }
+        textView.text = ""
+
+        textView.deleteBackward()
+
+        XCTAssertEqual(emptyDeleteCount, 1)
+        XCTAssertEqual(textView.text, "")
+    }
+
     private func makeDefaults() -> UserDefaults {
         let name = "ControllerAdapterTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
