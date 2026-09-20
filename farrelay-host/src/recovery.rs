@@ -4,6 +4,7 @@
 #[cfg(target_os = "windows")]
 use crate::exec::{CommandInvocation, CommandRunner};
 
+#[cfg(target_os = "windows")]
 pub const NVDA_RECOVERY_TASK_NAME: &str = "FarRelay Recover NVDA";
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
