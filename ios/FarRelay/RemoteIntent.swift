@@ -14,6 +14,7 @@ enum RemoteIntent: Equatable, Sendable {
     case accessibilityNext
     case accessibilityPrevious
     case accessibilityActivate
+    case recovery(RecoveryAction)
 
     case nextApplication
     case previousApplication
@@ -50,6 +51,8 @@ enum RemoteIntent: Equatable, Sendable {
             .genericNavigation
         case .accessibilityNext, .accessibilityPrevious, .accessibilityActivate:
             .accessibilityNavigation
+        case .recovery:
+            .hostRecovery
         case .nextApplication:
             .applicationSwitching
         case .previousApplication, .closeWindow, .showDesktop, .openStart:
@@ -66,6 +69,12 @@ enum RemoteIntent: Equatable, Sendable {
             .macRemoteControl
         }
     }
+}
+
+/// Platform-neutral recovery commands. A host-scoped target chooses the
+/// implementation; input producers never name NVDA, VoiceOver, or Orca.
+enum RecoveryAction: Equatable, Sendable {
+    case restartAccessibility
 }
 
 /// The semantic Mac actions already exercised by the foundation's diagnostic
@@ -172,6 +181,7 @@ struct RemoteChord: Equatable, Sendable {
 enum RemoteCapability: Hashable, Sendable {
     case genericNavigation
     case accessibilityNavigation
+    case hostRecovery
     case applicationSwitching
     case applicationNavigation
     case terminalReview

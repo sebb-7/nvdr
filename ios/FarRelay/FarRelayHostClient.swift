@@ -546,23 +546,34 @@ actor FarRelayHostClient: HostClientProtocol {
 enum FarRelayHostConnection {
     static let command = "farrelay-host"
 
-    static func withClient(
+    static func withClient<Result: Sendable>(
         session: SSHSession,
         command: String = FarRelayHostConnection.command,
-        operation: @escaping @Sendable (FarRelayHostClient) async throws -> Void
-    ) async throws {
+        operation: @escaping @Sendable (FarRelayHostClient) async throws -> Result
+    ) async throws -> Result {
+        let resultBox = HostClientResultBox<Result>()
         try await session.withExec(command) { transport in
             let client = FarRelayHostClient(transport: transport)
             await client.start()
             do {
-                try await operation(client)
+                let result = try await operation(client)
                 await client.close()
+                await resultBox.store(result)
             } catch {
                 await client.close()
                 throw error
             }
         }
+        guard let result = await resultBox.value else { throw HostClientError.missingResult }
+        return result
     }
+}
+
+private actor HostClientResultBox<Result: Sendable> {
+    private var storedResult: Result?
+
+    func store(_ result: Result) { storedResult = result }
+    var value: Result? { storedResult }
 }
 
 private struct HostRequest<Parameters: Encodable>: Encodable {

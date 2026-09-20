@@ -7,6 +7,7 @@ struct HostTarget: Equatable, Identifiable, Sendable {
         case nvdaRemote
         case sshTerminal
         case macRemote
+        case hostRecovery
     }
 
     let id: RemoteTargetID

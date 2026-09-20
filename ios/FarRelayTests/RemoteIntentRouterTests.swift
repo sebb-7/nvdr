@@ -93,6 +93,47 @@ final class RemoteIntentRouterTests: XCTestCase {
         XCTAssertEqual(router.lastDecision, .originalRegistrationUnavailable(targetID: first.remoteTargetID, intent: .sendKeyTransition(.tab, pressed: false)))
     }
 
+    func testRecoveryUsesExplicitHostTargetWhenInteractionTargetIsUnavailable() async {
+        let router = RemoteIntentRouter()
+        let deadInteraction = FakeRemoteIntentTarget(
+            id: NVDARemoteIntentTarget.defaultID,
+            capabilities: [.genericNavigation],
+            result: .unavailable("NVDA is unavailable.")
+        )
+        let profile = HostProfile(displayName: "G14", platform: .windows)
+        let recoveryController = FakeHostRecoveryController(profile: profile)
+        let recoveryID = HostRecoveryIntentTarget.id(for: profile)
+        let recovery = HostRecoveryIntentTarget(controller: recoveryController, id: recoveryID)
+        router.register(deadInteraction)
+        router.register(recovery)
+        XCTAssertTrue(router.setActiveTarget(id: deadInteraction.remoteTargetID))
+
+        let result = await router.route(.recovery(.restartAccessibility), to: recoveryID)
+
+        XCTAssertEqual(result, .performed)
+        XCTAssertEqual(router.activeTargetID, deadInteraction.remoteTargetID)
+        XCTAssertEqual(recoveryController.restartCount, 1)
+        XCTAssertTrue(deadInteraction.performedIntents.isEmpty)
+    }
+
+    func testUnsupportedRecoveryTargetDoesNotFallbackToAnotherHost() async {
+        let router = RemoteIntentRouter()
+        let macProfile = HostProfile(displayName: "Mac", platform: .macOS)
+        let macController = FakeHostRecoveryController(profile: macProfile, supports: false)
+        let macID = HostRecoveryIntentTarget.id(for: macProfile)
+        let macRecovery = HostRecoveryIntentTarget(controller: macController, id: macID)
+        let windowsProfile = HostProfile(displayName: "G14", platform: .windows)
+        let windowsController = FakeHostRecoveryController(profile: windowsProfile)
+        router.register(macRecovery)
+        router.register(HostRecoveryIntentTarget(controller: windowsController, id: HostRecoveryIntentTarget.id(for: windowsProfile)))
+
+        let result = await router.route(.recovery(.restartAccessibility), to: macID)
+
+        XCTAssertEqual(result, .unsupported)
+        XCTAssertEqual(macController.restartCount, 0)
+        XCTAssertEqual(windowsController.restartCount, 0)
+    }
+
     func testUnsupportedAndUnavailableResultsRemainDeterministic() async {
         let router = RemoteIntentRouter()
         let target = FakeRemoteIntentTarget(
@@ -203,5 +244,23 @@ private final class FakeRemoteIntentTarget: HostTargetExecutor {
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
         performedIntents.append(intent)
         return result
+    }
+}
+
+@MainActor
+private final class FakeHostRecoveryController: HostRecoveryIntentControlling {
+    let recoveryProfile: HostProfile?
+    let recoveryConnectionState: HostTarget.ConnectionState = .ready
+    let supportsAccessibilityRecovery: Bool
+    private(set) var restartCount = 0
+
+    init(profile: HostProfile, supports: Bool = true) {
+        recoveryProfile = profile
+        supportsAccessibilityRecovery = supports
+    }
+
+    func restartAccessibility() async -> RemoteIntentResult {
+        restartCount += 1
+        return .performed
     }
 }
