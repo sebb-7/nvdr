@@ -1,129 +1,73 @@
 import AudioToolbox
 import Foundation
 
-/// Short, locally generated, non-speech earcons.
-///
-/// Playback uses AudioServices UI sounds so FarRelay never takes over the
-/// shared audio session, ducks VoiceOver, or interrupts `SpeechOutput`.
-/// Cues respect the Silent switch. They are not spoken words and do not
-/// load network or third-party audio.
+/// Bundled app cues use UI sounds and never reconfigure the shared audio
+/// session. Runtime synthesis is reserved for actual NVDA `tone` events.
+@MainActor
 enum InteractionSoundCue {
-    @MainActor
-    private static var registeredIDs: [InteractionFeedbackKind: SystemSoundID] = [:]
+    private static var bundledIDs: [String: SystemSoundID] = [:]
+    private static var toneIDs: [RemoteNVDATone: SystemSoundID] = [:]
 
-    @MainActor
-    static func play(_ kind: InteractionFeedbackKind) {
-        AudioServicesPlaySystemSound(soundID(for: kind))
+    static func play(_ intent: InteractionSoundIntent) { playBundled(filename: intent.filename) }
+
+    static func playRemoteWave(filename: String) {
+        guard let url = SoundResourceResolver.bundledURL(for: filename) else { return }
+        play(url: url, key: url.lastPathComponent.lowercased(), cache: &bundledIDs)
     }
 
-    @MainActor
-    private static func soundID(for kind: InteractionFeedbackKind) -> SystemSoundID {
-        let canonical = canonicalKind(kind)
-        if let existing = registeredIDs[canonical] {
-            return existing
-        }
-        let spec = tone(for: canonical)
-        guard let url = writeWAV(frequency: spec.frequency, duration: spec.duration) else {
-            return 0
-        }
-        var soundID: SystemSoundID = 0
-        guard AudioServicesCreateSystemSoundID(url as CFURL, &soundID) == kAudioServicesNoError else {
-            return 0
-        }
+    static func playRemoteTone(_ tone: RemoteNVDATone) {
+        if let identifier = toneIDs[tone] { AudioServicesPlaySystemSound(identifier); return }
+        guard let url = RemoteNVDAToneWAV.url(for: tone) else { return }
+        play(url: url, key: tone, cache: &toneIDs)
+    }
+
+    private static func playBundled(filename: String) {
+        guard let url = SoundResourceResolver.bundledURL(for: filename) else { return }
+        play(url: url, key: filename.lowercased(), cache: &bundledIDs)
+    }
+
+    private static func play<Key: Hashable>(url: URL, key: Key, cache: inout [Key: SystemSoundID]) {
+        if let identifier = cache[key] { AudioServicesPlaySystemSound(identifier); return }
+        var identifier: SystemSoundID = 0
+        guard AudioServicesCreateSystemSoundID(url as CFURL, &identifier) == kAudioServicesNoError else { return }
         var isUISound: UInt32 = 1
-        AudioServicesSetProperty(
-            kAudioServicesPropertyIsUISound,
-            UInt32(MemoryLayout.size(ofValue: soundID)),
-            &soundID,
-            UInt32(MemoryLayout.size(ofValue: isUISound)),
-            &isUISound
-        )
-        registeredIDs[canonical] = soundID
-        return soundID
+        AudioServicesSetProperty(kAudioServicesPropertyIsUISound, UInt32(MemoryLayout.size(ofValue: identifier)), &identifier, UInt32(MemoryLayout.size(ofValue: isUISound)), &isUISound)
+        cache[key] = identifier
+        AudioServicesPlaySystemSound(identifier)
     }
+}
 
-    private static func canonicalKind(_ kind: InteractionFeedbackKind) -> InteractionFeedbackKind {
-        switch kind {
-        case .copied:
-            .success
-        case .warning:
-            .selectionAccepted
-        default:
-            kind
-        }
-    }
-
-    private static func tone(for kind: InteractionFeedbackKind) -> (frequency: Double, duration: Double) {
-        switch kind {
-        case .selectionAccepted, .warning:
-            (880, 0.04)
-        case .success, .copied:
-            (1_174, 0.07)
-        case .error:
-            (277, 0.10)
-        }
-    }
-
-    private static func writeWAV(frequency: Double, duration: Double) -> URL? {
+private enum RemoteNVDAToneWAV {
+    static func url(for tone: RemoteNVDATone) -> URL? {
         let sampleRate = 8_000
-        let sampleCount = max(1, Int(Double(sampleRate) * duration))
-        var samples = [Int16](repeating: 0, count: sampleCount)
-        let fade = min(40, sampleCount / 4)
-        for index in 0..<sampleCount {
-            let envelope: Double
-            if index < fade {
-                envelope = Double(index) / Double(max(fade, 1))
-            } else if index > sampleCount - fade {
-                envelope = Double(sampleCount - index) / Double(max(fade, 1))
-            } else {
-                envelope = 1
-            }
-            let sample = sin(2 * Double.pi * frequency * Double(index) / Double(sampleRate))
-            samples[index] = Int16((sample * envelope * 0.28 * Double(Int16.max)).rounded())
+        let count = min(40_000, max(1, sampleRate * tone.durationMilliseconds / 1_000))
+        let leftLevel = Double(tone.leftLevel) / 100
+        let rightLevel = Double(tone.rightLevel) / 100
+        var data = Data("RIFF".utf8)
+        let dataSize = count * 4
+        data.append(UInt32(36 + dataSize).littleEndianData)
+        data.append(Data("WAVEfmt ".utf8))
+        data.append(UInt32(16).littleEndianData)
+        data.append(UInt16(1).littleEndianData)
+        data.append(UInt16(2).littleEndianData)
+        data.append(UInt32(sampleRate).littleEndianData)
+        data.append(UInt32(sampleRate * 4).littleEndianData)
+        data.append(UInt16(4).littleEndianData)
+        data.append(UInt16(16).littleEndianData)
+        data.append(Data("data".utf8))
+        data.append(UInt32(dataSize).littleEndianData)
+        let fade = min(40, count / 4)
+        for index in 0..<count {
+            let envelope = index < fade ? Double(index) / Double(max(fade, 1)) : (index > count - fade ? Double(count - index) / Double(max(fade, 1)) : 1)
+            let sample = sin(2 * .pi * Double(tone.frequency) * Double(index) / Double(sampleRate))
+            data.append(Int16((sample * envelope * leftLevel * 0.28 * Double(Int16.max)).rounded()).littleEndianData)
+            data.append(Int16((sample * envelope * rightLevel * 0.28 * Double(Int16.max)).rounded()).littleEndianData)
         }
-
-        var data = Data()
-        data.append(contentsOf: Array("RIFF".utf8))
-        let dataSize = sampleCount * 2
-        let fileSize = 36 + dataSize
-        data.append(contentsOf: UInt32(fileSize).littleEndianBytes)
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8))
-        data.append(contentsOf: UInt32(16).littleEndianBytes)
-        data.append(contentsOf: UInt16(1).littleEndianBytes)
-        data.append(contentsOf: UInt16(1).littleEndianBytes)
-        data.append(contentsOf: UInt32(sampleRate).littleEndianBytes)
-        data.append(contentsOf: UInt32(sampleRate * 2).littleEndianBytes)
-        data.append(contentsOf: UInt16(2).littleEndianBytes)
-        data.append(contentsOf: UInt16(16).littleEndianBytes)
-        data.append(contentsOf: Array("data".utf8))
-        data.append(contentsOf: UInt32(dataSize).littleEndianBytes)
-        samples.withUnsafeBytes { data.append(contentsOf: $0) }
-
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "farrelay-cue-\(Int(frequency))-\(Int(duration * 1000)).wav")
-        do {
-            try data.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
-        }
+        let url = FileManager.default.temporaryDirectory.appending(path: "farrelay-nvda-tone-\(tone.frequency)-\(tone.durationMilliseconds)-\(tone.leftLevel)-\(tone.rightLevel).wav")
+        do { try data.write(to: url, options: .atomic); return url } catch { return nil }
     }
 }
 
-private extension UInt16 {
-    var littleEndianBytes: [UInt8] {
-        [UInt8(truncatingIfNeeded: littleEndian), UInt8(truncatingIfNeeded: littleEndian >> 8)]
-    }
-}
-
-private extension UInt32 {
-    var littleEndianBytes: [UInt8] {
-        [
-            UInt8(truncatingIfNeeded: littleEndian),
-            UInt8(truncatingIfNeeded: littleEndian >> 8),
-            UInt8(truncatingIfNeeded: littleEndian >> 16),
-            UInt8(truncatingIfNeeded: littleEndian >> 24),
-        ]
-    }
+private extension FixedWidthInteger {
+    var littleEndianData: Data { withUnsafeBytes(of: self.littleEndian) { Data($0) } }
 }

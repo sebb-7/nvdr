@@ -31,6 +31,10 @@
 //!   `waiting_for_nvda`, `ready`, `disconnected`, `quit`. `ready` is emitted
 //!   only while the joined channel contains an NVDA *slave* peer.
 //! - `error <message>` — non-fatal error worth surfacing to the controller.
+//! - `tone <hz> <milliseconds> <left> <right>` — a validated native NVDA
+//!   tone. Levels are percentages and are clamped to the safe 0...100 range.
+//! - `wave <basename.wav>` — a native NVDA wave reduced to a filename only;
+//!   controllers must never use the remote path for local file access.
 //!
 //! Everything else (parse warnings, connect attempts, backoff timing) goes to
 //! stderr where the add-on tees it into the NVDA log.
@@ -506,9 +510,62 @@ fn emit_inbound(msg: &Inbound) {
         Inbound::Error { error } => {
             emit_error(error.as_deref().unwrap_or("(unspecified)"));
         }
+        Inbound::Tone {
+            hz,
+            length,
+            left,
+            right,
+        } => {
+            if let Some(line) = tone_event_line(*hz, *length, *left, *right) {
+                emit_line(&line);
+            }
+        }
+        Inbound::Wave { file_name } => {
+            if let Some(name) = file_name.as_deref().and_then(safe_wave_basename) {
+                emit_line(&format!("wave {name}"));
+            }
+        }
         // Everything else is informational — leave the stdout channel clean.
         _ => {}
     }
+}
+
+fn tone_event_line(
+    hz: Option<f64>,
+    length: Option<f64>,
+    left: Option<u32>,
+    right: Option<u32>,
+) -> Option<String> {
+    let (hz, length, left, right) = (hz?, length?, left?, right?);
+    if !hz.is_finite()
+        || !length.is_finite()
+        || !(20.0..=20_000.0).contains(&hz)
+        || !(1.0..=5_000.0).contains(&length)
+    {
+        return None;
+    }
+    Some(format!(
+        "tone {} {} {} {}",
+        hz.round() as u32,
+        length.round() as u32,
+        left.min(100),
+        right.min(100)
+    ))
+}
+
+fn safe_wave_basename(remote: &str) -> Option<&str> {
+    if remote.split(['/', '\\']).any(|part| part == "..") {
+        return None;
+    }
+    let basename = remote.rsplit(['/', '\\']).next()?;
+    if basename.is_empty()
+        || basename == "."
+        || basename == ".."
+        || !basename.to_ascii_lowercase().ends_with(".wav")
+    {
+        return None;
+    }
+    Some(basename)
 }
 
 fn emit_speak(text: &str) {
@@ -600,5 +657,29 @@ mod tests {
         assert_eq!(fingerprint, channel_fingerprint("123456789"));
         assert_ne!(fingerprint, channel_fingerprint("123456789 "));
         assert!(!fingerprint.contains("123456789"));
+    }
+
+    #[test]
+    fn native_tone_is_complete_bounded_and_preserved_in_ipc() {
+        assert_eq!(
+            tone_event_line(Some(440.0), Some(100.0), Some(50), Some(120)).as_deref(),
+            Some("tone 440 100 50 100")
+        );
+        assert!(tone_event_line(Some(f64::NAN), Some(100.0), Some(50), Some(50)).is_none());
+        assert!(tone_event_line(Some(440.0), None, Some(50), Some(50)).is_none());
+    }
+
+    #[test]
+    fn native_wave_exposes_only_safe_basename() {
+        assert_eq!(
+            safe_wave_basename(r"C:\Program Files\NVDA\waves\browseMode.wav"),
+            Some("browseMode.wav")
+        );
+        assert_eq!(
+            safe_wave_basename("/usr/share/nvda/waves/focusMode.wav"),
+            Some("focusMode.wav")
+        );
+        assert_eq!(safe_wave_basename("../../outside.wav"), None);
+        assert_eq!(safe_wave_basename("not-a-wave.mp3"), None);
     }
 }

@@ -31,6 +31,8 @@ targets:
     platform: iOS
     sources:
       - path: FarRelay
+      - path: ../sounds
+        type: folder
     info:
       path: FarRelay/Info.plist
       properties:
