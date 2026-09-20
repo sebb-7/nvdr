@@ -76,6 +76,23 @@ final class RemoteIntentRouterTests: XCTestCase {
         XCTAssertTrue(second.performedIntents.isEmpty)
     }
 
+    func testReplacingSameIDFailsOldLifecycleLeaseClosed() async throws {
+        let router = RemoteIntentRouter()
+        let first = FakeRemoteIntentTarget(id: RemoteTargetID("same"), capabilities: [.rawKeyInput])
+        router.register(first)
+        let route = try XCTUnwrap(router.routeLease(for: first.remoteTargetID))
+        _ = await router.route(.sendKeyTransition(.tab, pressed: true), via: route)
+
+        let replacement = FakeRemoteIntentTarget(id: first.remoteTargetID, capabilities: [.rawKeyInput])
+        router.register(replacement)
+        let result = await router.route(.sendKeyTransition(.tab, pressed: false), via: route)
+
+        XCTAssertEqual(result, .unavailable("The original remote target registration is no longer available."))
+        XCTAssertEqual(first.performedIntents, [.sendKeyTransition(.tab, pressed: true)])
+        XCTAssertTrue(replacement.performedIntents.isEmpty)
+        XCTAssertEqual(router.lastDecision, .originalRegistrationUnavailable(targetID: first.remoteTargetID, intent: .sendKeyTransition(.tab, pressed: false)))
+    }
+
     func testUnsupportedAndUnavailableResultsRemainDeterministic() async {
         let router = RemoteIntentRouter()
         let target = FakeRemoteIntentTarget(

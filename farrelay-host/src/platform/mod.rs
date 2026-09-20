@@ -16,6 +16,8 @@ pub use windows::SystemProvider;
 
 use crate::voiceover::VoiceOverProvider;
 
+use crate::recovery::NvdaRecoveryProvider;
+
 #[cfg(target_os = "macos")]
 use crate::exec::StdCommandRunner;
 #[cfg(not(target_os = "macos"))]
@@ -34,4 +36,14 @@ pub fn voiceover_host() -> impl VoiceOverProvider {
 #[cfg(not(target_os = "macos"))]
 pub fn voiceover_host() -> impl VoiceOverProvider {
     UnsupportedVoiceOverProvider
+}
+
+#[cfg(target_os = "windows")]
+pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
+    windows::nvda_recovery_host()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
+    crate::recovery::UnsupportedNvdaRecoveryProvider
 }

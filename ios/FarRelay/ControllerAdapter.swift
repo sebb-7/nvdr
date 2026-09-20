@@ -30,7 +30,7 @@ final class DualSenseControllerAdapter {
         let input: ControllerInput
         let eventID: Int
         let action: KeyboardAction
-        let targetID: RemoteTargetID
+        let route: RemoteIntentRoute
     }
 
     private var activeActions: [ControllerInput: ActiveAction] = [:]
@@ -197,11 +197,11 @@ final class DualSenseControllerAdapter {
         switch action {
         case .keyboard(let keyboard):
             diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: matched Keyboard primary key \(keyboard.key.label); modifiers \(keyboard.modifiers.map(\.label).sorted().joined(separator: ", ").ifEmpty("none")); profile \(mappings.activeProfile.id.uuidString); schema \(mappings.activeProfile.schemaVersion)")
-            guard let targetID = router.activeTargetID else {
+            guard let targetID = router.activeTargetID, let route = router.routeLease(for: targetID) else {
                 diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Capability routing: no active target; no fallback")
                 return false
             }
-            let active = ActiveAction(input: input, eventID: eventID, action: keyboard, targetID: targetID)
+            let active = ActiveAction(input: input, eventID: eventID, action: keyboard, route: route)
             activeActions[input] = active
             route(active, transition: .pressed)
             startRepeatLoopIfNeeded()
@@ -403,7 +403,7 @@ final class DualSenseControllerAdapter {
             pressed: pressed,
             stage: "RemoteIntent created: \(stage) keyboard virtual key \(action.key.virtualKey)"
         )
-        guard let target = router.target(for: active.targetID) else {
+        guard let target = router.target(for: active.route) else {
             diagnostics.observeController(eventID: active.eventID, input: active.input, pressed: pressed, stage: "Capability routing: original target unavailable; no fallback")
             return
         }
@@ -412,8 +412,8 @@ final class DualSenseControllerAdapter {
             return
         }
         diagnostics.observeController(eventID: active.eventID, input: active.input, pressed: pressed, stage: "Capability routing: supported; target \(target.displayName); executor \(target.kind.rawValue)")
-        Task { @MainActor [router, diagnostics, targetID = active.targetID, input = active.input, eventID = active.eventID] in
-            let result = await router.route(intent, to: targetID)
+        Task { @MainActor [router, diagnostics, route = active.route, input = active.input, eventID = active.eventID] in
+            let result = await router.route(intent, via: route)
             let completion: String = switch result {
             case .performed:
                 "Transport: queued; host receipt/execution: unconfirmed by the existing IPC protocol"

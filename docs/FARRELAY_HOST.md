@@ -23,7 +23,7 @@ app is stopped or the endpoint is stale, the proxy fails closed. The native app
 continues to own permission checks, controller leases, held-key release, and
 CGEvent injection.
 
-The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
+The v1 host always supports `host.info`, `process.list`, and `process.info`. On macOS it also advertises VoiceOver operations; on Windows it advertises only the fixed NVDA recovery operations documented below. It has no arbitrary shell execution, arbitrary AppleScript execution, command runner, daemon installation, or service lifecycle API. It remains separate from the existing NVDA Remote relay/client responsibilities.
 
 ```text
 FarRelay iPhone
@@ -52,6 +52,8 @@ Protocol version remains **1**. Optional operations do not bump the version.
 | `voiceover.move` | macOS | Strict direction enum: `left`, `right`, `up`, `down`, `into`, `out`. |
 | `voiceover.press` | macOS | Activate the current VoiceOver item through the scripting bridge. |
 | `voiceover.state` | macOS | Optional `last_spoken_phrase`, `voiceover_cursor_text`, `keyboard_cursor_text`. |
+| `recovery.nvda.status` | Windows | Read-only `nvda_running` and `recovery_task_ready`. It is out of band from RemoteIntent selection. |
+| `recovery.nvda.restart` | Windows | Starts only the pre-provisioned `FarRelay Recover NVDA` scheduled task and returns `requested` / `task_started`; it does not claim NVDA is running. |
 
 macOS capability advertisement means: **this host implementation supports these operations**. Runtime VoiceOver readiness belongs in `voiceover.status` and operation results.
 
@@ -60,5 +62,15 @@ Unknown `voiceover.move` directions return `invalid_parameters`. On Windows/Linu
 AppleScript is executed only as fixed `/usr/bin/osascript -e` templates. Request parameters never become AppleScript source. There is no `perform command "<anything>"` API in this phase.
 
 AXUIElement, CGEvent injection, RemoteIntent mapping, and the iPhone Remote Control UI are deferred.
+
+## Windows NVDA recovery setup
+
+Before travel, while signed in to the intended interactive Windows account, run `farrelay-host/scripts/Install-FarRelayNvdaRecoveryTask.ps1` locally. The idempotent script registers exactly one task, **FarRelay Recover NVDA**, which launches the standard installed path `C:\Program Files\NVDA\nvda.exe` only when that user is logged on. It does not store a password, change security policy, or accept a remote executable, task, command line, PowerShell source, or shell source.
+
+`recovery.nvda.restart` first verifies that exact task exists, then requests it. A missing task returns `recovery_setup_required`; task acceptance is not evidence that NVDA has started. Use the later read-only status call to observe the process. This is intentionally independent of the active NVDA RemoteIntent target, because recovery remains useful when NVDA is unavailable.
+
+## Architecture boundaries
+
+`RemoteIntent` is FarRelay's **command plane**. Screen-reader speech/output is the **feedback plane**: NVDA and VoiceOver remain responsible for normal output, including Mac `speech.utterance` / `speech.cancel` generation and sequence handling. `farrelay-host` status and fixed recovery are the **inspection and recovery plane**. FarRelay deliberately does not mirror a complete NVDA or VoiceOver accessibility tree for normal remote operation.
 
 Run it through SSH with `ssh target farrelay-host`. The existing relay bridge continues to use `ssh target farrelay --ipc`; these are separate paths and the structured host protocol has not replaced the relay protocol.

@@ -89,6 +89,10 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
         }
 
         switch intent {
+        case .nextItem:
+            return await send(defaultControlID: "terminal.tab", using: presentation)
+        case .previousItem:
+            return await send(defaultControlID: "terminal.shift-tab", using: presentation)
         case .terminalInterrupt:
             return await send(defaultControlID: "terminal.interrupt", using: presentation)
         case .terminalEOF:
@@ -101,7 +105,7 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
             guard let controlID = terminalControlID(for: key) else { return .unsupported }
             return await send(defaultControlID: controlID, using: presentation)
         case .reviewPrevious, .reviewNext, .returnToLive,
-             .nextItem, .previousItem,
+             .accessibilityNext, .accessibilityPrevious, .accessibilityActivate,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
              .sendChord, .sendKeyTransition, .sendChordTransition,
              .repeatKey, .repeatChord, .macRemote:
@@ -145,6 +149,8 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
     let remoteTargetID: RemoteTargetID
     let capabilities: Set<RemoteCapability> = [
         .genericNavigation,
+        .accessibilityNavigation,
+        .applicationSwitching,
         .applicationNavigation,
         .rawKeyInput,
         .rawChordInput
@@ -195,6 +201,15 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
             emitKey(VK.return)
         case .cancel:
             emitKey(VK.escape)
+        case .accessibilityNext:
+            // Until the bridge grows NVDA-native semantic operations, use the
+            // established focus traversal shim rather than guessing object
+            // navigation and changing proven controller behavior.
+            emitKey(VK.tab)
+        case .accessibilityPrevious:
+            emitChord(modifiers: [.shift], key: VK.tab)
+        case .accessibilityActivate:
+            emitKey(VK.return)
         case .nextApplication:
             emitChord(modifiers: [.alt], key: VK.tab)
         case .previousApplication:
@@ -332,6 +347,7 @@ protocol MacRemoteIntentControlling: AnyObject {
     var activeProfile: HostProfile? { get }
     var remoteIntentConnectionState: HostTarget.ConnectionState { get }
 
+    /// Lease-owning implementation detail; input sources never call this.
     func performMacRemoteAction(_ action: MacRemoteAction) async -> RemoteIntentResult
 }
 
@@ -350,7 +366,7 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
     }
 
     private let id: RemoteTargetID
-    private let capabilities: Set<RemoteCapability> = [.macRemoteControl]
+    private let capabilities: Set<RemoteCapability> = [.accessibilityNavigation, .applicationSwitching, .macRemoteControl]
 
     var target: HostTarget {
         let profile = controller.activeProfile
@@ -368,7 +384,15 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
         guard capabilities.contains(intent.requiredCapability) else { return .unsupported }
-        guard case .macRemote(let action) = intent else { return .unsupported }
+        let action: MacRemoteAction
+        switch intent {
+        case .accessibilityNext: action = .nextItem
+        case .accessibilityPrevious: action = .previousItem
+        case .accessibilityActivate: action = .activate
+        case .nextApplication: action = .nextApplication
+        case .macRemote(let legacyAction): action = legacyAction
+        default: return .unsupported
+        }
         return await controller.performMacRemoteAction(action)
     }
 }

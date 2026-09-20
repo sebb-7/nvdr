@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::{Command, Stdio};
 
 /// A captured program invocation. Callers must pass a fixed program path and
@@ -24,10 +24,10 @@ pub trait CommandRunner {
 
 /// Direct `std::process::Command` execution. stdin is null so child processes
 /// cannot consume `farrelay-host` protocol input.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub struct StdCommandRunner;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl CommandRunner for StdCommandRunner {
     fn run(&self, invocation: &CommandInvocation) -> Result<CommandOutput, String> {
         let output = Command::new(&invocation.program)

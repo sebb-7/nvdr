@@ -7,6 +7,7 @@ const VOICEOVER_OPERATIONS: &[&str] = &[
     "voiceover.press",
     "voiceover.state",
 ];
+const WINDOWS_RECOVERY_OPERATIONS: &[&str] = &["recovery.nvda.status", "recovery.nvda.restart"];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Capabilities {
@@ -26,6 +27,13 @@ impl Capabilities {
             BASE_OPERATIONS.iter().map(|op| (*op).to_string()).collect();
         if os == "macos" {
             operations.extend(VOICEOVER_OPERATIONS.iter().map(|op| (*op).to_string()));
+        }
+        if os == "windows" {
+            operations.extend(
+                WINDOWS_RECOVERY_OPERATIONS
+                    .iter()
+                    .map(|op| (*op).to_string()),
+            );
         }
         Self {
             protocol_version: 1,
@@ -72,14 +80,30 @@ mod tests {
     fn linux_and_windows_capabilities_exclude_voiceover_operations() {
         for os in ["linux", "windows"] {
             let caps = Capabilities::for_os(os);
-            assert_eq!(
-                caps.operations,
-                ["host.info", "process.list", "process.info"]
-            );
+            assert!(caps.operations.starts_with(&[
+                "host.info".into(),
+                "process.list".into(),
+                "process.info".into()
+            ]));
             assert!(caps
                 .operations
                 .iter()
                 .all(|operation| !operation.starts_with("voiceover.")));
+        }
+    }
+
+    #[test]
+    fn only_windows_advertises_fixed_nvda_recovery() {
+        let windows = Capabilities::for_os("windows");
+        assert!(windows.operations.ends_with(&[
+            "recovery.nvda.status".into(),
+            "recovery.nvda.restart".into()
+        ]));
+        for os in ["linux", "macos"] {
+            assert!(Capabilities::for_os(os)
+                .operations
+                .iter()
+                .all(|op| !op.starts_with("recovery.nvda")));
         }
     }
 }

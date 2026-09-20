@@ -242,6 +242,27 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertEqual(state, voiceOverStateResult())
     }
 
+    func testEncodesTypedNvdaRecoveryWithoutCallerControlledParameters() async throws {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+
+        let statusTask = Task { try await client.nvdaRecoveryStatus() }
+        let statusRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(statusRequest.operation, "recovery.nvda.status")
+        XCTAssertNil(statusRequest.task)
+        XCTAssertNil(statusRequest.command)
+        transport.sendSuccess(requestID: statusRequest.requestID, result: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true))
+        XCTAssertEqual(try await statusTask.value, NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true))
+
+        let restartTask = Task { try await client.restartNvda() }
+        let restartRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(restartRequest.operation, "recovery.nvda.restart")
+        XCTAssertNil(restartRequest.task)
+        XCTAssertNil(restartRequest.command)
+        transport.sendSuccess(requestID: restartRequest.requestID, result: NvdaRestartResult(requested: true, taskStarted: true))
+        XCTAssertEqual(try await restartTask.value, NvdaRestartResult(requested: true, taskStarted: true))
+    }
+
     func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
         let transport = FakeHostTransport()
         let client = FarRelayHostClient(transport: transport)
@@ -517,6 +538,8 @@ private struct WireParameters: Decodable {
     let pid: UInt32?
     let direction: String?
     let script: String?
+    let task: String?
+    let command: String?
 }
 
 private struct WireResponse<Result: Encodable>: Encodable {

@@ -32,10 +32,10 @@ struct MacRemoteFeatureView: View {
             }
 
             Section("Test keyboard commands") {
-                Button("VoiceOver Right") { route(.macRemote(.nextItem)) }
-                Button("VoiceOver Left") { route(.macRemote(.previousItem)) }
-                Button("VoiceOver Activate") { route(.macRemote(.activate)) }
-                Button("Command-Tab") { route(.macRemote(.nextApplication)) }
+                Button("VoiceOver Right") { route(.accessibilityNext) }
+                Button("VoiceOver Left") { route(.accessibilityPrevious) }
+                Button("VoiceOver Activate") { route(.accessibilityActivate) }
+                Button("Command-Tab") { route(.nextApplication) }
                 Text("These semantic actions route through the selected Mac target and its controller lease. Hardware-keyboard forwarding is the next validation target; do not treat this UI test as proof of physical keyboard behavior.")
                     .foregroundStyle(.secondary)
             }

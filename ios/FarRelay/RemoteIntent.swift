@@ -2,10 +2,18 @@ import Foundation
 
 /// Input-source-independent commands for an explicitly selected remote target.
 enum RemoteIntent: Equatable, Sendable {
+    /// Legacy focus traversal. On NVDA this deliberately remains Tab/Shift-Tab
+    /// so existing controller behavior is not silently redefined.
     case nextItem
     case previousItem
     case activate
     case cancel
+
+    /// Screen-reader semantic navigation. These are deliberately distinct
+    /// from focus traversal above: targets choose their own safe translation.
+    case accessibilityNext
+    case accessibilityPrevious
+    case accessibilityActivate
 
     case nextApplication
     case previousApplication
@@ -30,13 +38,21 @@ enum RemoteIntent: Equatable, Sendable {
     /// It deliberately never changes held-key ownership.
     case repeatKey(RemoteKey)
     case repeatChord(RemoteChord)
+    /// Transitional compatibility for the original Mac-only foundation.
+    /// Input sources must use the platform-neutral accessibility and
+    /// application intents instead. This remains until old callers can be
+    /// removed without bypassing MacRemoteSession's lease protections.
     case macRemote(MacRemoteAction)
 
     var requiredCapability: RemoteCapability {
         switch self {
         case .nextItem, .previousItem, .activate, .cancel:
             .genericNavigation
-        case .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart:
+        case .accessibilityNext, .accessibilityPrevious, .accessibilityActivate:
+            .accessibilityNavigation
+        case .nextApplication:
+            .applicationSwitching
+        case .previousApplication, .closeWindow, .showDesktop, .openStart:
             .applicationNavigation
         case .reviewPrevious, .reviewNext, .returnToLive:
             .terminalReview
@@ -155,6 +171,8 @@ struct RemoteChord: Equatable, Sendable {
 
 enum RemoteCapability: Hashable, Sendable {
     case genericNavigation
+    case accessibilityNavigation
+    case applicationSwitching
     case applicationNavigation
     case terminalReview
     case terminalControl
