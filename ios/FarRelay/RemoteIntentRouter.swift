@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 /// Selects exactly one semantic target. It never falls through to another
