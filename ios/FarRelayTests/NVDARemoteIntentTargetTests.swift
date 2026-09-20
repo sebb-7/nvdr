@@ -86,6 +86,15 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
+    func testAccessibilityIntentUsesDocumentedFocusShimWithoutRawTextFallback() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+
+        let result = await target.perform(.accessibilityActivate)
+        XCTAssertEqual(result, .performed)
+        XCTAssertEqual(sink.transitions, [.init(VK.return, true), .init(VK.return, false)])
+    }
+
     func testStatefulChordBalancesModifierAndKeyOnRelease() async {
         let sink = FakeWindowsKeySink()
         let target = NVDARemoteIntentTarget(keySink: sink)
@@ -138,6 +147,17 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         _ = await target.perform(.sendKeyTransition(key, pressed: true))
 
         XCTAssertEqual(sink.transitions, [.init(VK.tab, true), .init(VK.tab, true)])
+    }
+
+    func testOldSessionReleaseIsDiscardedInsteadOfTouchingNewChannel() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+
+        _ = await target.perform(.sendKeyTransition(.tab, pressed: true))
+        sink.inputSessionID = UUID()
+        _ = await target.perform(.sendKeyTransition(.tab, pressed: false))
+
+        XCTAssertEqual(sink.transitions, [.init(VK.tab, true)])
     }
 }
 

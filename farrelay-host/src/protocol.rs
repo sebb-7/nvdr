@@ -2,6 +2,7 @@ use crate::{
     capabilities::Capabilities,
     host::HostProvider,
     process::{ProcessError, ProcessProvider},
+    recovery::{NvdaRecoveryError, NvdaRecoveryProvider},
     voiceover::{VoiceOverError, VoiceOverMoveDirection, VoiceOverProvider},
 };
 use serde::{Deserialize, Serialize};
@@ -73,17 +74,19 @@ impl Response {
     }
 }
 
-pub fn dispatch<H, P, V>(
+pub fn dispatch<H, P, V, R>(
     request: Request,
     host: &H,
     processes: &P,
     voiceover: &V,
+    recovery: &R,
     capabilities: Capabilities,
 ) -> Response
 where
     H: HostProvider,
     P: ProcessProvider,
     V: VoiceOverProvider,
+    R: NvdaRecoveryProvider,
 {
     let request_id = request.request_id.clone();
     let version = match request.version {
@@ -148,10 +151,36 @@ where
         },
         "voiceover.press" => voiceover_result(request_id, voiceover.press()),
         "voiceover.state" => voiceover_result(request_id, voiceover.state()),
+        "recovery.nvda.status" => match parse_empty_params(request.params) {
+            Ok(()) => recovery_result(request_id, recovery.status()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
+        "recovery.nvda.restart" => match parse_empty_params(request.params) {
+            Ok(()) => recovery_result(request_id, recovery.restart()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
         _ => Response::error(ErrorResponse::new(
             request_id,
             "unsupported_operation",
             format!("unsupported operation: {operation}"),
+        )),
+    }
+}
+
+fn recovery_result<T: Serialize>(
+    request_id: Option<String>,
+    result: Result<T, NvdaRecoveryError>,
+) -> Response {
+    match result {
+        Ok(value) => Response::success(request_id, value),
+        Err(error) => Response::error(ErrorResponse::new(
+            request_id,
+            error.code(),
+            error.message(),
         )),
     }
 }
@@ -189,12 +218,24 @@ fn parse_direction(params: Option<Value>) -> Result<VoiceOverMoveDirection, Stri
         .ok_or_else(|| "params.direction must be left, right, up, down, into, or out".into())
 }
 
+fn parse_empty_params(params: Option<Value>) -> Result<(), String> {
+    match params {
+        Some(Value::Object(values)) if values.is_empty() => Ok(()),
+        Some(Value::Object(_)) => Err("recovery operations do not accept parameters".into()),
+        Some(_) => Err("params must be an empty object".into()),
+        None => Err("missing params".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         host::HostInfo,
         process::{ProcessInfo, ProcessStatus},
+        recovery::{
+            NvdaRecoveryError, NvdaRecoveryProvider, NvdaRecoveryStatus, NvdaRestartResult,
+        },
         voiceover::{
             UnsupportedVoiceOverProvider, VoiceOverMoveResult, VoiceOverPressResult,
             VoiceOverState, VoiceOverStatus,
@@ -290,7 +331,23 @@ mod tests {
     }
 
     fn call(json: &str, voiceover: &impl VoiceOverProvider, caps: Capabilities) -> Response {
-        dispatch(req(json), &Fake, &Fake, voiceover, caps)
+        dispatch(req(json), &Fake, &Fake, voiceover, &FakeRecovery, caps)
+    }
+
+    struct FakeRecovery;
+    impl NvdaRecoveryProvider for FakeRecovery {
+        fn status(&self) -> Result<NvdaRecoveryStatus, NvdaRecoveryError> {
+            Ok(NvdaRecoveryStatus {
+                nvda_running: false,
+                recovery_task_ready: true,
+            })
+        }
+        fn restart(&self) -> Result<NvdaRestartResult, NvdaRecoveryError> {
+            Ok(NvdaRestartResult {
+                requested: true,
+                task_started: true,
+            })
+        }
     }
 
     #[test]
@@ -500,6 +557,25 @@ mod tests {
         );
         assert_eq!(r.request_id.as_deref(), Some("linux-vo"));
         assert_eq!(r.error.unwrap().code, "unsupported_platform");
+    }
+
+    #[test]
+    fn recovery_rejects_parameters_and_keeps_protocol_output_structured() {
+        let status = call(
+            r#"{"version":1,"request_id":"recovery-status","operation":"recovery.nvda.status","params":{"task":"evil","command":"evil"}}"#,
+            &UnsupportedVoiceOverProvider,
+            Capabilities::for_os("windows"),
+        );
+        assert!(!status.ok);
+        assert_eq!(status.error.unwrap().code, "invalid_parameters");
+
+        let restart = call(
+            r#"{"version":1,"request_id":"recovery-restart","operation":"recovery.nvda.restart","params":{}}"#,
+            &UnsupportedVoiceOverProvider,
+            Capabilities::for_os("windows"),
+        );
+        assert!(restart.ok);
+        assert_eq!(restart.result.unwrap()["task_started"], true);
     }
 
     #[allow(dead_code)]

@@ -73,6 +73,30 @@ struct HostProcessInfo: Codable, Sendable, Equatable {
     let status: HostProcessStatus?
 }
 
+/// Out-of-band Windows recovery status. It is intentionally independent of
+/// the currently selected RemoteIntent target because NVDA may be unavailable.
+struct NvdaRecoveryStatus: Codable, Sendable, Equatable {
+    let nvdaRunning: Bool
+    let recoveryTaskReady: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case nvdaRunning = "nvda_running"
+        case recoveryTaskReady = "recovery_task_ready"
+    }
+}
+
+/// Accepted task start, not a claim that NVDA is now running. Call status to
+/// observe recovery after the fixed Windows task has had time to start.
+struct NvdaRestartResult: Codable, Sendable, Equatable {
+    let requested: Bool
+    let taskStarted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case requested
+        case taskStarted = "task_started"
+    }
+}
+
 /// Strict VoiceOver cursor movement values accepted by `voiceover.move`.
 enum VoiceOverMoveDirection: String, Codable, Sendable, Equatable {
     case left
@@ -129,6 +153,8 @@ protocol HostClientProtocol: Sendable {
     func hostInfo() async throws -> HostInfo
     func processes() async throws -> [HostProcessInfo]
     func processInfo(pid: UInt32) async throws -> HostProcessInfo
+    func nvdaRecoveryStatus() async throws -> NvdaRecoveryStatus
+    func restartNvda() async throws -> NvdaRestartResult
     func voiceOverStatus() async throws -> VoiceOverStatus
     func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult
     func voiceOverPress() async throws -> VoiceOverPressResult
@@ -248,6 +274,14 @@ actor FarRelayHostClient: HostClientProtocol {
 
     func processInfo(pid: UInt32) async throws -> HostProcessInfo {
         try await request(operation: "process.info", parameters: HostProcessInfoParameters(pid: pid))
+    }
+
+    func nvdaRecoveryStatus() async throws -> NvdaRecoveryStatus {
+        try await request(operation: "recovery.nvda.status", parameters: HostEmptyParameters())
+    }
+
+    func restartNvda() async throws -> NvdaRestartResult {
+        try await request(operation: "recovery.nvda.restart", parameters: HostEmptyParameters())
     }
 
     func voiceOverStatus() async throws -> VoiceOverStatus {

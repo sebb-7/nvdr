@@ -1,10 +1,11 @@
 mod capabilities;
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 mod exec;
 mod host;
 mod platform;
 mod process;
 mod protocol;
+mod recovery;
 mod voiceover;
 
 use std::io::{self, BufRead, Write};
@@ -17,6 +18,7 @@ use host::HostProvider;
 use platform::SystemProvider;
 use process::ProcessProvider;
 use protocol::{dispatch, ErrorResponse, Request, Response};
+use recovery::NvdaRecoveryProvider;
 use voiceover::VoiceOverProvider;
 
 fn main() {
@@ -34,12 +36,13 @@ fn main() {
 
     let provider = SystemProvider::new();
     let voiceover = platform::voiceover_host();
+    let recovery = platform::nvda_recovery_host();
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
     for line in stdin.lock().lines() {
         let response = match line {
-            Ok(line) => handle_line(&line, &provider, &voiceover),
+            Ok(line) => handle_line(&line, &provider, &voiceover, &recovery),
             Err(error) => Response::error(ErrorResponse::new(
                 None,
                 "internal_error",
@@ -57,13 +60,21 @@ fn main() {
     }
 }
 
-fn handle_line<P, V>(line: &str, provider: &P, voiceover: &V) -> Response
+fn handle_line<P, V, R>(line: &str, provider: &P, voiceover: &V, recovery: &R) -> Response
 where
     P: HostProvider + ProcessProvider,
     V: VoiceOverProvider,
+    R: NvdaRecoveryProvider,
 {
     match serde_json::from_str::<Request>(line) {
-        Ok(request) => dispatch(request, provider, provider, voiceover, Capabilities::v1()),
+        Ok(request) => dispatch(
+            request,
+            provider,
+            provider,
+            voiceover,
+            recovery,
+            Capabilities::v1(),
+        ),
         Err(error) => Response::error(ErrorResponse::new(
             None,
             "malformed_json",
@@ -79,6 +90,7 @@ mod tests {
 
     use host::HostInfo;
     use process::{ProcessInfo, ProcessStatus};
+    use recovery::UnsupportedNvdaRecoveryProvider;
     use voiceover::UnsupportedVoiceOverProvider;
 
     #[derive(Default)]
@@ -123,7 +135,12 @@ mod tests {
         let input = "{\"version\":1,\"request_id\":\"a\",\"operation\":\"capabilities\"}\nnot json\n{\"version\":1,\"request_id\":\"b\",\"operation\":\"process.info\",\"params\":{\"pid\":7}}\n";
         let mut output = Vec::new();
         for line in Cursor::new(input).lines() {
-            let response = handle_line(&line.unwrap(), &provider, &UnsupportedVoiceOverProvider);
+            let response = handle_line(
+                &line.unwrap(),
+                &provider,
+                &UnsupportedVoiceOverProvider,
+                &UnsupportedNvdaRecoveryProvider,
+            );
             serde_json::to_writer(&mut output, &response).unwrap();
             output.push(b'\n');
         }
@@ -142,7 +159,12 @@ mod tests {
     fn voiceover_errors_stay_inside_ndjson_and_omit_applescript_source() {
         let provider = FakeProvider;
         let line = r#"{"version":1,"request_id":"vo-1","operation":"voiceover.move","params":{"direction":"right"}}"#;
-        let response = handle_line(line, &provider, &UnsupportedVoiceOverProvider);
+        let response = handle_line(
+            line,
+            &provider,
+            &UnsupportedVoiceOverProvider,
+            &UnsupportedNvdaRecoveryProvider,
+        );
         let mut output = Vec::new();
         serde_json::to_writer(&mut output, &response).unwrap();
         output.push(b'\n');
