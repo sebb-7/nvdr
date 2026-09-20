@@ -133,6 +133,68 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(migrated.schemaVersion, ControllerProfile.currentSchemaVersion)
     }
 
+    func testRecommendedLayoutFillsOnlyUnassignedMappingsAndPreservesR1LayerChoice() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        settings.setAction(.layer(.init()), for: .rightShoulder)
+        settings.setAction(.keyboard(.init(key: .f8)), for: .square)
+        settings.setAction(.keyboard(.init(key: .f9)), for: .dpadUp, layerID: ControllerLayerDefinition.extendedID)
+
+        let count = settings.fillUnassignedWithRecommendedLayout()
+
+        XCTAssertGreaterThan(count, 0)
+        XCTAssertEqual(settings.draftProfile.action(for: .rightShoulder), .layer(.init()))
+        XCTAssertEqual(settings.draftProfile.action(for: .square), .keyboard(.init(key: .f8)))
+        XCTAssertEqual(
+            settings.draftProfile.action(for: .dpadUp, layerID: ControllerLayerDefinition.extendedID),
+            .keyboard(.init(key: .f9))
+        )
+        XCTAssertEqual(settings.draftProfile.action(for: .create), .quickNavigation(.toggle))
+        XCTAssertEqual(settings.draftProfile.action(for: .touchpadPress), .farRelay(.textMode))
+        XCTAssertEqual(
+            settings.draftProfile.action(for: .cross, layerID: ControllerLayerDefinition.extendedID),
+            .keyboard(.init(key: .w, modifiers: [.control]))
+        )
+    }
+
+    func testRecommendedLayoutPrefersR1ForLayerWhenNoLayerControlExists() {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "farrelay.controllerProfile.v1")
+        var profile = ControllerProfile()
+        profile.layers = [.init(
+            id: ControllerLayerDefinition.extendedID,
+            name: "Extended",
+            bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+        )]
+        store.save(profile)
+
+        let settings = ControllerMappingSettings(defaults: defaults)
+        settings.fillUnassignedWithRecommendedLayout()
+
+        XCTAssertEqual(settings.draftProfile.action(for: .rightShoulder), .layer(.init()))
+        XCTAssertNil(settings.draftProfile.action(for: .options))
+    }
+
+    func testRecommendedLayoutFallsBackToOptionsWhenR1IsAlreadyOccupied() {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "farrelay.controllerProfile.v1")
+        var profile = ControllerProfile()
+        profile.setAction(.keyboard(.init(key: .f7)), for: .rightShoulder)
+        profile.layers = [.init(
+            id: ControllerLayerDefinition.extendedID,
+            name: "Extended",
+            bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+        )]
+        store.save(profile)
+
+        let settings = ControllerMappingSettings(defaults: defaults)
+        settings.fillUnassignedWithRecommendedLayout()
+
+        XCTAssertEqual(settings.draftProfile.action(for: .rightShoulder), .keyboard(.init(key: .f7)))
+        XCTAssertEqual(settings.draftProfile.action(for: .options), .layer(.init()))
+    }
+
     func testDuplicateLayerIdentifiersFailClosed() throws {
         let defaults = makeDefaults()
         let store = ControllerProfileStore(defaults: defaults, key: "profile")

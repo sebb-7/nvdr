@@ -182,10 +182,9 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         profile.setAction(.keyboard(.init(key: .pageDown)), for: .rightStickDown)
         profile.setAction(.keyboard(.init(key: .home)), for: .rightStickLeft)
         profile.setAction(.keyboard(.init(key: .end)), for: .rightStickRight)
-        profile.setAction(.keyboard(.init(key: .w, modifiers: [.control])), for: .rightShoulder)
+        profile.setAction(.layer(.init()), for: .rightShoulder)
         profile.setAction(.keyboard(.init(key: .f4, modifiers: [.alt])), for: .rightTrigger)
         profile.setAction(.keyboard(.init(key: .backspace)), for: .rightStickPress)
-        profile.setAction(.layer(.init()), for: .options)
         profile.setAction(.quickNavigation(.toggle), for: .create)
         profile.setAction(.farRelay(.textMode), for: .touchpadPress)
         var extended = ControllerLayerDefinition(
@@ -221,6 +220,46 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         }
         return normalized
     }
+}
+
+enum ControllerRecommendedLayout {
+    /// Base bindings deliberately leave several controls free for personal
+    /// shortcuts. The layer control is assigned separately so an existing user
+    /// choice (for example R1) is never overwritten.
+    static let base: [ControllerInput: ControllerAction] = [
+        .dpadUp: .keyboard(.init(key: .up)),
+        .dpadDown: .keyboard(.init(key: .down)),
+        .dpadLeft: .keyboard(.init(key: .left)),
+        .dpadRight: .keyboard(.init(key: .right)),
+        .cross: .keyboard(.init(key: .enter)),
+        .circle: .keyboard(.init(key: .escape)),
+        .leftShoulder: .keyboard(.init(key: .tab)),
+        .leftTrigger: .keyboard(.init(key: .tab, modifiers: [.shift])),
+        .square: .keyboard(.init(key: .space, modifiers: [.nvda])),
+        .triangle: .keyboard(.init(key: .n, modifiers: [.nvda])),
+        .rightTrigger: .keyboard(.init(key: .f4, modifiers: [.alt])),
+        .rightStickUp: .keyboard(.init(key: .pageUp)),
+        .rightStickDown: .keyboard(.init(key: .pageDown)),
+        .rightStickLeft: .keyboard(.init(key: .home)),
+        .rightStickRight: .keyboard(.init(key: .end)),
+        .rightStickPress: .keyboard(.init(key: .backspace)),
+        .create: .quickNavigation(.toggle),
+        .touchpadPress: .farRelay(.textMode)
+    ]
+
+    static let extended: [ControllerInput: ControllerAction] = [
+        .dpadUp: .keyboard(.init(key: .pageUp)),
+        .dpadDown: .keyboard(.init(key: .pageDown)),
+        .dpadLeft: .keyboard(.init(key: .home)),
+        .dpadRight: .keyboard(.init(key: .end)),
+        .cross: .keyboard(.init(key: .w, modifiers: [.control])),
+        .circle: .keyboard(.init(key: .f4, modifiers: [.alt])),
+        .square: .keyboard(.init(key: .a, modifiers: [.control])),
+        .triangle: .keyboard(.init(key: .delete)),
+        .leftShoulder: .keyboard(.init(key: .tab, modifiers: [.alt])),
+        .leftTrigger: .keyboard(.init(key: .tab, modifiers: [.shift, .alt])),
+        .rightStickPress: .keyboard(.init(key: .backspace))
+    ]
 }
 
 enum ControllerProfileLoadResult: Equatable { case profile(ControllerProfile), uninitialized, malformedOrUnsupported }
@@ -295,6 +334,53 @@ final class ControllerMappingSettings {
         }
         guard let index = draftProfile.layers.firstIndex(where: { $0.id == layerID }) else { return }
         draftProfile.layers[index].setAction(action, for: input)
+    }
+
+    /// Fills only currently unassigned slots. Existing user choices are never
+    /// replaced. If no layer-control binding exists, R1 is preferred; Options
+    /// is used only as a fallback when R1 is already occupied.
+    @discardableResult
+    func fillUnassignedWithRecommendedLayout() -> Int {
+        var changes = 0
+
+        for (input, action) in ControllerRecommendedLayout.base
+        where draftProfile.action(for: input) == nil {
+            draftProfile.setAction(action, for: input)
+            changes += 1
+        }
+
+        let hasLayerControl = draftProfile.bindings.contains { binding in
+            guard let action = binding.action else { return false }
+            if case .layer = action { return true }
+            return false
+        }
+        if !hasLayerControl {
+            if draftProfile.action(for: .rightShoulder) == nil {
+                draftProfile.setAction(.layer(.init()), for: .rightShoulder)
+                changes += 1
+            } else if draftProfile.action(for: .options) == nil {
+                draftProfile.setAction(.layer(.init()), for: .options)
+                changes += 1
+            }
+        }
+
+        if draftProfile.layers.contains(where: { $0.id == ControllerLayerDefinition.extendedID }) == false {
+            draftProfile.layers.append(.init(
+                id: ControllerLayerDefinition.extendedID,
+                name: "Extended",
+                bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+            ))
+        }
+
+        guard let extendedIndex = draftProfile.layers.firstIndex(where: { $0.id == ControllerLayerDefinition.extendedID }) else {
+            return changes
+        }
+        for (input, action) in ControllerRecommendedLayout.extended
+        where draftProfile.layers[extendedIndex].action(for: input) == nil {
+            draftProfile.layers[extendedIndex].setAction(action, for: input)
+            changes += 1
+        }
+        return changes
     }
 
     func saveDraft() {
