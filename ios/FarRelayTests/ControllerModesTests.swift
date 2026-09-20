@@ -65,6 +65,7 @@ final class ControllerModesTests: XCTestCase {
     func testNewDefaultContainsPracticalBaseAndExtendedBindings() {
         let profile = ControllerProfile.newDefault()
         XCTAssertEqual(profile.action(for: .leftShoulder), .keyboard(.init(key: .tab)))
+        XCTAssertEqual(profile.action(for: .rightShoulder), .keyboard(.init(key: .w, modifiers: [.control])))
         XCTAssertEqual(profile.action(for: .options), .layer(.init()))
         XCTAssertEqual(profile.action(for: .create), .quickNavigation(.toggle))
         XCTAssertEqual(profile.action(for: .touchpadPress), .farRelay(.textMode))

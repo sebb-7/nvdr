@@ -325,6 +325,14 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    /// Native BSI deletion can still call deleteBackward when the local editor
+    /// is empty. In that state there is no local session character to remove,
+    /// so one Backspace is intentionally forwarded to pre-existing remote text.
+    func handleTextModeDeleteBackwardWhenLocalBufferEmpty() {
+        guard isTextModeActive, textModeBuffer.isEmpty else { return }
+        sendTextModeRemoteBackspace()
+    }
+
     private func sendTextModeRemoteBackspace() {
         guard isTextModeActive else { return }
         if textMirrorSession.remoteBackspace() { textModeBuffer = textMirrorSession.text }
