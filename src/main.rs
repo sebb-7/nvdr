@@ -27,9 +27,17 @@ use crate::leader::{Action, Leader};
 use crate::protocol::{Inbound, Outbound, PROTOCOL_VERSION};
 use crate::vk::{extended_for_vk, scan_for_vk};
 
+// Release packaging sets this at compile time so all Windows distribution
+// binaries identify with the same release version; developer builds retain
+// Cargo's package version.
+const DISTRIBUTION_VERSION: &str = match option_env!("FARRELAY_DIST_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser, Debug)]
 #[command(
-    version,
+    version = DISTRIBUTION_VERSION,
     about = "NVDA Remote master client — a terminal/SSH-friendly replacement for the NVDA add-on's master role."
 )]
 struct Args {

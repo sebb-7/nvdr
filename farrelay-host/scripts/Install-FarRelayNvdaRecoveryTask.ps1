@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$AllowMissingNvda
+)
 
 $taskName = 'FarRelay Recover NVDA'
 $candidatePaths = @(
@@ -9,6 +11,10 @@ $candidatePaths = @(
 $nvdaPath = $candidatePaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 
 if (-not $nvdaPath) {
+    if ($AllowMissingNvda) {
+        Write-Warning 'NVDA UIAccess executable was not found; FarRelay was installed but NVDA recovery was not provisioned.'
+        return
+    }
     throw 'NVDA UIAccess executable was not found in the supported installation locations.'
 }
 

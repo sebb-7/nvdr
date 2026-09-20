@@ -24,7 +24,7 @@ impl HostProvider for SystemProvider {
             architecture: std::env::consts::ARCH.into(),
             hostname: System::host_name(),
             implementation: "farrelay-host".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: crate::DISTRIBUTION_VERSION.into(),
         })
     }
 }
