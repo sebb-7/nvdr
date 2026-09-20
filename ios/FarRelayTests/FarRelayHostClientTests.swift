@@ -252,7 +252,8 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertNil(statusRequest.task)
         XCTAssertNil(statusRequest.command)
         transport.sendSuccess(requestID: statusRequest.requestID, result: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true))
-        XCTAssertEqual(try await statusTask.value, NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true))
+        let status = try await statusTask.value
+        XCTAssertEqual(status, NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true))
 
         let restartTask = Task { try await client.restartNvda() }
         let restartRequest = try await nextRequest(from: transport)
@@ -260,7 +261,8 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertNil(restartRequest.task)
         XCTAssertNil(restartRequest.command)
         transport.sendSuccess(requestID: restartRequest.requestID, result: NvdaRestartResult(requested: true, taskStarted: true))
-        XCTAssertEqual(try await restartTask.value, NvdaRestartResult(requested: true, taskStarted: true))
+        let restart = try await restartTask.value
+        XCTAssertEqual(restart, NvdaRestartResult(requested: true, taskStarted: true))
     }
 
     func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
@@ -525,6 +527,8 @@ private struct WireRequest: Decodable {
     var pid: UInt32? { params?.pid }
     var direction: String? { params?.direction }
     var script: String? { params?.script }
+    var task: String? { params?.task }
+    var command: String? { params?.command }
 
     enum CodingKeys: String, CodingKey {
         case version
