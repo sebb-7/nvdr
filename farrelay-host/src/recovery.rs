@@ -1,7 +1,7 @@
 //! Narrow, out-of-band NVDA recovery. This module intentionally has no
 //! request-controlled executable, task name, shell source, or command line.
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 use crate::exec::{CommandInvocation, CommandRunner};
 
 pub const NVDA_RECOVERY_TASK_NAME: &str = "FarRelay Recover NVDA";
@@ -20,25 +20,33 @@ pub struct NvdaRestartResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NvdaRecoveryError {
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    #[cfg(any(test, not(target_os = "windows")))]
     UnsupportedPlatform,
+    #[cfg(target_os = "windows")]
     SetupRequired,
+    #[cfg(target_os = "windows")]
     Failed,
 }
 
 impl NvdaRecoveryError {
     pub fn code(&self) -> &'static str {
         match self {
+            #[cfg(any(test, not(target_os = "windows")))]
             Self::UnsupportedPlatform => "unsupported_platform",
+            #[cfg(target_os = "windows")]
             Self::SetupRequired => "recovery_setup_required",
+            #[cfg(target_os = "windows")]
             Self::Failed => "recovery_failed",
         }
     }
 
     pub fn message(&self) -> &'static str {
         match self {
+            #[cfg(any(test, not(target_os = "windows")))]
             Self::UnsupportedPlatform => "NVDA recovery is not available on this platform",
+            #[cfg(target_os = "windows")]
             Self::SetupRequired => "The fixed FarRelay NVDA recovery task is not installed",
+            #[cfg(target_os = "windows")]
             Self::Failed => "The fixed FarRelay NVDA recovery task could not be started",
         }
     }
@@ -49,9 +57,10 @@ pub trait NvdaRecoveryProvider {
     fn restart(&self) -> Result<NvdaRestartResult, NvdaRecoveryError>;
 }
 
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+#[cfg(any(test, not(target_os = "windows")))]
 pub struct UnsupportedNvdaRecoveryProvider;
 
+#[cfg(any(test, not(target_os = "windows")))]
 impl NvdaRecoveryProvider for UnsupportedNvdaRecoveryProvider {
     fn status(&self) -> Result<NvdaRecoveryStatus, NvdaRecoveryError> {
         Err(NvdaRecoveryError::UnsupportedPlatform)
@@ -62,27 +71,27 @@ impl NvdaRecoveryProvider for UnsupportedNvdaRecoveryProvider {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 pub trait NvdaProcessProbe {
     fn nvda_running(&self) -> bool;
 }
 
 /// Runs only the repository-provisioned fixed scheduled task. This is not a
 /// command runner protocol: both invocations are compile-time constants.
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 pub struct WindowsNvdaRecoveryProvider<R, P> {
     runner: R,
     probe: P,
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 impl<R, P> WindowsNvdaRecoveryProvider<R, P> {
     pub fn new(runner: R, probe: P) -> Self {
         Self { runner, probe }
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 impl<R: CommandRunner, P: NvdaProcessProbe> NvdaRecoveryProvider
     for WindowsNvdaRecoveryProvider<R, P>
 {
@@ -111,7 +120,7 @@ impl<R: CommandRunner, P: NvdaProcessProbe> NvdaRecoveryProvider
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 impl<R: CommandRunner, P: NvdaProcessProbe> WindowsNvdaRecoveryProvider<R, P> {
     fn task_exists(&self) -> bool {
         self.runner
@@ -120,7 +129,7 @@ impl<R: CommandRunner, P: NvdaProcessProbe> WindowsNvdaRecoveryProvider<R, P> {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn query_task_invocation() -> CommandInvocation {
     CommandInvocation {
         program: "schtasks.exe".into(),
@@ -132,7 +141,7 @@ fn query_task_invocation() -> CommandInvocation {
     }
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn run_task_invocation() -> CommandInvocation {
     CommandInvocation {
         program: "schtasks.exe".into(),
@@ -140,7 +149,7 @@ fn run_task_invocation() -> CommandInvocation {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
     use crate::exec::CommandOutput;

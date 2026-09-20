@@ -2,14 +2,20 @@
 param()
 
 $taskName = 'FarRelay Recover NVDA'
-$nvdaPath = 'C:\Program Files\NVDA\nvda.exe'
+$candidatePaths = @(
+    'C:\Program Files\NVDA\nvda_uiAccess.exe',
+    'C:\Program Files (x86)\NVDA\nvda_uiAccess.exe'
+)
+$nvdaPath = $candidatePaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 
-if (-not (Test-Path -LiteralPath $nvdaPath -PathType Leaf)) {
-    throw "NVDA was not found at the required recovery path: $nvdaPath"
+if (-not $nvdaPath) {
+    throw 'NVDA UIAccess executable was not found in the supported installation locations.'
 }
 
 # This task is deliberately fixed and runs only in the current user's
-# interactive session. It stores no password and accepts no remote parameters.
+# interactive session. It starts NVDA's UIAccess executable directly (no
+# pre-kill and no nvda.exe launcher), stores no password, and accepts no
+# remote parameters.
 $action = New-ScheduledTaskAction -Execute $nvdaPath
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable

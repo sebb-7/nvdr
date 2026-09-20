@@ -65,12 +65,16 @@ AXUIElement, CGEvent injection, RemoteIntent mapping, and the iPhone Remote Cont
 
 ## Windows NVDA recovery setup
 
-Before travel, while signed in to the intended interactive Windows account, run `farrelay-host/scripts/Install-FarRelayNvdaRecoveryTask.ps1` locally. The idempotent script registers exactly one task, **FarRelay Recover NVDA**, which launches the standard installed path `C:\Program Files\NVDA\nvda.exe` only when that user is logged on. It does not store a password, change security policy, or accept a remote executable, task, command line, PowerShell source, or shell source.
+Before travel, while signed in to the intended interactive Windows account, run `farrelay-host/scripts/Install-FarRelayNvdaRecoveryTask.ps1` locally. The idempotent script registers exactly one task, **FarRelay Recover NVDA**, which finds and launches NVDA's `nvda_uiAccess.exe` from the standard 64-bit or 32-bit Program Files location only when that user is logged on. It runs with `LogonType Interactive` and `RunLevel Limited`, does not store a password, does not pre-kill NVDA, and does not change security policy or accept a remote executable, task, command line, PowerShell source, or shell source.
 
 `recovery.nvda.restart` first verifies that exact task exists, then requests it. A missing task returns `recovery_setup_required`; task acceptance is not evidence that NVDA has started. Use the later read-only status call to observe the process. This is intentionally independent of the active NVDA RemoteIntent target, because recovery remains useful when NVDA is unavailable.
+
+Keep an independently working authenticated SSH path to the G14: recovery is an on-demand `SSH exec → farrelay-host → fixed Scheduled Task` flow, not a Windows service, daemon, or listener.
 
 ## Architecture boundaries
 
 `RemoteIntent` is FarRelay's **command plane**. Screen-reader speech/output is the **feedback plane**: NVDA and VoiceOver remain responsible for normal output, including Mac `speech.utterance` / `speech.cancel` generation and sequence handling. `farrelay-host` status and fixed recovery are the **inspection and recovery plane**. FarRelay deliberately does not mirror a complete NVDA or VoiceOver accessibility tree for normal remote operation.
+
+The app routes `restartAccessibility` through an explicit host-recovery target for the selected saved computer, not through whichever NVDA or VoiceOver interaction target is active. Windows currently implements that command through the fixed task; macOS and Linux expose the same future-facing target shape but do not advertise a restart capability until a safe native implementation exists.
 
 Run it through SSH with `ssh target farrelay-host`. The existing relay bridge continues to use `ssh target farrelay --ipc`; these are separate paths and the structured host protocol has not replaced the relay protocol.

@@ -106,6 +106,7 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
             return await send(defaultControlID: controlID, using: presentation)
         case .reviewPrevious, .reviewNext, .returnToLive,
              .accessibilityNext, .accessibilityPrevious, .accessibilityActivate,
+             .recovery,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
              .sendChord, .sendKeyTransition, .sendChordTransition,
              .repeatKey, .repeatChord, .macRemote:
@@ -239,7 +240,7 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
             guard let key = windowsVirtualKey(for: chord.key), heldVirtualKeys[key, default: 0] > 0 else { return .unsupported }
             keySink.sendKey(vk: key, pressed: true)
         case .reviewPrevious, .reviewNext, .returnToLive, .terminalInterrupt, .terminalEOF,
-             .macRemote:
+             .macRemote, .recovery:
             return .unsupported
         }
         if case .some(.rejected(let reason)) = keySink.lastInputForwardingResult {
@@ -394,6 +395,52 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
         default: return .unsupported
         }
         return await controller.performMacRemoteAction(action)
+    }
+}
+
+/// Keeps recovery host-scoped and independently selectable from an unavailable
+/// screen-reader interaction target. macOS/Linux are represented by the same
+/// target abstraction but advertise no recovery capability until implemented.
+@MainActor
+protocol HostRecoveryIntentControlling: AnyObject {
+    var recoveryProfile: HostProfile? { get }
+    var recoveryConnectionState: HostTarget.ConnectionState { get }
+    var supportsAccessibilityRecovery: Bool { get }
+    func restartAccessibility() async -> RemoteIntentResult
+}
+
+@MainActor
+final class HostRecoveryIntentTarget: HostTargetExecutor {
+    static func id(for profile: HostProfile) -> RemoteTargetID {
+        RemoteTargetID("host-recovery-\(profile.id.uuidString.lowercased())")
+    }
+
+    private let controller: any HostRecoveryIntentControlling
+    private let id: RemoteTargetID
+
+    init(controller: any HostRecoveryIntentControlling, id: RemoteTargetID) {
+        self.controller = controller
+        self.id = id
+    }
+
+    var target: HostTarget {
+        let profile = controller.recoveryProfile
+        return HostTarget(
+            id: id,
+            displayName: profile.map { "\($0.displayName) recovery" } ?? "Host recovery",
+            profileID: profile?.id,
+            sessionID: nil,
+            platform: profile?.platform ?? .other,
+            kind: .hostRecovery,
+            connectionState: controller.recoveryConnectionState,
+            capabilities: controller.supportsAccessibilityRecovery ? [.hostRecovery] : []
+        )
+    }
+
+    func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
+        guard case .recovery(.restartAccessibility) = intent else { return .unsupported }
+        guard controller.supportsAccessibilityRecovery else { return .unsupported }
+        return await controller.restartAccessibility()
     }
 }
 

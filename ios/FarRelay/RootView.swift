@@ -101,6 +101,7 @@ struct RootView: View {
 private enum RemoteControlDestination: Hashable {
     case nvda(UUID)
     case mac(UUID)
+    case recovery(UUID)
 }
 
 private struct RemoteControlTabView: View {
@@ -132,6 +133,14 @@ private struct RemoteControlTabView: View {
                 Section("Unavailable platforms") {
                     Label("Linux remote control — not available yet", systemImage: "desktopcomputer").foregroundStyle(.secondary)
                 }
+                Section("Recovery") {
+                    ForEach(settings.hostProfiles) { profile in
+                        NavigationLink(value: RemoteControlDestination.recovery(profile.id)) {
+                            Label("Recovery — \(profile.displayName)", systemImage: "stethoscope")
+                        }
+                        .accessibilityHint("Opens host health and accessibility recovery for \(profile.displayName).")
+                    }
+                }
             }
             .navigationTitle("Remote Control")
             .navigationDestination(for: RemoteControlDestination.self) { destination in
@@ -147,6 +156,12 @@ private struct RemoteControlTabView: View {
                         MacRemoteFeatureView(profile: profile)
                     } else {
                         ContentUnavailableView("Computer removed", systemImage: "desktopcomputer", description: Text("This computer is no longer saved on Home."))
+                    }
+                case .recovery(let id):
+                    if let profile = settings.hostProfiles.first(where: { $0.id == id }) {
+                        RecoveryFeatureView(profile: profile)
+                    } else {
+                        ContentUnavailableView("Computer removed", systemImage: "stethoscope", description: Text("This computer is no longer saved on Home."))
                     }
                 }
             }

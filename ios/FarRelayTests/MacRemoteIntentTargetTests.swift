@@ -127,6 +127,7 @@ private final class CrossTargetWindowsSink: RemoteWindowsKeySink {
     private(set) var transitions: [String] = []
 
     func sendKey(vk: UInt16, pressed: Bool) {
-        transitions.append("\(vk) \(pressed ? \"down\" : \"up\")")
+        let state = pressed ? "down" : "up"
+        transitions.append("\(vk) \(state)")
     }
 }
