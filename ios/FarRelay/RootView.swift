@@ -64,7 +64,7 @@ struct RootView: View {
         }
         switch event.currentState {
         case .connected:
-            interactionFeedback.play(.success)
+            interactionFeedback.play(.terminalOpen, haptic: .success)
         case .failed(let reason):
             interactionFeedback.play(.error)
             terminalIssue = RemoteLaunchDiagnostics.terminalFailureIssue(

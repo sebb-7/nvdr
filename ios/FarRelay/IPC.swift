@@ -5,12 +5,15 @@ import Foundation
 ///
 /// We send: `key <vk> <0|1>`, `combo <spec>`, `type <text>`, `release_all`,
 /// `quit`. We receive: `speak <text>`, `cancel`, `state <name>`,
-/// `error <message>`. Anything else on stdout is logged and dropped.
+/// `error <message>`, `tone <hz> <milliseconds> <left> <right>`, and
+/// `wave <basename.wav>`. Anything else on stdout is logged and dropped.
 enum IPCEvent: Sendable, Equatable {
     case speak(String)
     case cancel
     case state(BridgeState)
     case error(String)
+    case tone(RemoteNVDATone)
+    case wave(String)
     case unknown(String)
 }
 
@@ -83,6 +86,13 @@ enum IPCParser {
             return .state(BridgeState(rawValue: rest) ?? .unknown)
         case "error":
             return .error(rest)
+        case "tone":
+            let values = rest.split(separator: " ", omittingEmptySubsequences: true).compactMap { Int($0) }
+            guard values.count == 4, let tone = RemoteNVDATone(frequency: values[0], durationMilliseconds: values[1], leftLevel: values[2], rightLevel: values[3]) else { return .unknown(line) }
+            return .tone(tone)
+        case "wave":
+            guard let filename = SoundResourceResolver.remoteWaveFilename(from: rest) else { return .unknown(line) }
+            return .wave(filename)
         default:
             return .unknown(line)
         }

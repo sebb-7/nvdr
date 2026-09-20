@@ -64,7 +64,22 @@ final class InteractionFeedback {
     func play(_ kind: InteractionFeedbackKind) {
         lastRequest = InteractionFeedbackRequest(kind: kind)
         if settings.soundCuesEnabled {
-            InteractionSoundCue.play(kind)
+            InteractionSoundCue.play(soundIntent(for: kind))
+        }
+    }
+
+    func play(_ intent: InteractionSoundIntent, haptic: InteractionFeedbackKind? = nil) {
+        if let haptic { lastRequest = InteractionFeedbackRequest(kind: haptic) }
+        if settings.soundCuesEnabled { InteractionSoundCue.play(intent) }
+    }
+
+    private func soundIntent(for kind: InteractionFeedbackKind) -> InteractionSoundIntent {
+        switch kind {
+        case .selectionAccepted: .action
+        case .success: .success
+        case .warning: .warning
+        case .error: .error
+        case .copied: .copied
         }
     }
 }

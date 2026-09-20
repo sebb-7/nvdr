@@ -70,6 +70,7 @@ final class BridgeClient {
     private var driverGeneration = 0
     private(set) var activeProfileID: UUID?
     private let speech: SpeechOutput
+    private var settings: AppSettings?
 
     init(speech: SpeechOutput) {
         self.speech = speech
@@ -77,6 +78,7 @@ final class BridgeClient {
 
     func start(settings: AppSettings, profile: HostProfile) {
         stop()
+        self.settings = settings
         driverGeneration += 1
         let generation = driverGeneration
         activeProfileID = profile.id
@@ -145,7 +147,7 @@ final class BridgeClient {
         activeProfileID = nil
         Task { await activeSupervisor?.stop() }
         if case .idle = status { return }
-        status = .disconnected(reason: "stopped")
+        setStatus(.disconnected(reason: "stopped"))
     }
 
     /// Leaving the NVDA Remote host screen, or leaving Home for another tab,
@@ -176,7 +178,10 @@ final class BridgeClient {
     /// Send an IPC command to the bridge. Silently dropped if not connected —
     /// matches the add-on's behavior (it logs a warning and moves on).
     func send(_ command: IPCCommand) {
-        commandContinuation?.yield(command)
+        let result = commandContinuation?.yield(command)
+        if case .type = command, let result, case .enqueued = result, settings?.soundCuesEnabled == true {
+            InteractionSoundCue.play(.pushClipboard)
+        }
     }
 
     @discardableResult
@@ -546,6 +551,10 @@ final class BridgeClient {
             }
         case .error(let msg):
             await appendLogAsync("relay error: \(msg)")
+        case .tone(let tone):
+            await playRemoteTone(tone)
+        case .wave(let filename):
+            await playRemoteWave(filename)
         case .unknown(let line):
             await appendLogAsync("unknown line: \(line)")
         }
@@ -577,7 +586,27 @@ final class BridgeClient {
     }
 
     private func setStatus(_ s: Status) {
+        let previous = status
         status = s
+        guard settings?.soundCuesEnabled == true, let intent = Self.soundIntent(from: previous, to: s) else { return }
+        InteractionSoundCue.play(intent)
+    }
+
+    static func soundIntent(from previous: Status, to current: Status) -> InteractionSoundIntent? {
+        guard previous != current else { return nil }
+        if current == .ready { return .remoteConnected }
+        if case .disconnected = current, previous == .ready { return .disconnected }
+        return nil
+    }
+
+    private func playRemoteTone(_ tone: RemoteNVDATone) {
+        guard settings?.soundCuesEnabled == true else { return }
+        InteractionSoundCue.playRemoteTone(tone)
+    }
+
+    private func playRemoteWave(_ filename: String) {
+        guard settings?.soundCuesEnabled == true else { return }
+        InteractionSoundCue.playRemoteWave(filename: filename)
     }
 
     private func appendLog(_ line: String) {

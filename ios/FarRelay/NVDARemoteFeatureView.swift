@@ -109,7 +109,7 @@ struct NVDARemoteFeatureView: View {
             get: { bridge.forwardingEnabled },
             set: { enabled in
                 bridge.forwardingEnabled = enabled
-                interactionFeedback.play(.selectionAccepted)
+                interactionFeedback.play(enabled ? .keyboardRemote : .keyboardLocal, haptic: .selectionAccepted)
                 if isVoiceOverEnabled {
                     AccessibilityNotification.Announcement(
                         NVDAForwardingAnnouncementPolicy.announcement(forEnabled: enabled)
@@ -141,8 +141,6 @@ struct NVDARemoteFeatureView: View {
             AccessibilityNotification.Announcement(text).post()
         }
         switch new {
-        case .ready:
-            interactionFeedback.play(.success)
         case .failed(let message):
             interactionFeedback.play(.error)
             presentedIssue = RemoteLaunchDiagnostics.nvdaFailureIssue(
