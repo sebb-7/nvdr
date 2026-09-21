@@ -165,7 +165,14 @@ fn curl_post_json(url: &str, body: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
+fn powershell_transform_command(script: &str) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;{script}"
+    )
+}
+
 fn powershell_transform(script: &str, input: &str) -> Result<String, String> {
+    let command = powershell_transform_command(script);
     let mut child = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -173,8 +180,8 @@ fn powershell_transform(script: &str, input: &str) -> Result<String, String> {
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            script,
         ])
+        .arg(&command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -404,6 +411,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dpapi_transform_loads_system_security_in_clean_powershell() {
+        let command = powershell_transform_command("Write-Output ok");
+        assert!(command.starts_with(
+            "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;"
+        ));
+        assert!(command.ends_with("Write-Output ok"));
+    }
 
     #[test]
     fn accepts_only_root_https_manifest_endpoint() {
