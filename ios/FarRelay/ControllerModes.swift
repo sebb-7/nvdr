@@ -139,9 +139,10 @@ struct TextModeMirrorSession: Sendable {
     mutating func reset() { entries.removeAll() }
 }
 
-enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
+enum QuickNavigationCategory: String, CaseIterable, Codable, Identifiable, Sendable {
     case quickBar = "Quick Bar"
     case profiles = "Profiles"
+    case editing = "Editing"
     case headings = "Headings"
     case links = "Links"
     case formControls = "Form controls"
@@ -151,9 +152,16 @@ enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
     case tables = "Tables"
     case lists = "Lists"
 
+    var id: String { rawValue }
+
+    static let defaultOrder: [QuickNavigationCategory] = [
+        .quickBar, .profiles, .editing, .headings, .links, .formControls,
+        .editFields, .buttons, .landmarks, .tables, .lists
+    ]
+
     var key: WindowsKeyboardKey? {
         switch self {
-        case .quickBar, .profiles: nil
+        case .quickBar, .profiles, .editing: nil
         case .headings: .h
         case .links: .k
         case .formControls: .f
@@ -166,18 +174,39 @@ enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
     }
 }
 
+enum QuickNavigationEditingAction: String, CaseIterable, Identifiable, Sendable {
+    case selectAll = "Select All"
+    case copy = "Copy"
+    case cut = "Cut"
+    case paste = "Paste"
+    case undo = "Undo"
+    case redo = "Redo"
+
+    var id: String { rawValue }
+
+    var keyboardAction: KeyboardAction {
+        switch self {
+        case .selectAll: .init(key: .a, modifiers: [.control])
+        case .copy: .init(key: .c, modifiers: [.control])
+        case .cut: .init(key: .x, modifiers: [.control])
+        case .paste: .init(key: .v, modifiers: [.control])
+        case .undo: .init(key: .z, modifiers: [.control])
+        case .redo: .init(key: .y, modifiers: [.control])
+        }
+    }
+}
+
 struct QuickNavigationCategoryChange: Equatable, Sendable {
     let announcement: String
     let wrapped: Bool
 }
 
 struct QuickNavigationEngine: Sendable {
-    // Navigation is the controller's primary operating mode. Start active so
-    // a connected controller can use the touchpad rotor immediately.
     private(set) var isActive = true
     private(set) var category = QuickNavigationCategory.quickBar
     private(set) var quickBarIndex = 0
     private(set) var profileIndex = 0
+    private(set) var editingIndex = 0
 
     mutating func toggle() -> String {
         isActive.toggle()
@@ -196,10 +225,13 @@ struct QuickNavigationEngine: Sendable {
         return "Quick Navigation off."
     }
 
-    mutating func nextCategoryChange() -> QuickNavigationCategoryChange {
-        let categories = QuickNavigationCategory.allCases
+    mutating func nextCategoryChange(
+        in requestedOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+    ) -> QuickNavigationCategoryChange {
+        let categories = normalizedOrder(requestedOrder)
         let previous = category
-        let index = (categories.firstIndex(of: category)! + 1) % categories.count
+        let currentIndex = categories.firstIndex(of: category) ?? 0
+        let index = (currentIndex + 1) % categories.count
         category = categories[index]
         return .init(
             announcement: category.rawValue,
@@ -207,10 +239,13 @@ struct QuickNavigationEngine: Sendable {
         )
     }
 
-    mutating func previousCategoryChange() -> QuickNavigationCategoryChange {
-        let categories = QuickNavigationCategory.allCases
+    mutating func previousCategoryChange(
+        in requestedOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+    ) -> QuickNavigationCategoryChange {
+        let categories = normalizedOrder(requestedOrder)
         let previous = category
-        let index = (categories.firstIndex(of: category)! - 1 + categories.count) % categories.count
+        let currentIndex = categories.firstIndex(of: category) ?? 0
+        let index = (currentIndex - 1 + categories.count) % categories.count
         category = categories[index]
         return .init(
             announcement: category.rawValue,
@@ -218,8 +253,13 @@ struct QuickNavigationEngine: Sendable {
         )
     }
 
-    mutating func nextCategory() -> String { nextCategoryChange().announcement }
-    mutating func previousCategory() -> String { previousCategoryChange().announcement }
+    mutating func nextCategory(
+        in order: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+    ) -> String { nextCategoryChange(in: order).announcement }
+
+    mutating func previousCategory(
+        in order: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+    ) -> String { previousCategoryChange(in: order).announcement }
 
     func selectedQuickBarEntry(in entries: [QuickBarEntry]) -> QuickBarEntry? {
         guard !entries.isEmpty else { return nil }
@@ -227,32 +267,20 @@ struct QuickNavigationEngine: Sendable {
     }
 
     mutating func nextQuickBarAction(in entries: [QuickBarEntry]) -> String {
-        guard !entries.isEmpty else {
-            quickBarIndex = 0
-            return "Quick Bar empty"
-        }
+        guard !entries.isEmpty else { quickBarIndex = 0; return "Quick Bar empty" }
         quickBarIndex = (min(quickBarIndex, entries.count - 1) + 1) % entries.count
         return selectedQuickBarEntry(in: entries)?.label ?? "Quick Bar empty"
     }
 
     mutating func previousQuickBarAction(in entries: [QuickBarEntry]) -> String {
-        guard !entries.isEmpty else {
-            quickBarIndex = 0
-            return "Quick Bar empty"
-        }
+        guard !entries.isEmpty else { quickBarIndex = 0; return "Quick Bar empty" }
         let current = min(quickBarIndex, entries.count - 1)
         quickBarIndex = (current - 1 + entries.count) % entries.count
         return selectedQuickBarEntry(in: entries)?.label ?? "Quick Bar empty"
     }
 
-    mutating func synchronizeProfileSelection(
-        profiles: [ControllerProfile],
-        activeProfileID: UUID
-    ) {
-        guard !profiles.isEmpty else {
-            profileIndex = 0
-            return
-        }
+    mutating func synchronizeProfileSelection(profiles: [ControllerProfile], activeProfileID: UUID) {
+        guard !profiles.isEmpty else { profileIndex = 0; return }
         profileIndex = profiles.firstIndex(where: { $0.id == activeProfileID }) ?? 0
     }
 
@@ -262,36 +290,52 @@ struct QuickNavigationEngine: Sendable {
     }
 
     mutating func nextProfile(in profiles: [ControllerProfile]) -> String {
-        guard !profiles.isEmpty else {
-            profileIndex = 0
-            return "No profiles"
-        }
+        guard !profiles.isEmpty else { profileIndex = 0; return "No profiles" }
         profileIndex = (min(profileIndex, profiles.count - 1) + 1) % profiles.count
         return selectedProfile(in: profiles)?.name ?? "No profiles"
     }
 
     mutating func previousProfile(in profiles: [ControllerProfile]) -> String {
-        guard !profiles.isEmpty else {
-            profileIndex = 0
-            return "No profiles"
-        }
+        guard !profiles.isEmpty else { profileIndex = 0; return "No profiles" }
         let current = min(profileIndex, profiles.count - 1)
         profileIndex = (current - 1 + profiles.count) % profiles.count
         return selectedProfile(in: profiles)?.name ?? "No profiles"
     }
 
-    func currentSectionAnnouncement(
-        quickBar: [QuickBarEntry],
-        profiles: [ControllerProfile]
-    ) -> String {
+    func selectedEditingAction() -> QuickNavigationEditingAction {
+        let actions = QuickNavigationEditingAction.allCases
+        return actions[min(editingIndex, actions.count - 1)]
+    }
+
+    mutating func nextEditingAction() -> String {
+        let actions = QuickNavigationEditingAction.allCases
+        editingIndex = (min(editingIndex, actions.count - 1) + 1) % actions.count
+        return selectedEditingAction().rawValue
+    }
+
+    mutating func previousEditingAction() -> String {
+        let actions = QuickNavigationEditingAction.allCases
+        let current = min(editingIndex, actions.count - 1)
+        editingIndex = (current - 1 + actions.count) % actions.count
+        return selectedEditingAction().rawValue
+    }
+
+    func currentSectionAnnouncement(quickBar: [QuickBarEntry], profiles: [ControllerProfile]) -> String {
         switch category {
-        case .quickBar:
-            return "Quick Bar. \(selectedQuickBarEntry(in: quickBar)?.label ?? "Empty")"
-        case .profiles:
-            return "Profiles. \(selectedProfile(in: profiles)?.name ?? "None")"
-        default:
-            return category.rawValue
+        case .quickBar: return "Quick Bar. \(selectedQuickBarEntry(in: quickBar)?.label ?? "Empty")"
+        case .profiles: return "Profiles. \(selectedProfile(in: profiles)?.name ?? "None")"
+        case .editing: return "Editing. \(selectedEditingAction().rawValue)"
+        default: return category.rawValue
         }
+    }
+
+    private func normalizedOrder(_ requestedOrder: [QuickNavigationCategory]) -> [QuickNavigationCategory] {
+        var seen = Set<QuickNavigationCategory>()
+        var result = requestedOrder.filter { seen.insert($0).inserted }
+        for category in QuickNavigationCategory.defaultOrder where seen.insert(category).inserted {
+            result.append(category)
+        }
+        return result.isEmpty ? QuickNavigationCategory.defaultOrder : result
     }
 }
 
