@@ -313,6 +313,82 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.layerStateForTesting, .base)
     }
 
+    func testLayerScopedMultipleModifiersKeepBaseMappingsUntilLayerRelease() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .shift)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .control)),
+            for: .square,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+        adapter.receiveForTesting(input: .square, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .square, pressed: false, at: 1.4)
+        adapter.receiveForTesting(input: .dpadRight, pressed: true, at: 1.5)
+        adapter.receiveForTesting(input: .dpadRight, pressed: false, at: 1.6)
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.7)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.shift, true),
+                .init(VK.control, true),
+                .init(VK.right, true), .init(VK.right, false),
+                .init(VK.control, false),
+                .init(VK.shift, false)
+            ]
+        )
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
+
+    func testLayerScopedModifierReleasesBeforeMappingSave() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .alt)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+        mappings.setAction(.keyboard(.init(key: .f8)), for: .triangle)
+        mappings.saveDraft()
+        await settle()
+
+        XCTAssertEqual(sink.transitions, [.init(VK.menu, true), .init(VK.menu, false)])
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
+
+    func testLayerScopedModifierReleasesOnAdapterStop() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .shift)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+        adapter.stop()
+        await settle()
+
+        XCTAssertEqual(sink.transitions, [.init(VK.shift, true), .init(VK.shift, false)])
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
+
     func testQuickNavigationUsesTouchpadRotorAndRightStickMovement() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .create, pressed: true, at: 1)
