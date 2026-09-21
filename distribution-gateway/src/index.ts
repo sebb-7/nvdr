@@ -175,9 +175,13 @@ function htmlEscape(value: unknown): string {
 }
 
 
-async function feedbackUrlForInvite(request: Request, env: Env, inviteId: string): Promise<string> {
+async function feedbackUrlForInvite(request: Request, env: Env, inviteId: string, returnPath?: string): Promise<string> {
   const signature = await hmacHex(env.ADMIN_TOKEN, "feedback:invite:" + inviteId);
-  return new URL(request.url).origin + "/feedback/invite/" + encodeURIComponent(inviteId) + "/" + signature;
+  const url = new URL("/feedback/invite/" + encodeURIComponent(inviteId) + "/" + signature, new URL(request.url).origin);
+  if (returnPath && returnPath.startsWith("/invite/") && !returnPath.startsWith("//")) {
+    url.searchParams.set("return", returnPath);
+  }
+  return url.toString();
 }
 
 async function feedbackUrlForDevice(request: Request, env: Env, deviceId: string): Promise<string> {
@@ -185,17 +189,25 @@ async function feedbackUrlForDevice(request: Request, env: Env, deviceId: string
   return new URL(request.url).origin + "/feedback/device/" + encodeURIComponent(deviceId) + "/" + signature;
 }
 
-function feedbackPageHtml(name: string, action: string, submitted = false): string {
+function feedbackPageHtml(name: string, action: string, submitted = false, returnPath = ""): string {
+  const safeReturn = returnPath.startsWith("/invite/") && !returnPath.startsWith("//") ? returnPath : "";
+  const returnLink = safeReturn
+    ? '<p><a href="' + htmlEscape(safeReturn) + '">Back to FarRelay onboarding</a></p>'
+    : '<p>You can close this tab or window to return to FarRelay.</p>';
   if (submitted) {
     return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay feedback received</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Thanks, ' +
       htmlEscape(name) +
-      '.</h1><p>Your FarRelay beta feedback was received.</p><p>You can close this page and continue testing.</p></main></body></html>';
+      '.</h1><p>Your FarRelay beta feedback was received.</p>' +
+      returnLink +
+      '</main></body></html>';
   }
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta feedback</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>FarRelay beta feedback</h1><p>Hello ' +
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta feedback</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>FarRelay beta feedback</h1><p>This feedback form opened in a separate tab or window so you can return to your FarRelay onboarding page without losing your place.</p><p>Hello ' +
     htmlEscape(name) +
     '. Please report anything that broke, felt confusing, was inaccessible, or could make onboarding clearer.</p><form method="post" action="' +
     htmlEscape(action) +
-    '"><label for="category">Feedback type</label><br><select id="category" name="category" required><option value="onboarding">Onboarding</option><option value="confusing">Confusing or unclear</option><option value="bug">Bug</option><option value="accessibility">Accessibility</option><option value="suggestion">Suggestion</option><option value="other">Other</option></select><br><br><label for="message">What happened?</label><br><textarea id="message" name="message" rows="10" maxlength="5000" required style="width:100%;box-sizing:border-box"></textarea><br><br><label for="contact">Email or contact information (optional)</label><br><input id="contact" name="contact" type="text" maxlength="200" style="width:100%;box-sizing:border-box"><p>Please include what you expected, what happened instead, and anything you found confusing.</p><button type="submit">Send beta feedback</button></form></main></body></html>';
+    '"><label for="category">Feedback type</label><br><select id="category" name="category" required><option value="onboarding">Onboarding</option><option value="confusing">Confusing or unclear</option><option value="bug">Bug</option><option value="accessibility">Accessibility</option><option value="suggestion">Suggestion</option><option value="other">Other</option></select><br><br><label for="message">What happened?</label><br><textarea id="message" name="message" rows="10" maxlength="5000" required style="width:100%;box-sizing:border-box"></textarea><br><br><label for="contact">Email or contact information (optional)</label><br><input id="contact" name="contact" type="text" maxlength="200" style="width:100%;box-sizing:border-box"><p>Please include what you expected, what happened instead, and anything you found confusing.</p><button type="submit">Send beta feedback</button></form>' +
+    returnLink +
+    '</main></body></html>';
 }
 
 async function feedbackSubject(
@@ -232,8 +244,13 @@ async function handleFeedback(
   const subject = await feedbackSubject(env, kind, id, signature);
   if (!subject) return error("feedback link is invalid or no longer active", 403);
 
+  const feedbackRequestUrl = new URL(request.url);
+  const rawReturnPath = feedbackRequestUrl.searchParams.get("return") || "";
+  const returnPath = rawReturnPath.startsWith("/invite/") && !rawReturnPath.startsWith("//") ? rawReturnPath : "";
+  const formAction = feedbackRequestUrl.pathname + (returnPath ? "?return=" + encodeURIComponent(returnPath) : "");
+
   if (request.method === "GET") {
-    return new Response(feedbackPageHtml(subject.testerName, new URL(request.url).pathname), {
+    return new Response(feedbackPageHtml(subject.testerName, formAction, false, returnPath), {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -278,7 +295,7 @@ async function handleFeedback(
     now
   ).run();
   await audit(env, "beta_feedback_submitted", feedbackId, category);
-  return new Response(feedbackPageHtml(subject.testerName, new URL(request.url).pathname, true), {
+  return new Response(feedbackPageHtml(subject.testerName, formAction, true, returnPath), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -418,7 +435,7 @@ async function inviteLanding(request: Request, env: Env, code: string): Promise<
   const [testflightUrl, externalFeedbackUrl, nativeFeedbackUrl] = await Promise.all([
     programSetting(env, "testflight_url"),
     programSetting(env, "feedback_url"),
-    feedbackUrlForInvite(request, env, invite.id),
+    feedbackUrlForInvite(request, env, invite.id, "/invite/" + encodeURIComponent(code)),
   ]);
   const feedbackUrl = externalFeedbackUrl || nativeFeedbackUrl;
   const origin = new URL(request.url).origin;
@@ -427,7 +444,7 @@ async function inviteLanding(request: Request, env: Env, code: string): Promise<
     ? '<p><a href="' + htmlEscape(testflightUrl) + '">Join the FarRelay iPhone beta in TestFlight</a></p>'
     : '<p>The TestFlight join link has not been published yet. Ask the FarRelay developer for access before testing from iPhone.</p>';
   const feedback = feedbackUrl
-    ? '<p><a href="' + htmlEscape(feedbackUrl) + '">Send beta feedback</a></p>'
+    ? '<p><a href="' + htmlEscape(feedbackUrl) + '" target="_blank" rel="noopener">Send beta feedback (opens in a new tab)</a></p><p>Your onboarding page will stay open. After submitting feedback, use the Back to FarRelay onboarding link or close the feedback tab.</p>'
     : '<p>Please send the FarRelay developer anything that failed, felt unclear, or required help during onboarding.</p>';
   const body = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta onboarding</title></head><body><main style="font-family:system-ui;max-width:50rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Hello ' +
     htmlEscape(invite.label) + '! Welcome to the FarRelay beta.</h1><p>Please complete this onboarding on your own as much as possible. I specifically want feedback on anything that does not work, feels confusing, or makes you unsure what to do next.</p><h2>1. Join the iPhone beta</h2><p>You need the FarRelay app on your iPhone to test remote control. Install Apple TestFlight first if you do not already have it, then use the beta link below.</p>' +
