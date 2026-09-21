@@ -139,7 +139,7 @@ struct TextModeMirrorSession: Sendable {
     mutating func reset() { entries.removeAll() }
 }
 
-enum QuickNavigationCategory: String, CaseIterable, Codable, Identifiable, Sendable {
+enum QuickNavigationCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case quickBar = "Quick Bar"
     case profiles = "Profiles"
     case editing = "Editing"
