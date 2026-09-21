@@ -43,6 +43,38 @@ final class HostRecoverySessionTests: XCTestCase {
         }
     }
 
+    func testRecoveryRestartRequiresVerifiedReadyTask() {
+        XCTAssertFalse(RecoveryActionPolicy.canRestart(platform: .windows, status: nil, isWorking: false))
+        XCTAssertFalse(
+            RecoveryActionPolicy.canRestart(
+                platform: .windows,
+                status: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: false),
+                isWorking: false
+            )
+        )
+        XCTAssertTrue(
+            RecoveryActionPolicy.canRestart(
+                platform: .windows,
+                status: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true),
+                isWorking: false
+            )
+        )
+        XCTAssertFalse(
+            RecoveryActionPolicy.canRestart(
+                platform: .windows,
+                status: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true),
+                isWorking: true
+            )
+        )
+        XCTAssertFalse(
+            RecoveryActionPolicy.canRestart(
+                platform: .macOS,
+                status: NvdaRecoveryStatus(nvdaRunning: false, recoveryTaskReady: true),
+                isWorking: false
+            )
+        )
+    }
+
     func testRecoverySupportNeverDependsOnNVDAConfiguredRelayState() {
         let profile = HostProfile(
             address: "g14.example.test",
