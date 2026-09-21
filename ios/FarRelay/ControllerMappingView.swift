@@ -252,9 +252,16 @@ struct ControllerProfileEditorView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Save Profile") {
+                    let name = mappings.draftProfile.name
                     mappings.saveDraft()
                     dismiss()
+                    DispatchQueue.main.async {
+                        AccessibilityNotification.Announcement(
+                            "Profile \(name) saved."
+                        ).post()
+                    }
                 }
+                .accessibilityHint("Saves this profile and its controller mappings.")
             }
         }
         .onAppear {
@@ -338,9 +345,15 @@ struct ControllerQuickBarView: View {
             Section {
                 Button("Add Action") {
                     _ = mappings.addQuickBarEntry()
+                    AccessibilityNotification.Announcement(
+                        "Added unassigned Quick Bar action at position \(mappings.draftProfile.quickBar.count)."
+                    ).post()
                 }
                 Button("Restore Recommended Quick Bar") {
                     mappings.restoreRecommendedQuickBar()
+                    AccessibilityNotification.Announcement(
+                        "Recommended Quick Bar restored. \(mappings.draftProfile.quickBar.count) actions."
+                    ).post()
                 }
                 Text("Each action supports Move Up, Move Down, Move to Top, and Move to Bottom VoiceOver actions. Quick Bar uses the same action model as controller mapping. Layer and Quick Navigation control actions are intentionally excluded because they would create ambiguous local state.")
                     .foregroundStyle(.secondary)
@@ -404,6 +417,9 @@ struct ControllerRotorOrderView: View {
             Section {
                 Button("Restore Recommended Rotor Order") {
                     mappings.restoreRecommendedQuickNavigationOrder()
+                    AccessibilityNotification.Announcement(
+                        "Recommended rotor order restored. \(mappings.draftProfile.quickNavigationOrder.count) sections."
+                    ).post()
                 }
                 Text("Rotor order is stored with this controller profile. Every section also supports Move Up, Move Down, Move to Top, and Move to Bottom VoiceOver actions.")
                     .foregroundStyle(.secondary)
@@ -655,7 +671,7 @@ private struct ControllerActionEditorSections: View {
             }
         case .quickCommandMode:
             Section("Quick Command Mode") {
-                Text("Opens a local Braille Screen Input editor for a one-shot keyboard lifeboat. Plus means keys together and comma means then. Nothing is sent until Send Command is activated.")
+                Text("Opens a local Braille Screen Input editor for a one-shot keyboard lifeboat. Plus means keys together and comma means then. With English UEB, plus is dot 5 followed by dots 2-3-5. Nothing is sent until Send Command is activated.")
                     .foregroundStyle(.secondary)
             }
         case .repeatLastQuickBar:
