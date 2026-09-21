@@ -279,9 +279,9 @@ async function renderDashboard(
 <p>Tester: ${escapeHtml(created.label)}; channel: ${escapeHtml(created.channel)}; installer invitation expires: ${timeValue(created.expiresAt)}; beta access after activation: ${created.accessDays} day(s).</p>
 <label for="created-code">Activation code</label>
 <input id="created-code" type="text" readonly value="${escapeHtml(created.activationCode)}">
-<label for="created-link">Installer link</label>
+<label for="created-link">Tester onboarding link</label>
 <input id="created-link" type="text" readonly value="${escapeHtml(created.installerUrl)}">
-<p><a href="${escapeHtml(created.installerUrl)}">Download installer with this invitation</a></p>
+<p><a href="${escapeHtml(created.installerUrl)}">Open tester onboarding page</a></p>
 </section>` : "";
 
   const inviteRows = inviteResult.results.map((invite) => {
@@ -438,7 +438,7 @@ async function createInvite(
     label: label.slice(0, 120),
     channel,
     activationCode: code,
-    installerUrl: origin + "/invite/" + encodeURIComponent(code) + "/installer",
+    installerUrl: origin + "/invite/" + encodeURIComponent(code),
     expiresAt,
     accessDays: accessDaysValue,
   });
