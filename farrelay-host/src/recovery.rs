@@ -157,13 +157,15 @@ impl<R: CommandRunner, P: NvdaProcessProbe> NvdaRecoveryProvider
 #[cfg(target_os = "windows")]
 impl<R: CommandRunner, P: NvdaProcessProbe> WindowsNvdaRecoveryProvider<R, P> {
     fn task_ready(&self) -> bool {
-        self.runner.run(&query_task_invocation()).is_ok_and(|output| {
-            if output.exit_code != 0 {
-                return false;
-            }
-            let definition = output.stdout.to_ascii_lowercase();
-            definition.contains("nvda_slave.exe") && definition.contains("launchnvda")
-        })
+        self.runner
+            .run(&query_task_invocation())
+            .is_ok_and(|output| {
+                if output.exit_code != 0 {
+                    return false;
+                }
+                let definition = output.stdout.to_ascii_lowercase();
+                definition.contains("nvda_slave.exe") && definition.contains("launchnvda")
+            })
     }
 }
 
