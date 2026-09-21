@@ -13,10 +13,17 @@ pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
 struct SysinfoNvdaProcessProbe;
 
 impl NvdaProcessProbe for SysinfoNvdaProcessProbe {
-    fn nvda_running(&self) -> bool {
-        System::new_all().processes().values().any(|process| {
-            process.name().eq_ignore_ascii_case("nvda.exe")
-                || process.name().eq_ignore_ascii_case("nvda")
-        })
+    fn nvda_process_ids(&self) -> Vec<u32> {
+        let mut process_ids: Vec<u32> = System::new_all()
+            .processes()
+            .iter()
+            .filter_map(|(pid, process)| {
+                (process.name().eq_ignore_ascii_case("nvda.exe")
+                    || process.name().eq_ignore_ascii_case("nvda"))
+                .then(|| pid.as_u32())
+            })
+            .collect();
+        process_ids.sort_unstable();
+        process_ids
     }
 }
