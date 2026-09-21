@@ -514,6 +514,12 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
         adapter.receiveTouchpadContactForTesting(.up, x: 0.8)
 
+        // Releasing a tapped layer arms one-shot Extended. Consume that local
+        // one-shot before expecting Quick Navigation to own input again.
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.3)
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+
         adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
         adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
