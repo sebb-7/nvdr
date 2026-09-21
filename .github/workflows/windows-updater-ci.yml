@@ -9,7 +9,7 @@ on:
       - "src/**"
       - "farrelay-host/**"
       - "farrelay-updater/**"
-      - "windows/installer/**"
+      - "windows/**"
       - ".github/workflows/windows-updater-ci.yml"
   pull_request:
     paths:
@@ -19,7 +19,7 @@ on:
       - "src/**"
       - "farrelay-host/**"
       - "farrelay-updater/**"
-      - "windows/installer/**"
+      - "windows/**"
       - ".github/workflows/windows-updater-ci.yml"
 
 permissions:
@@ -47,6 +47,9 @@ jobs:
 
       - name: Test FarRelay core
         run: cargo test --locked
+
+      - name: Test FarRelay Host
+        run: cargo test --locked --manifest-path farrelay-host/Cargo.toml
 
       - name: Test updater
         run: cargo test --locked --manifest-path farrelay-updater/Cargo.toml
@@ -76,6 +79,11 @@ jobs:
               throw "$($check.Path) reported '$actual'; expected '$($check.Expected)'"
             }
           }
+
+      - name: Parse travel-readiness script
+        shell: pwsh
+        run: |
+          [void][scriptblock]::Create((Get-Content windows/release/Test-FarRelayTravelReadiness.ps1 -Raw))
 
       - name: Prepare installer syntax fixture
         shell: pwsh
