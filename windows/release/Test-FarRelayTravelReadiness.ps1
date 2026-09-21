@@ -9,9 +9,9 @@ $ErrorActionPreference = 'Stop'
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 
-function Pass([string]$Message) { Write-Output "PASS: $Message" }
-function Fail([string]$Message) { $script:failures.Add($Message); Write-Output "FAIL: $Message" }
-function Warn([string]$Message) { $script:warnings.Add($Message); Write-Output "WARN: $Message" }
+function Pass([string]$Message) { Write-Host "PASS: $Message" }
+function Fail([string]$Message) { $script:failures.Add($Message); Write-Host "FAIL: $Message" }
+function Warn([string]$Message) { $script:warnings.Add($Message); Write-Host "WARN: $Message" }
 
 $repoVersionPath = Join-Path (Join-Path $PSScriptRoot '..\..') 'VERSION'
 $installedConfigPath = Join-Path $env:ProgramData 'FarRelay\install.json'
@@ -125,9 +125,10 @@ if ($hostPath) {
 try {
     $task = Get-ScheduledTask -TaskName 'FarRelay Recover NVDA' -ErrorAction Stop
     $action = @($task.Actions)[0]
-    if ($task.Principal.LogonType -ne 'InteractiveToken') {
-        Fail "Recovery task LogonType is $($task.Principal.LogonType); expected InteractiveToken."
-    } else { Pass "Recovery task uses InteractiveToken." }
+    $logonType = [string]$task.Principal.LogonType
+    if ($logonType -notin @('Interactive', 'InteractiveToken')) {
+        Fail "Recovery task LogonType is $logonType; expected Interactive."
+    } else { Pass "Recovery task uses Interactive logon." }
 
     if ($task.Principal.RunLevel -ne 'Limited') {
         Fail "Recovery task RunLevel is $($task.Principal.RunLevel); expected Limited."
@@ -164,6 +165,9 @@ try {
     else { Pass "AC hibernate timeout is Never." }
 
     $lid = Get-AcPowerIndex -Subgroup 'SUB_BUTTONS' -Setting 'LIDACTION'
+    if ($null -eq $lid) {
+        $lid = Get-AcPowerIndex -Subgroup '4f971e89-eebd-4455-a8de-9e59040e7347' -Setting '5ca83367-6e45-459f-a27b-476b1d01c936'
+    }
     if ($null -eq $lid) {
         Warn "Could not read AC lid-close action."
     } elseif ($lid -ne 0) {
