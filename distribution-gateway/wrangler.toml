@@ -17,6 +17,9 @@ database_name = "farrelay-testers"
 database_id = "dc34fd35-a74a-477d-88ee-5d4ed30dc425"
 
 
+[[send_email]]
+name = "EMAIL"
+
 [observability]
 enabled = true
 
