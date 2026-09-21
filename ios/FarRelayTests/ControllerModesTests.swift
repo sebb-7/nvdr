@@ -80,7 +80,10 @@ final class ControllerModesTests: XCTestCase {
 
     func testCustomRotorOrderDrivesCategoryTraversal() {
         var rotor = QuickNavigationEngine()
-        let order: [QuickNavigationCategory] = [.profiles, .editing, .quickBar, .headings]
+        let order: [QuickNavigationCategory] = [
+            .quickBar, .headings, .profiles, .editing, .links, .formControls,
+            .editFields, .buttons, .landmarks, .tables, .lists
+        ]
 
         XCTAssertEqual(rotor.nextCategory(in: order), "Headings")
         XCTAssertEqual(rotor.nextCategory(in: order), "Profiles")
