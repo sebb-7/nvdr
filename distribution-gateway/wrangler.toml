@@ -2,9 +2,21 @@ name = "farrelay-tester-gateway"
 main = "src/index.ts"
 compatibility_date = "2026-09-20"
 
+preview_urls = false
+
 [[r2_buckets]]
 binding = "RELEASES"
 bucket_name = "farrelay-private-releases"
 
 # Add the D1 binding with:
 # npx wrangler d1 create farrelay-testers --binding DB --update-config
+
+[[d1_databases]]
+binding = "DB"
+database_name = "farrelay-testers"
+database_id = "dc34fd35-a74a-477d-88ee-5d4ed30dc425"
+
+[observability]
+enabled = true
+
+
