@@ -303,10 +303,32 @@ struct ControllerQuickBarView: View {
                         Text(entry.label)
                     }
                     .accessibilityAction(named: Text("Move Up")) {
-                        mappings.moveQuickBarEntry(id: entry.id, direction: -1)
+                        announceQuickBarMove(
+                            entry,
+                            index: mappings.moveQuickBarEntry(id: entry.id, direction: -1),
+                            boundary: "is already first"
+                        )
                     }
                     .accessibilityAction(named: Text("Move Down")) {
-                        mappings.moveQuickBarEntry(id: entry.id, direction: 1)
+                        announceQuickBarMove(
+                            entry,
+                            index: mappings.moveQuickBarEntry(id: entry.id, direction: 1),
+                            boundary: "is already last"
+                        )
+                    }
+                    .accessibilityAction(named: Text("Move to Top")) {
+                        announceQuickBarMove(
+                            entry,
+                            index: mappings.moveQuickBarEntryToStart(id: entry.id),
+                            boundary: "is already first"
+                        )
+                    }
+                    .accessibilityAction(named: Text("Move to Bottom")) {
+                        announceQuickBarMove(
+                            entry,
+                            index: mappings.moveQuickBarEntryToEnd(id: entry.id),
+                            boundary: "is already last"
+                        )
                     }
                 }
                 .onDelete(perform: mappings.deleteQuickBarEntries)
@@ -320,12 +342,22 @@ struct ControllerQuickBarView: View {
                 Button("Restore Recommended Quick Bar") {
                     mappings.restoreRecommendedQuickBar()
                 }
-                Text("Each action supports Move Up and Move Down VoiceOver actions. Quick Bar uses the same action model as controller mapping. Layer and Quick Navigation control actions are intentionally excluded because they would create ambiguous local state.")
+                Text("Each action supports Move Up, Move Down, Move to Top, and Move to Bottom VoiceOver actions. Quick Bar uses the same action model as controller mapping. Layer and Quick Navigation control actions are intentionally excluded because they would create ambiguous local state.")
                     .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Quick Bar")
         .toolbar { EditButton() }
+    }
+
+    private func announceQuickBarMove(_ entry: QuickBarEntry, index: Int?, boundary: String) {
+        let message: String
+        if let index {
+            message = "\(entry.label) moved to position \(index + 1) of \(mappings.draftProfile.quickBar.count)."
+        } else {
+            message = "\(entry.label) \(boundary)."
+        }
+        AccessibilityNotification.Announcement(message).post()
     }
 }
 
@@ -338,10 +370,32 @@ struct ControllerRotorOrderView: View {
                 ForEach(mappings.draftProfile.quickNavigationOrder) { category in
                     Text(category.rawValue)
                         .accessibilityAction(named: Text("Move Up")) {
-                            mappings.moveQuickNavigationCategory(category, direction: -1)
+                            announceRotorMove(
+                                category,
+                                index: mappings.moveQuickNavigationCategory(category, direction: -1),
+                                boundary: "is already first"
+                            )
                         }
                         .accessibilityAction(named: Text("Move Down")) {
-                            mappings.moveQuickNavigationCategory(category, direction: 1)
+                            announceRotorMove(
+                                category,
+                                index: mappings.moveQuickNavigationCategory(category, direction: 1),
+                                boundary: "is already last"
+                            )
+                        }
+                        .accessibilityAction(named: Text("Move to Top")) {
+                            announceRotorMove(
+                                category,
+                                index: mappings.moveQuickNavigationCategoryToStart(category),
+                                boundary: "is already first"
+                            )
+                        }
+                        .accessibilityAction(named: Text("Move to Bottom")) {
+                            announceRotorMove(
+                                category,
+                                index: mappings.moveQuickNavigationCategoryToEnd(category),
+                                boundary: "is already last"
+                            )
                         }
                 }
                 .onMove(perform: mappings.moveQuickNavigationCategories)
@@ -351,12 +405,22 @@ struct ControllerRotorOrderView: View {
                 Button("Restore Recommended Rotor Order") {
                     mappings.restoreRecommendedQuickNavigationOrder()
                 }
-                Text("Rotor order is stored with this controller profile. Every section also supports Move Up and Move Down VoiceOver actions.")
+                Text("Rotor order is stored with this controller profile. Every section also supports Move Up, Move Down, Move to Top, and Move to Bottom VoiceOver actions.")
                     .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Rotor Order")
         .toolbar { EditButton() }
+    }
+
+    private func announceRotorMove(_ category: QuickNavigationCategory, index: Int?, boundary: String) {
+        let message: String
+        if let index {
+            message = "\(category.rawValue) moved to position \(index + 1) of \(mappings.draftProfile.quickNavigationOrder.count)."
+        } else {
+            message = "\(category.rawValue) \(boundary)."
+        }
+        AccessibilityNotification.Announcement(message).post()
     }
 }
 

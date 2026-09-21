@@ -132,6 +132,29 @@ final class ControllerModesTests: XCTestCase {
         gesture.end()
     }
 
+    func testTouchpadRotorGestureRequiresFreshFingerContactForEveryStep() {
+        var gesture = TouchpadRotorGesture()
+
+        XCTAssertNil(gesture.move(x: 0.9))
+
+        gesture.begin(x: -0.6)
+        XCTAssertNil(gesture.move(x: -0.4))
+        XCTAssertNil(gesture.move(x: -0.3))
+        XCTAssertEqual(gesture.move(x: 0.0), 1)
+
+        // Exactly one rotor step is allowed for this finger contact.
+        XCTAssertNil(gesture.move(x: 0.9))
+        XCTAssertNil(gesture.move(x: -0.9))
+        gesture.end()
+
+        // A lift resets the recognizer. Motion alone stays inert until a fresh touch.
+        XCTAssertNil(gesture.move(x: -0.9))
+        gesture.begin(x: 0.6)
+        XCTAssertEqual(gesture.move(x: 0.0), -1)
+        XCTAssertNil(gesture.move(x: -0.8))
+        gesture.end()
+    }
+
     func testTextMapperUsesShiftForUppercaseAndCommonPunctuation() {
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "A"), .init(key: .a, modifiers: [.shift]))
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "z"), .init(key: .z))

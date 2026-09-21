@@ -442,6 +442,36 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
+    func testOneFingerTouchpadSwipeMovesExactlyOneRotorSectionPerContact() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.beginTouchpadSwipeForTesting(x: -0.6)
+        adapter.moveTouchpadForTesting(x: -0.4)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.moveTouchpadForTesting(x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+
+        // Continued movement or reversal from the same finger cannot rotate twice.
+        adapter.moveTouchpadForTesting(x: 0.8)
+        adapter.moveTouchpadForTesting(x: -0.8)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+        adapter.endTouchpadSwipeForTesting()
+
+        // After lift, a new finger contact can rotate in the opposite direction.
+        adapter.moveTouchpadForTesting(x: -0.8)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+        adapter.beginTouchpadSwipeForTesting(x: 0.6)
+        adapter.moveTouchpadForTesting(x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+        adapter.endTouchpadSwipeForTesting()
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
     func testEditingRotorExecutesSelectedEditingChord() async {
         let (_, adapter, sink, _, _) = makeAdapter()
 
@@ -482,6 +512,14 @@ final class ControllerAdapterTests: XCTestCase {
 
         XCTAssertEqual(mappings.activeProfileID, secondID)
         XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        // Profile activation clears transient touch state but preserves Quick
+        // Navigation, so the next fresh one-finger contact must still rotate.
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
     }
 
