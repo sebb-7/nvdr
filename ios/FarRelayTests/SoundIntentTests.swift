@@ -52,8 +52,23 @@ final class SoundIntentTests: XCTestCase {
         XCTAssertNil(BridgeClient.soundIntent(from: .ready, to: .ready))
         XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .waitingForNVDA), .nvdaStopped)
         XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .nvdaNotConnected), .nvdaStopped)
-        XCTAssertEqual(BridgeClient.soundIntent(from: .waitingForNVDA, to: .ready), .nvdaStarted)
-        XCTAssertEqual(BridgeClient.soundIntent(from: .nvdaNotConnected, to: .ready), .nvdaStarted)
+        XCTAssertEqual(BridgeClient.soundIntent(from: .waitingForNVDA, to: .ready), .remoteConnected)
+        XCTAssertEqual(
+            BridgeClient.soundIntent(
+                from: .waitingForNVDA,
+                to: .ready,
+                nvdaLifecycleInterrupted: true
+            ),
+            .nvdaStarted
+        )
+        XCTAssertEqual(
+            BridgeClient.soundIntent(
+                from: .nvdaNotConnected,
+                to: .ready,
+                nvdaLifecycleInterrupted: true
+            ),
+            .nvdaStarted
+        )
         XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .disconnected(reason: "relay")), .disconnected)
         XCTAssertNil(BridgeClient.soundIntent(from: .failed(message: "no"), to: .disconnected(reason: "relay")))
         XCTAssertNotEqual(InteractionSoundIntent.keyboardRemote, .keyboardLocal)
