@@ -235,6 +235,7 @@ function noticeFromUrl(url: URL): string | null {
   switch (url.searchParams.get("notice")) {
     case "invite-revoked": return "Invitation revoked.";
     case "device-revoked": return "Device revoked.";
+    case "settings-saved": return "Beta program settings saved.";
     default: return null;
   }
 }
@@ -275,7 +276,7 @@ async function renderDashboard(
 <section class="notice" aria-labelledby="created-heading">
 <h2 id="created-heading">Invitation created</h2>
 <p><strong>This activation code is shown only once.</strong></p>
-<p>Tester: ${escapeHtml(created.label)}; channel: ${escapeHtml(created.channel)}; expires: ${timeValue(created.expiresAt)}</p>
+<p>Tester: ${escapeHtml(created.label)}; channel: ${escapeHtml(created.channel)}; installer invitation expires: ${timeValue(created.expiresAt)}; beta access after activation: ${created.accessDays} day(s).</p>
 <label for="created-code">Activation code</label>
 <input id="created-code" type="text" readonly value="${escapeHtml(created.activationCode)}">
 <label for="created-link">Installer link</label>
@@ -295,6 +296,7 @@ async function renderDashboard(
 <td>${escapeHtml(inviteStatus(invite))}</td>
 <td>${invite.activation_count}/${invite.max_activations}</td>
 <td>${timeValue(invite.expires_at)}</td>
+<td>${invite.access_days} day(s)</td>
 <td class="actions">${revoke}</td>
 </tr>`;
   }).join("");
@@ -311,6 +313,7 @@ async function renderDashboard(
 <td>${device.revoked_at ? "Revoked" : "Active"}</td>
 <td>${timeValue(device.last_seen_at)}</td>
 <td>${timeValue(device.created_at)}</td>
+<td>${timeValue(device.access_expires_at)}</td>
 <td class="actions">${revoke}</td>
 </tr>`;
   }).join("");
@@ -328,6 +331,7 @@ async function renderDashboard(
 <a href="#create-invite">Create invitation</a>
 <a href="#invitations">Invitations</a>
 <a href="#devices">Devices</a>
+<a href="#program-settings">Program settings</a>
 <form class="inline" method="post" action="/admin/logout">
 <input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">
 <button type="submit">Sign out</button>
@@ -351,9 +355,12 @@ ${createdHtml}
 </select>
 <label for="max-activations">Maximum activations</label>
 <input id="max-activations" name="max_activations" type="number" min="1" max="10" value="1" required>
-<label for="expires-hours">Expires after hours</label>
+<label for="expires-hours">Installer invitation expires after hours</label>
 <input id="expires-hours" name="expires_in_hours" type="number" min="1" max="720" value="168" required>
-<p class="sr-note">168 hours is 7 days. The maximum is 720 hours, or 30 days.</p>
+<p class="sr-note">168 hours is 7 days. This controls how long the installer invitation can be redeemed.</p>
+<label for="access-days">Beta access after activation, days</label>
+<input id="access-days" name="access_days" type="number" min="1" max="365" value="30" required>
+<p class="sr-note">The beta access clock starts when the tester activates FarRelay on a computer.</p>
 <p><button type="submit">Create invitation</button></p>
 </form>
 </section>
@@ -361,13 +368,25 @@ ${createdHtml}
 <h2 id="releases-heading">Published releases</h2>
 ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">Version</th><th scope="col">Published</th></tr></thead><tbody>${releaseRows}</tbody></table>` : "<p>No releases published.</p>"}
 </section>
+<section id="program-settings" aria-labelledby="program-settings-heading">
+<h2 id="program-settings-heading">Beta program settings</h2>
+<form method="post" action="/admin/ui/settings">
+<input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">
+<label for="testflight-url">TestFlight join link</label>
+<input id="testflight-url" name="testflight_url" type="text" inputmode="url" value="${escapeHtml(testflightUrl)}" placeholder="https://testflight.apple.com/join/...">
+<label for="feedback-url">Feedback link</label>
+<input id="feedback-url" name="feedback_url" type="text" inputmode="url" value="${escapeHtml(feedbackUrl)}" placeholder="https://...">
+<p class="sr-note">These links are shown to activated beta testers in the local FarRelay Control Center.</p>
+<p><button type="submit">Save beta program settings</button></p>
+</form>
+</section>
 <section id="invitations" aria-labelledby="invites-heading">
 <h2 id="invites-heading">Invitations</h2>
-${inviteRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Activations</th><th scope="col">Expires</th><th scope="col">Action</th></tr></thead><tbody>${inviteRows}</tbody></table>` : "<p>No invitations yet.</p>"}
+${inviteRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Activations</th><th scope="col">Invitation expires</th><th scope="col">Beta access</th><th scope="col">Action</th></tr></thead><tbody>${inviteRows}</tbody></table>` : "<p>No invitations yet.</p>"}
 </section>
 <section id="devices" aria-labelledby="devices-heading">
 <h2 id="devices-heading">Devices</h2>
-${deviceRows ? `<table><thead><tr><th scope="col">Device</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Created</th><th scope="col">Action</th></tr></thead><tbody>${deviceRows}</tbody></table>` : "<p>No devices yet.</p>"}
+${deviceRows ? `<table><thead><tr><th scope="col">Device</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Activated</th><th scope="col">Beta access expires</th><th scope="col">Action</th></tr></thead><tbody>${deviceRows}</tbody></table>` : "<p>No devices yet.</p>"}
 </section>
 </main>`));
 }
@@ -425,6 +444,38 @@ async function createInvite(
   });
 }
 
+
+async function saveProgramSettings(
+  request: Request,
+  env: AdminEnv,
+  session: AdminSession
+): Promise<Response> {
+  const form = await request.formData().catch(() => null);
+  if (!form || !(await validCsrf(form, session))) {
+    return htmlResponse(shell("Forbidden", "<main><h1>Forbidden</h1><p>The form session is invalid or expired.</p></main>"), 403);
+  }
+  const testflight = typeof form.get("testflight_url") === "string" ? String(form.get("testflight_url")).trim() : "";
+  const feedback = typeof form.get("feedback_url") === "string" ? String(form.get("feedback_url")).trim() : "";
+  for (const pair of [["TestFlight", testflight], ["feedback", feedback]] as const) {
+    const name = pair[0];
+    const value = pair[1];
+    if (value && !/^https:\/\//i.test(value)) {
+      return renderDashboard(request, env, session, undefined, name + " link must use HTTPS.");
+    }
+  }
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('testflight_url', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(testflight, now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_url', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(feedback, now),
+  ]);
+  await audit(env, "program_settings_updated", null, null);
+  return redirect("/admin?notice=settings-saved");
+}
+
 async function revoke(
   request: Request,
   env: AdminEnv,
@@ -460,6 +511,7 @@ export async function handleAdminUi(request: Request, env: AdminEnv): Promise<Re
     path === "/admin" ||
     path === "/admin/logout" ||
     path === "/admin/ui/invites" ||
+    path === "/admin/ui/settings" ||
     /^\/admin\/ui\/invites\/[^/]+\/revoke$/.test(path) ||
     /^\/admin\/ui\/devices\/[^/]+\/revoke$/.test(path);
 
@@ -483,6 +535,10 @@ export async function handleAdminUi(request: Request, env: AdminEnv): Promise<Re
 
   if (request.method === "POST" && path === "/admin/ui/invites") {
     return createInvite(request, env, session);
+  }
+
+  if (request.method === "POST" && path === "/admin/ui/settings") {
+    return saveProgramSettings(request, env, session);
   }
 
   const inviteMatch = path.match(/^\/admin\/ui\/invites\/([^/]+)\/revoke$/);
