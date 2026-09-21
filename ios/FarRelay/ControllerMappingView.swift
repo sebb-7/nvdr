@@ -24,9 +24,17 @@ struct ControllerMappingView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Quick Navigation") {
+                NavigationLink("Edit Rotor Order") {
+                    ControllerRotorOrderView()
+                }
+                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections.")
+                    .foregroundStyle(.secondary)
+            }
+
             Section("How it works") {
                 Text("Base mappings are always active. Extended mappings are used through any button assigned to Layer: hold it for momentary Extended, tap it for one Extended action, or double-tap it to lock Extended until you press the Layer button again.")
-                Text("Quick Navigation uses a horizontal swipe on the DualSense touchpad as the rotor. Quick Bar and Profiles are local sections; Headings, Links, Form controls, Edit fields, Buttons, Landmarks, Tables, and Lists use NVDA Browse Mode shortcuts. Right-stick up or down moves within the selected section.")
+                Text("Quick Navigation uses a horizontal swipe on the DualSense touchpad as the rotor. Quick Bar, Profiles, and Editing are local sections. Editing provides Select All, Copy, Cut, Paste, Undo, and Redo. Headings, Links, Form controls, Edit fields, Buttons, Landmarks, Tables, and Lists use NVDA Browse Mode shortcuts. Right-stick up or down moves within the selected section.")
             }
 
             recommendedLayoutSection()
@@ -212,6 +220,12 @@ struct ControllerProfileEditorView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Quick Navigation") {
+                NavigationLink("Edit Rotor Order") { ControllerRotorOrderView() }
+                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections")
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Recommended layout") {
                 Button("Fill Unassigned with Recommended Layout") {
                     let count = mappings.fillUnassignedWithRecommendedLayout()
@@ -288,6 +302,12 @@ struct ControllerQuickBarView: View {
                     } label: {
                         Text(entry.label)
                     }
+                    .accessibilityAction(named: Text("Move Up")) {
+                        mappings.moveQuickBarEntry(id: entry.id, direction: -1)
+                    }
+                    .accessibilityAction(named: Text("Move Down")) {
+                        mappings.moveQuickBarEntry(id: entry.id, direction: 1)
+                    }
                 }
                 .onDelete(perform: mappings.deleteQuickBarEntries)
                 .onMove(perform: mappings.moveQuickBarEntries)
@@ -300,11 +320,42 @@ struct ControllerQuickBarView: View {
                 Button("Restore Recommended Quick Bar") {
                     mappings.restoreRecommendedQuickBar()
                 }
-                Text("Quick Bar uses the same action model as controller mapping. Layer and Quick Navigation control actions are intentionally excluded because they would create ambiguous local state.")
+                Text("Each action supports Move Up and Move Down VoiceOver actions. Quick Bar uses the same action model as controller mapping. Layer and Quick Navigation control actions are intentionally excluded because they would create ambiguous local state.")
                     .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Quick Bar")
+        .toolbar { EditButton() }
+    }
+}
+
+struct ControllerRotorOrderView: View {
+    @Environment(ControllerMappingSettings.self) private var mappings
+
+    var body: some View {
+        List {
+            Section("Rotor Sections") {
+                ForEach(mappings.draftProfile.quickNavigationOrder) { category in
+                    Text(category.rawValue)
+                        .accessibilityAction(named: Text("Move Up")) {
+                            mappings.moveQuickNavigationCategory(category, direction: -1)
+                        }
+                        .accessibilityAction(named: Text("Move Down")) {
+                            mappings.moveQuickNavigationCategory(category, direction: 1)
+                        }
+                }
+                .onMove(perform: mappings.moveQuickNavigationCategories)
+            }
+
+            Section {
+                Button("Restore Recommended Rotor Order") {
+                    mappings.restoreRecommendedQuickNavigationOrder()
+                }
+                Text("Rotor order is stored with this controller profile. Every section also supports Move Up and Move Down VoiceOver actions.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Rotor Order")
         .toolbar { EditButton() }
     }
 }
