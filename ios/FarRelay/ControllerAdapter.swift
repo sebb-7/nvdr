@@ -334,6 +334,7 @@ final class DualSenseControllerAdapter {
 
     private func handleTouchpadMove(x: Float, source: String) {
         guard quickNavigation.isActive,
+              layerEngine.physicallyHeldLayerID == nil,
               layerEngine.state == .base,
               let direction = touchpadRotor.move(x: x) else { return }
         let rotorOrder = mappings.activeProfile.quickNavigationOrder
