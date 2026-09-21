@@ -86,7 +86,8 @@ jobs:
           foreach ($script in @(
             "windows/release/Test-FarRelayTravelReadiness.ps1",
             "windows/release/Prepare-FarRelayTravel.ps1",
-            "windows/release/Start-FarRelayControlCenter.ps1"
+            "windows/release/Start-FarRelayControlCenter.ps1",
+            "windows/installer/Install-FarRelayShellLinks.ps1"
           )) {
             [void][scriptblock]::Create((Get-Content $script -Raw))
           }
