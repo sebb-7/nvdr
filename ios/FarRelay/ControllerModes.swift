@@ -360,6 +360,12 @@ struct ControllerDeviceStatus: Equatable, Sendable {
     }
 }
 
+enum ControllerTouchpadContactPhase: Sendable {
+    case down
+    case moving
+    case up
+}
+
 struct TouchpadRotorGesture: Sendable {
     private(set) var startX: Float?
     private(set) var consumed = false

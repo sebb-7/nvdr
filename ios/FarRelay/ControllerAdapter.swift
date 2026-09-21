@@ -20,6 +20,10 @@ final class DualSenseControllerAdapter {
     private var quickNavigation = QuickNavigationEngine()
     private var touchpadRotor = TouchpadRotorGesture()
     private var touchpad: GCControllerTouchpad?
+    private var dualSenseTouchpadPrimary: GCControllerDirectionPad?
+    private var touchpadContactActive = false
+    private var touchpadFallbackEndTask: Task<Void, Never>?
+    private var didObserveDualSensePrimaryMovement = false
     private let controllerHaptics = ControllerHapticFeedback()
     private var leftStick = ControllerStickDirectionClassifier(
         left: .leftStickLeft, right: .leftStickRight,
@@ -170,30 +174,70 @@ final class DualSenseControllerAdapter {
             batteryPercent: batteryPercent,
             batteryStateLabel: batteryStateLabel,
             supportsHaptics: candidate.haptics?.supportedLocalities.contains(.default) == true,
-            supportsTouchpad: !candidate.physicalInputProfile.touchpads.isEmpty
+            supportsTouchpad:
+                candidate.extendedGamepad is GCDualSenseGamepad ||
+                !candidate.physicalInputProfile.touchpads.isEmpty
         )
     }
 
     private func configureTouchpad(for candidate: GCController) {
-        guard let touchpad = candidate.physicalInputProfile.touchpads.values.first else { return }
+        resetTouchpadGesture()
+        didObserveDualSensePrimaryMovement = false
 
-        // DualSense touch coordinates are normalized absolute values. Ask the
-        // system to deliver the touch surface even when iOS has associated the
-        // element with a system gesture, otherwise horizontal rotor swipes can
-        // be delayed or swallowed before these handlers run.
-        touchpad.reportsAbsoluteTouchSurfaceValues = true
-        touchpad.preferredSystemGestureState = .alwaysReceive
-        touchpad.touchSurface.preferredSystemGestureState = .alwaysReceive
+        // Keep Apple's generic touchpad object for authoritative contact state
+        // (down / moving / up) when it is exposed by the physical profile.
+        if let touchpad = candidate.physicalInputProfile.touchpads.values.first {
+            touchpad.reportsAbsoluteTouchSurfaceValues = true
+            touchpad.preferredSystemGestureState = .alwaysReceive
+            touchpad.touchSurface.preferredSystemGestureState = .alwaysReceive
+            touchpad.button.preferredSystemGestureState = .alwaysReceive
+            self.touchpad = touchpad
 
-        self.touchpad = touchpad
-        touchpad.touchDown = { [weak self] _, x, _, _, _ in
-            Task { @MainActor in self?.touchpadRotor.begin(x: x) }
+            touchpad.touchDown = { [weak self] _, x, _, _, _ in
+                Task { @MainActor in
+                    self?.receiveTouchpadContact(.down, x: x, source: "generic touchpad")
+                }
+            }
+            touchpad.touchMoved = { [weak self] _, x, _, _, _ in
+                Task { @MainActor in
+                    self?.receiveTouchpadContact(.moving, x: x, source: "generic touchpad")
+                }
+            }
+            touchpad.touchUp = { [weak self] _, x, _, _, _ in
+                Task { @MainActor in
+                    self?.receiveTouchpadContact(.up, x: x, source: "generic touchpad")
+                }
+            }
+            diagnostics.observe(
+                source: .controller,
+                result: "Touchpad: generic contact-state path installed"
+            )
         }
-        touchpad.touchMoved = { [weak self] _, x, _, _, _ in
-            Task { @MainActor in self?.handleTouchpadMove(x: x) }
+
+        // DualSense exposes the primary finger explicitly. Prefer listening to
+        // that path as well because real devices can update touchpadPrimary
+        // even when GCControllerTouchpad callbacks are delayed or absent.
+        if let dualSense = candidate.extendedGamepad as? GCDualSenseGamepad {
+            let primary = dualSense.touchpadPrimary
+            primary.preferredSystemGestureState = .alwaysReceive
+            dualSense.touchpadButton.preferredSystemGestureState = .alwaysReceive
+            dualSenseTouchpadPrimary = primary
+            primary.valueChangedHandler = { [weak self] _, x, _ in
+                Task { @MainActor in
+                    self?.receiveDualSensePrimaryTouchpad(x: x)
+                }
+            }
+            diagnostics.observe(
+                source: .controller,
+                result: "Touchpad: DualSense primary-finger path installed"
+            )
         }
-        touchpad.touchUp = { [weak self] _, _, _, _, _ in
-            Task { @MainActor in self?.touchpadRotor.end() }
+
+        if touchpad == nil, dualSenseTouchpadPrimary == nil {
+            diagnostics.observe(
+                source: .controller,
+                result: "Touchpad: no supported touch surface exposed by GameController"
+            )
         }
     }
 
@@ -201,12 +245,97 @@ final class DualSenseControllerAdapter {
         touchpad?.touchDown = nil
         touchpad?.touchMoved = nil
         touchpad?.touchUp = nil
+        dualSenseTouchpadPrimary?.valueChangedHandler = nil
         touchpad = nil
+        dualSenseTouchpadPrimary = nil
+        didObserveDualSensePrimaryMovement = false
+        resetTouchpadGesture()
+    }
+
+    private func receiveDualSensePrimaryTouchpad(x: Float) {
+        if !didObserveDualSensePrimaryMovement {
+            didObserveDualSensePrimaryMovement = true
+            diagnostics.observe(
+                source: .controller,
+                result: "Touchpad: DualSense primary-finger movement received"
+            )
+        }
+
+        if let touchpad {
+            switch touchpad.touchState {
+            case .down:
+                receiveTouchpadContact(.down, x: x, source: "DualSense primary")
+            case .moving:
+                receiveTouchpadContact(.moving, x: x, source: "DualSense primary")
+            case .up:
+                receiveTouchpadContact(.up, x: x, source: "DualSense primary")
+            @unknown default:
+                resetTouchpadGesture()
+            }
+            return
+        }
+
+        // Very defensive fallback for a DualSense whose typed profile is
+        // available while the generic touchpad collection is not. The first
+        // movement establishes a contact; inactivity closes that contact.
+        receiveTouchpadContact(.moving, x: x, source: "DualSense primary fallback")
+        scheduleTouchpadFallbackEnd()
+    }
+
+    private func receiveTouchpadContact(
+        _ phase: ControllerTouchpadContactPhase,
+        x: Float,
+        source: String
+    ) {
+        switch phase {
+        case .down:
+            touchpadFallbackEndTask?.cancel()
+            touchpadFallbackEndTask = nil
+            if touchpadContactActive {
+                handleTouchpadMove(x: x, source: source)
+            } else {
+                touchpadContactActive = true
+                touchpadRotor.begin(x: x)
+            }
+
+        case .moving:
+            if !touchpadContactActive {
+                // Recover if Apple delivered movement before the down callback.
+                touchpadContactActive = true
+                touchpadRotor.begin(x: x)
+                diagnostics.observe(
+                    source: .controller,
+                    result: "Touchpad: recovered contact from movement"
+                )
+                return
+            }
+            handleTouchpadMove(x: x, source: source)
+
+        case .up:
+            resetTouchpadGesture()
+        }
+    }
+
+    private func scheduleTouchpadFallbackEnd() {
+        touchpadFallbackEndTask?.cancel()
+        touchpadFallbackEndTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.resetTouchpadGesture()
+        }
+    }
+
+    private func resetTouchpadGesture() {
+        touchpadFallbackEndTask?.cancel()
+        touchpadFallbackEndTask = nil
+        touchpadContactActive = false
         touchpadRotor.end()
     }
 
-    private func handleTouchpadMove(x: Float) {
-        guard quickNavigation.isActive, let direction = touchpadRotor.move(x: x) else { return }
+    private func handleTouchpadMove(x: Float, source: String) {
+        guard quickNavigation.isActive,
+              layerEngine.state == .base,
+              let direction = touchpadRotor.move(x: x) else { return }
         let rotorOrder = mappings.activeProfile.quickNavigationOrder
         let change = direction > 0
             ? quickNavigation.nextCategoryChange(in: rotorOrder)
@@ -217,6 +346,10 @@ final class DualSenseControllerAdapter {
                 activeProfileID: mappings.activeProfileID
             )
         }
+        diagnostics.observe(
+            source: .controller,
+            result: "Touchpad: rotor threshold crossed via \(source)"
+        )
         if settings.hapticFeedbackEnabled {
             controllerHaptics.play(change.wrapped ? .boundary : .selection)
         }
@@ -361,6 +494,7 @@ final class DualSenseControllerAdapter {
             present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
             return true
         case .quickNavigation:
+            resetTouchpadGesture()
             let state = quickNavigation.toggle()
             if quickNavigation.isActive {
                 quickNavigation.synchronizeProfileSelection(
@@ -406,6 +540,7 @@ final class DualSenseControllerAdapter {
         if quickNavigation.isActive {
             switch input {
             case .create, .circle:
+                resetTouchpadGesture()
                 announce(quickNavigation.exit() ?? "Quick Navigation off.")
             case .rightStickUp:
                 switch quickNavigation.category {
@@ -678,6 +813,7 @@ final class DualSenseControllerAdapter {
     }
 
     private func setTextMode(_ active: Bool) {
+        resetTouchpadGesture()
         if active, isQuickCommandModeActive {
             setQuickCommandMode(false, restoreQuickNavigation: false, announceChange: false)
         }
@@ -701,6 +837,7 @@ final class DualSenseControllerAdapter {
         restoreQuickNavigation: Bool = true,
         announceChange: Bool = true
     ) {
+        resetTouchpadGesture()
         if active, isTextModeActive {
             setTextMode(false)
         }
@@ -1415,15 +1552,22 @@ final class DualSenseControllerAdapter {
     }
 
     func beginTouchpadSwipeForTesting(x: Float) {
-        touchpadRotor.begin(x: x)
+        receiveTouchpadContact(.down, x: x, source: "test")
     }
 
     func moveTouchpadForTesting(x: Float) {
-        handleTouchpadMove(x: x)
+        receiveTouchpadContact(.moving, x: x, source: "test")
     }
 
     func endTouchpadSwipeForTesting() {
-        touchpadRotor.end()
+        receiveTouchpadContact(.up, x: 0, source: "test")
+    }
+
+    func receiveTouchpadContactForTesting(
+        _ phase: ControllerTouchpadContactPhase,
+        x: Float
+    ) {
+        receiveTouchpadContact(phase, x: x, source: "test")
     }
 
     /// Test seam for the production D-pad normalization path.
@@ -1490,7 +1634,7 @@ final class DualSenseControllerAdapter {
         _ = inputLifecycle.releaseAll()
         leftStick.reset()
         rightStick.reset()
-        touchpadRotor.end()
+        resetTouchpadGesture()
         layerEngine.reset()
         if exitQuickNavigation { _ = quickNavigation.exit() }
         isTextModeActive = false
