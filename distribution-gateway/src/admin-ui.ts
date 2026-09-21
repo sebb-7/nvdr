@@ -478,11 +478,6 @@ async function createInvite(
 
   const code = "FR-" + channel.toUpperCase() + "-" + randomText(10).toUpperCase();
   const id = crypto.randomUUID();
-  if (!Number.isInteger(publicEnrollmentAccessDays) || publicEnrollmentAccessDays < 1 || publicEnrollmentAccessDays > 365 ||
-      !Number.isInteger(publicEnrollmentInviteHours) || publicEnrollmentInviteHours < 1 || publicEnrollmentInviteHours > 720 ||
-      !Number.isInteger(publicEnrollmentMaxSignups) || publicEnrollmentMaxSignups < 1 || publicEnrollmentMaxSignups > 10000) {
-    return renderDashboard(request, env, session, undefined, "Check the public enrollment access days, invitation hours, and signup limit.");
-  }
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + hoursValue * 3600000).toISOString();
   await env.DB.prepare(
@@ -522,6 +517,11 @@ async function saveProgramSettings(
     if (value && !/^https:\/\//i.test(value)) {
       return renderDashboard(request, env, session, undefined, name + " link must use HTTPS.");
     }
+  }
+  if (!Number.isInteger(publicEnrollmentAccessDays) || publicEnrollmentAccessDays < 1 || publicEnrollmentAccessDays > 365 ||
+      !Number.isInteger(publicEnrollmentInviteHours) || publicEnrollmentInviteHours < 1 || publicEnrollmentInviteHours > 720 ||
+      !Number.isInteger(publicEnrollmentMaxSignups) || publicEnrollmentMaxSignups < 1 || publicEnrollmentMaxSignups > 10000) {
+    return renderDashboard(request, env, session, undefined, "Check the public enrollment access days, invitation hours, and signup limit.");
   }
   const now = new Date().toISOString();
   await env.DB.batch([
