@@ -150,6 +150,20 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
+    func testLayerReturnToBaseUsesNeutralSelectionFeedback() async {
+        let (_, adapter, _, feedback, _) = makeAdapter()
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1.1)
+        await settle()
+        adapter.receiveForTesting(input: .dpadUp, pressed: false, at: 1.2)
+        await settle()
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.3)
+
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+        XCTAssertEqual(feedback.lastRequest?.kind, .selectionAccepted)
+        XCTAssertNotEqual(feedback.lastRequest?.kind, .warning)
+    }
+
     func testActionReleaseUsesOriginalResolvedActionAfterLayerChanges() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .options, pressed: true, at: 1)
@@ -398,8 +412,12 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
 
-        // Quick Bar -> Profiles -> Headings now takes two horizontal swipes.
-        // Right-stick Down then moves to the next heading and Cross becomes Enter.
+        // Quick Bar -> Profiles -> Editing -> Headings takes three horizontal
+        // swipes. Right-stick Down then moves to the next heading and Cross
+        // becomes Enter.
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
@@ -422,6 +440,30 @@ final class ControllerAdapterTests: XCTestCase {
                 .init(VK.return, true), .init(VK.return, false)
             ]
         )
+    }
+
+    func testEditingRotorExecutesSelectedEditingChord() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
+
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.control, true), .init(0x41, true),
+                .init(0x41, false), .init(VK.control, false)
+            ]
+        )
+        XCTAssertFalse(sink.transitions.contains { $0.key == VK.return })
     }
 
     func testProfilesRotorActivatesSelectedProfileWithoutSendingEnter() async {
