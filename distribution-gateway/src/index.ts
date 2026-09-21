@@ -4,6 +4,7 @@ interface Env {
   DB: D1Database;
   RELEASES: R2Bucket;
   ADMIN_TOKEN: string;
+  GITHUB_RELEASE_TOKEN?: string;
   EMAIL?: SendEmail;
 }
 
