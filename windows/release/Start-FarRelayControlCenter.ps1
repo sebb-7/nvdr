@@ -82,13 +82,89 @@ function Install-FarRelayAdminAuthorizedKey([string]$KeyPath) {
 
 function Test-UsesSharedAdministratorAuthorizedKeys {
     if (-not (Test-CurrentUserAdministratorMember)) { return $false }
-    $configPath = Join-Path $env:ProgramData 'ssh\sshd_config'
-    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return $false }
+    $sshdConfigPath = Join-Path $env:ProgramData 'ssh\sshd_config'
+    if (-not (Test-Path -LiteralPath $sshdConfigPath -PathType Leaf)) { return $false }
     try {
-        $text = Get-Content -LiteralPath $configPath -Raw
+        $text = Get-Content -LiteralPath $sshdConfigPath -Raw
         return [regex]::IsMatch(
             $text,
-            '(?ims)^\s*Match\s+Group\s+administrators\s*$.*?^\s*AuthorizedKeysFile\s+__PROGRAMDATA__/ssh/administrators_authorized_keys\s*
+            '(?ims)^\s*Match\s+Group\s+administrators\s*$.*?^\s*AuthorizedKeysFile\s+__PROGRAMDATA__/ssh/administrators_authorized_keys\s*$'
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Get-OrCreateFarRelayIPhoneKey {
+    $sshKeygen = Get-Command ssh-keygen.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $sshKeygen) { throw 'ssh-keygen.exe is unavailable. Run Prepare for Travel first so Windows OpenSSH is installed.' }
+
+    $keyDirectory = Join-Path $env:LOCALAPPDATA 'FarRelay\ssh'
+    New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
+    $base = Join-Path $keyDirectory 'farrelay_iphone_ed25519'
+
+    for ($index = 1; $index -le 20; $index++) {
+        $candidate = if ($index -eq 1) { $base } else { "$base-$index" }
+        $publicPath = "$candidate.pub"
+
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $derived = (& $sshKeygen.Source -y -f $candidate 2>$null | Select-Object -First 1)
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($derived)) { continue }
+
+            if (Test-Path -LiteralPath $publicPath -PathType Leaf) {
+                $existingPublic = (Get-Content -LiteralPath $publicPath -Raw).Trim()
+                if ((Get-PublicKeyCore $existingPublic) -ne (Get-PublicKeyCore $derived)) { continue }
+                return [pscustomobject]@{ Private = $candidate; Public = $publicPath; PublicLine = $existingPublic }
+            }
+
+            $publicLine = "$($derived.Trim()) farrelay-iphone@$env:COMPUTERNAME"
+            Set-Content -LiteralPath $publicPath -Value $publicLine -Encoding ascii
+            return [pscustomobject]@{ Private = $candidate; Public = $publicPath; PublicLine = $publicLine }
+        }
+
+        if (Test-Path -LiteralPath $publicPath -PathType Leaf) { continue }
+
+        $comment = "farrelay-iphone@$env:COMPUTERNAME"
+        & $sshKeygen.Source -q -t ed25519 -N '""' -C $comment -f $candidate
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $candidate -PathType Leaf) -or -not (Test-Path -LiteralPath $publicPath -PathType Leaf)) {
+            throw 'Windows OpenSSH could not generate the dedicated FarRelay SSH key.'
+        }
+        $publicLine = (Get-Content -LiteralPath $publicPath -Raw).Trim()
+        return [pscustomobject]@{ Private = $candidate; Public = $publicPath; PublicLine = $publicLine }
+    }
+
+    throw 'FarRelay could not find a safe unused path for its dedicated iPhone SSH key. No existing key was changed.'
+}
+
+function Prepare-FarRelayIPhoneSshKey {
+    $key = Get-OrCreateFarRelayIPhoneKey
+
+    if (Test-UsesSharedAdministratorAuthorizedKeys) {
+        if (Test-IsElevatedAdministrator) {
+            Install-FarRelayAdminAuthorizedKey $key.Public
+        } else {
+            $arguments = @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', ('"' + $PSCommandPath + '"'),
+                '-InstallAdminAuthorizedKey',
+                '-PublicKeyPath', ('"' + $key.Public + '"')
+            )
+            $process = Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw 'FarRelay could not authorize the SSH key. Administrator approval may have been cancelled.' }
+        }
+    } else {
+        $target = Join-Path $env:USERPROFILE '.ssh\authorized_keys'
+        [void](Add-PublicKeyWithoutReplacing $target $key.PublicLine)
+    }
+
+    $privateKey = Get-Content -LiteralPath $key.Private -Raw
+    Set-Clipboard -Value $privateKey
+
+    return 'FarRelay SSH key ready. The PRIVATE KEY required by the iPhone app is copied to the clipboard. Paste it into FarRelay > Computer > Authentication > Private Key. Do not paste this private key into chat, email, a forum, or feedback. No existing SSH key or authorized_keys entry was removed or overwritten.'
+}
+
+function Get-AcPowerIndex([string]$Subgroup, [string]$Setting) {
     try {
         $output = & powercfg.exe /query SCHEME_CURRENT $Subgroup $Setting 2>&1
         $match = $output | Select-String -Pattern 'Current AC Power Setting Index:\s+0x([0-9a-fA-F]+)' | Select-Object -First 1
