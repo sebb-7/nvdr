@@ -431,6 +431,7 @@ final class ControllerMappingTests: XCTestCase {
     func testBindingEditorRoundTripsFarRelayProfileActions() {
         for action in [
             FarRelayControllerAction.textMode,
+            .quickCommandMode,
             .repeatLastQuickBar,
             .nextProfile,
             .previousProfile

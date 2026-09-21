@@ -623,6 +623,195 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.back, true), .init(VK.back, false)])
     }
 
+    func testQuickCommandModeIsLocalUntilExplicitSendAndRestoresQuickNavigation() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        await settle()
+        XCTAssertTrue(sink.transitions.isEmpty)
+
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.control, true), .init(0x56, true),
+                .init(0x56, false), .init(VK.control, false)
+            ]
+        )
+        XCTAssertFalse(adapter.isQuickCommandModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testQuickCommandSequenceExecutesChordTextAndEnterInOrder() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("win+r,powershell,enter")
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        let expectedPrefix: [ControllerTransition] = [
+            .init(VK.lwin, true), .init(0x52, true),
+            .init(0x52, false), .init(VK.lwin, false)
+        ]
+        XCTAssertEqual(Array(sink.transitions.prefix(4)), expectedPrefix)
+        XCTAssertEqual(Array(sink.transitions.suffix(2)), [.init(VK.return, true), .init(VK.return, false)])
+
+        // "powershell" is ten literal characters, each represented by one
+        // down/up pair between Win+R and Enter.
+        XCTAssertEqual(sink.transitions.count, 4 + (10 * 2) + 2)
+    }
+
+    func testQuickCommandSupportsFourPhysicalKeysAndReleasesInReverseOrder() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("ctrl+shift+delete+escape")
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.control, true),
+                .init(VK.shift, true),
+                .init(VK.delete, true),
+                .init(VK.escape, true),
+                .init(VK.escape, false),
+                .init(VK.delete, false),
+                .init(VK.shift, false),
+                .init(VK.control, false)
+            ]
+        )
+    }
+
+    func testQuickCommandRejectsMacModifierBeforeAnyWindowsInput() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("cmd+v")
+        XCTAssertFalse(adapter.sendQuickCommand())
+        await settle()
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertEqual(adapter.quickCommandStatus, "Command is not available for Windows/NVDA Quick Command.")
+    }
+
+    func testQuickCommandParseFailureSendsNothingAndNeverLogsPayload() async {
+        let (mappings, adapter, sink, _, diagnostics) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        let secret = "SECRET_SENTINEL_42"
+        adapter.updateQuickCommandBuffer("ctrl+(secret)")
+        XCTAssertFalse(adapter.sendQuickCommand())
+        await settle()
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertFalse(
+            diagnostics.entries.contains { $0.result.contains(secret) || $0.reportLine.contains(secret) }
+        )
+    }
+
+    func testQuickCommandCancelSendsNothingAndClearsLocalBuffer() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        adapter.exitQuickCommandMode()
+        XCTAssertFalse(adapter.sendQuickCommand())
+        await settle()
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertEqual(adapter.quickCommandBuffer, "")
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testQuickCommandTransportFailureReleasesAlreadyPressedKeys() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        sink.lastInputForwardingResult = .rejected("test rejection")
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        // Control-down is rejected after it is emitted by the existing NVDA
+        // target; Quick Command must still issue the matching release.
+        XCTAssertEqual(
+            sink.transitions,
+            [.init(VK.control, true), .init(VK.control, false)]
+        )
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertEqual(adapter.quickCommandStatus, "Quick Command failed.")
+    }
+
+    func testQuickCommandCapturesOriginalTargetLeaseAtSendTime() async {
+        let defaults = makeDefaults()
+        let mappings = ControllerMappingSettings(defaults: defaults)
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        let firstSink = ControllerTestKeySink()
+        let secondSink = ControllerTestKeySink()
+        let router = RemoteIntentRouter()
+        let firstID = NVDARemoteIntentTarget.defaultID
+        let secondID = RemoteTargetID("nvda-second")
+        router.register(NVDARemoteIntentTarget(keySink: firstSink, id: firstID))
+        router.register(NVDARemoteIntentTarget(keySink: secondSink, id: secondID))
+        XCTAssertTrue(router.setActiveTarget(id: firstID))
+        let settings = AppSettings()
+        let adapter = DualSenseControllerAdapter(
+            mappings: mappings,
+            settings: settings,
+            router: router,
+            diagnostics: diagnostics,
+            feedback: InteractionFeedback(settings: settings)
+        )
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        XCTAssertTrue(adapter.sendQuickCommand())
+
+        // A later selection change must not redirect this already-confirmed command.
+        XCTAssertTrue(router.setActiveTarget(id: secondID))
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertFalse(firstSink.transitions.isEmpty)
+        XCTAssertTrue(secondSink.transitions.isEmpty)
+    }
+
     func testNativeBSIDeleteEmptyHookFiresWithoutLocalTextMutation() {
         let textView = RemoteTextModeTextView()
         var emptyDeleteCount = 0

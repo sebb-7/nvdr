@@ -91,6 +91,7 @@ struct ControllerLayerAction: Codable, Hashable, Sendable {
 enum QuickNavigationAction: String, Codable, Hashable, Sendable { case toggle }
 enum FarRelayControllerAction: String, Codable, Hashable, Sendable {
     case textMode
+    case quickCommandMode
     case repeatLastQuickBar
     case nextProfile
     case previousProfile
@@ -125,6 +126,7 @@ extension ControllerAction {
         case .farRelay(let action):
             switch action {
             case .textMode: return "Text Mode"
+            case .quickCommandMode: return "Quick Command Mode"
             case .repeatLastQuickBar: return "Repeat Last Quick Bar Action"
             case .nextProfile: return "Next Profile"
             case .previousProfile: return "Previous Profile"
