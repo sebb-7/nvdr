@@ -6,6 +6,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(InteractionFeedback.self) private var interactionFeedback
     @Environment(InputDiagnosticStore.self) private var inputDiagnostics
     @Environment(RemoteIntentRouter.self) private var router
+    @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
@@ -16,16 +17,30 @@ struct NVDARemoteFeatureView: View {
         Form {
             Section("Computer") {
                 Text(profile.displayName)
-                Button(connectionAction.title, systemImage: "network") {
-                    switch connectionAction {
-                    case .connect:
-                        activateNVDAControlTarget()
-                        bridge.start(settings: settings, profile: profile)
-                    case .cancel, .disconnect:
-                        bridge.stop()
+                HStack(alignment: .firstTextBaseline) {
+                    Button(connectionAction.title, systemImage: "network") {
+                        switch connectionAction {
+                        case .connect:
+                            activateNVDAControlTarget()
+                            bridge.start(settings: settings, profile: profile)
+                        case .cancel, .disconnect:
+                            bridge.stop()
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+
+                    Spacer()
+
+                    Text(controllerAdapter.controllerStatus.compactBatteryLabel)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(controllerAdapter.controllerStatus.accessibilityLabel)
                 }
-                .buttonStyle(.borderedProminent)
+                if controllerAdapter.controllerStatus.isConnected {
+                    Text(controllerAdapter.controllerStatus.capabilitiesLabel)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Status") { Text(statusLabel) }
             Section("Keyboard forwarding") {
@@ -75,6 +90,7 @@ struct NVDARemoteFeatureView: View {
         }
         .onAppear {
             activateNVDAControlTarget()
+            controllerAdapter.refreshControllerStatus()
         }
         .onChange(of: bridge.status) { old, new in
             handleStatusChange(from: old, to: new)

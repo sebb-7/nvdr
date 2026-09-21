@@ -44,6 +44,9 @@ hardware before calling a build physically validated.
 - [ ] Map Repeat Last Quick Bar Action, execute a repeatable Quick Bar keyboard action, and confirm repeat replays it exactly once with balanced key transitions.
 - [ ] With Haptic Feedback enabled, feel a light DualSense pulse for ordinary rotor section changes and a stronger double pulse when wrapping Lists ↔ Quick Bar.
 - [ ] Disable Haptic Feedback and confirm rotor/controller behavior is unchanged except for vibration.
+- [ ] With the DualSense connected, confirm Remote Control exposes an accessible controller battery percentage/state when iOS reports it, plus touchpad/haptics/light capabilities.
+- [ ] Disconnect the DualSense and confirm the Remote Control screen immediately stops presenting the old battery percentage.
+- [ ] If iOS returns no controller battery object, confirm FarRelay says battery unavailable rather than 0 percent.
 
 ## Mac Remote foundation
 

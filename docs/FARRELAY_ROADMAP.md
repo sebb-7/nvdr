@@ -1,7 +1,7 @@
 # FarRelay Roadmap
 
 Updated: 2026-09-21
-Active branch: `feat/remote-intent-v2-recovery`
+Active branch: `feat/remote-control-profiles`
 
 ## Implemented / validated
 
@@ -64,6 +64,12 @@ Active branch: `feat/remote-intent-v2-recovery`
 - Windows private updater exists with authenticated manifest/download design, hash/size validation, rollback, and daily scheduled update support.
 - Private Cloudflare Worker + D1 + private R2 design exists.
 - Private updater publication/manifest flow is not yet fully operational for normal tester updates, so manual local install/build is still sometimes required.
+
+### Controller status
+- Remote Control exposes the connected controller battery percentage/state when iOS supplies it.
+- Controller capabilities such as touchpad, haptics, and light are exposed textually for VoiceOver.
+- Missing battery data is shown as unavailable rather than guessed.
+- Controller telemetry is observational and never gates remote input.
 
 ### Interaction feedback
 - FarRelay interaction sound assets and sound intent plumbing exist.

@@ -50,6 +50,7 @@ final class DualSenseControllerAdapter {
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
 
     private(set) var connectedControllerName: String?
+    private(set) var controllerStatus = ControllerStatusSnapshot.disconnected
     /// This is the real surface of the currently attached controller. An
     /// unpaired controller leaves the profile editable but marks every input
     /// as runtime-unavailable rather than pretending it can be pressed.
@@ -100,6 +101,7 @@ final class DualSenseControllerAdapter {
         controllerHaptics.detach()
         controller = nil
         connectedControllerName = nil
+        controllerStatus = .disconnected
         availableInputs = []
         controllerHasRemappedElements = false
     }
@@ -115,6 +117,7 @@ final class DualSenseControllerAdapter {
         }
         configureTouchpad(for: candidate)
         controllerHaptics.attach(to: candidate)
+        refreshControllerStatus()
     }
 
     private func configureTouchpad(for candidate: GCController) {
@@ -166,11 +169,13 @@ final class DualSenseControllerAdapter {
         clearTouchpadHandlers()
         controller = nil
         connectedControllerName = nil
+        controllerStatus = .disconnected
         availableInputs = []
         controllerHasRemappedElements = false
     }
 
     private func process(element: GCControllerElement, gamepad: GCExtendedGamepad) {
+        refreshControllerStatus()
         let now = ProcessInfo.processInfo.systemUptime
         controllerHasRemappedElements = gamepad.hasRemappedElements
         if let input = buttonInput(for: element, gamepad: gamepad), let button = element as? GCControllerButtonInput {
@@ -274,10 +279,11 @@ final class DualSenseControllerAdapter {
                     profiles: mappings.profiles,
                     activeProfileID: mappings.activeProfileID
                 )
-                announce("Quick Navigation. \(quickNavigation.currentSectionAnnouncement(
+                let sectionAnnouncement = quickNavigation.currentSectionAnnouncement(
                     quickBar: mappings.activeProfile.quickBar,
                     profiles: mappings.profiles
-                )).")
+                )
+                announce("Quick Navigation. \(sectionAnnouncement).")
             } else {
                 announce(state)
             }
@@ -714,6 +720,14 @@ final class DualSenseControllerAdapter {
                 }
             }
         }
+    }
+
+    func refreshControllerStatus() {
+        guard let controller else {
+            controllerStatus = .disconnected
+            return
+        }
+        controllerStatus = ControllerStatusSnapshot(controller: controller)
     }
 
     private func inputsExposed(by gamepad: GCExtendedGamepad) -> Set<ControllerInput> {
