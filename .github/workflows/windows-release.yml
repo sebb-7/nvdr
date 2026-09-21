@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Distribution version, for example 0.2.0-beta.1
+        description: Distribution version, for example 0.2.0-beta.3
         required: true
         type: string
       channel:
@@ -13,11 +13,10 @@ on:
         default: beta
         type: choice
         options: [beta, stable]
-      publish_release:
-        description: Publish assets to the public FarRelay release channel
+      gateway_url:
+        description: HTTPS base URL of the authenticated FarRelay tester gateway, without trailing slash
         required: true
-        default: false
-        type: boolean
+        type: string
 
 permissions:
   contents: read
@@ -28,12 +27,17 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       CHANNEL: ${{ inputs.channel }}
+      GATEWAY_URL: ${{ inputs.gateway_url }}
       DIST: windows/dist
-      RELEASE_REPO: sebb-7/farrelay-releases
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
+      - name: Validate private distribution configuration
+        shell: pwsh
+        run: |
+          if (-not $env:GATEWAY_URL.StartsWith("https://")) { throw "gateway_url must use HTTPS" }
+          if ($env:GATEWAY_URL.EndsWith("/")) { throw "gateway_url must not end with a slash" }
       - name: Test update policy and staging transaction
         working-directory: farrelay-updater
         run: cargo test --locked
@@ -60,13 +64,13 @@ jobs:
         run: |
           Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe" -DestinationPath "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip" -Force
           Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe", "$env:DIST/FarRelayBridge-$env:VERSION.nvda-addon" -DestinationPath "$env:DIST/FarRelay-Windows-Portable-$env:VERSION.zip" -Force
-      - name: Write strict update manifest and checksums
+      - name: Write private-channel manifest and checksums
         shell: pwsh
         run: |
           $payload = Get-Item "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip"
           $hash = (Get-FileHash $payload.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $assetUrl = "https://github.com/sebb-7/farrelay-releases/releases/download/farrelay-$env:CHANNEL/FarRelay-Windows-Update-$env:VERSION.zip"
-          @{ schema_version = 1; channel = $env:CHANNEL; version = $env:VERSION; published_at = (Get-Date).ToUniversalTime().ToString('o'); assets = @{ windows_x86_64 = @{ archive_url = $assetUrl; sha256 = $hash; size = $payload.Length } } } | ConvertTo-Json -Depth 5 | Set-Content "$env:DIST/update-$env:CHANNEL.json" -NoNewline
+          $assetPath = "/v1/download/$env:VERSION/windows_x86_64"
+          @{ schema_version = 1; channel = $env:CHANNEL; version = $env:VERSION; published_at = (Get-Date).ToUniversalTime().ToString('o'); assets = @{ windows_x86_64 = @{ archive_url = $assetPath; sha256 = $hash; size = $payload.Length } } } | ConvertTo-Json -Depth 5 | Set-Content "$env:DIST/update-$env:CHANNEL.json" -NoNewline
           Copy-Item "$env:DIST/update-$env:CHANNEL.json" "$env:DIST/update-manifest.json"
           Get-ChildItem "$env:DIST/*" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "{0}  {1}" -f $_.Hash.ToLowerInvariant(), $_.Path.Split([IO.Path]::DirectorySeparatorChar)[-1] } | Set-Content "$env:DIST/SHA256SUMS.txt"
       - name: Build accessible Inno Setup installer
@@ -74,7 +78,7 @@ jobs:
         run: |
           choco install innosetup -y --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          iscc "/DAppVersion=$env:VERSION" "/DChannel=$env:CHANNEL" windows/installer/FarRelay.iss
+          iscc "/DAppVersion=$env:VERSION" "/DChannel=$env:CHANNEL" "/DGatewayUrl=$env:GATEWAY_URL" windows/installer/FarRelay.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "windows/output/FarRelay-Setup-$env:VERSION.exe" $env:DIST
       - uses: actions/upload-artifact@v4
@@ -82,22 +86,3 @@ jobs:
           name: FarRelay-Windows-${{ inputs.version }}
           path: windows/dist/*
           if-no-files-found: error
-      - name: Publish release assets when requested
-        if: inputs.publish_release
-        env:
-          GH_TOKEN: ${{ secrets.FARRELAY_RELEASE_TOKEN }}
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw "FARRELAY_RELEASE_TOKEN is required to publish to $env:RELEASE_REPO. Build-only runs do not require it."
-          }
-          $tag = "farrelay-$env:CHANNEL"
-          gh release view $tag --repo $env:RELEASE_REPO 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            if ($env:CHANNEL -eq 'beta') {
-              gh release create $tag --repo $env:RELEASE_REPO --title "FarRelay beta channel" --notes "Rolling public beta channel for FarRelay Windows distribution." --prerelease
-            } else {
-              gh release create $tag --repo $env:RELEASE_REPO --title "FarRelay stable channel" --notes "Rolling public stable channel for FarRelay Windows distribution."
-            }
-          }
-          gh release upload $tag windows/dist/* --repo $env:RELEASE_REPO --clobber
