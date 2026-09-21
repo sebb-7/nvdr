@@ -44,6 +44,19 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(rotor.exit(), "Quick Navigation off.")
     }
 
+    func testTouchpadRotorGestureRequiresHorizontalThresholdAndConsumesOneStep() {
+        var gesture = TouchpadRotorGesture()
+        gesture.begin(x: -0.4)
+        XCTAssertNil(gesture.move(x: -0.2))
+        XCTAssertEqual(gesture.move(x: 0.1), 1)
+        XCTAssertNil(gesture.move(x: 0.8))
+        gesture.end()
+
+        gesture.begin(x: 0.5)
+        XCTAssertEqual(gesture.move(x: 0.0), -1)
+        gesture.end()
+    }
+
     func testTextMapperUsesShiftForUppercaseAndCommonPunctuation() {
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "A"), .init(key: .a, modifiers: [.shift]))
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "z"), .init(key: .z))

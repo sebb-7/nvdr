@@ -248,6 +248,34 @@ struct QuickNavigationEngine: Sendable {
     }
 }
 
+struct TouchpadRotorGesture: Sendable {
+    private(set) var startX: Float?
+    private(set) var consumed = false
+    let threshold: Float
+
+    init(threshold: Float = 0.35) {
+        self.threshold = threshold
+    }
+
+    mutating func begin(x: Float) {
+        startX = x
+        consumed = false
+    }
+
+    mutating func move(x: Float) -> Int? {
+        guard let startX, !consumed else { return nil }
+        let delta = x - startX
+        guard abs(delta) >= threshold else { return nil }
+        consumed = true
+        return delta > 0 ? 1 : -1
+    }
+
+    mutating func end() {
+        startX = nil
+        consumed = false
+    }
+}
+
 enum ControllerTextCharacterMapper {
     static func action(for character: Character) -> KeyboardAction? {
         let value = String(character)

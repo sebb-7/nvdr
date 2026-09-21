@@ -18,6 +18,8 @@ final class DualSenseControllerAdapter {
     private var inputLifecycle = ControllerInputLifecycle()
     private var layerEngine = ControllerLayerEngine()
     private var quickNavigation = QuickNavigationEngine()
+    private var touchpadRotor = TouchpadRotorGesture()
+    private var touchpad: GCControllerTouchpad?
     private var leftStick = ControllerStickDirectionClassifier(
         left: .leftStickLeft, right: .leftStickRight,
         up: .leftStickUp, down: .leftStickDown
@@ -92,6 +94,7 @@ final class DualSenseControllerAdapter {
         connectObservation = nil
         disconnectObservation = nil
         controller?.extendedGamepad?.valueChangedHandler = nil
+        clearTouchpadHandlers()
         controller = nil
         connectedControllerName = nil
         availableInputs = []
@@ -107,12 +110,41 @@ final class DualSenseControllerAdapter {
         gamepad.valueChangedHandler = { [weak self] gamepad, element in
             Task { @MainActor in self?.process(element: element, gamepad: gamepad) }
         }
+        configureTouchpad(for: candidate)
+    }
+
+    private func configureTouchpad(for candidate: GCController) {
+        guard let touchpad = candidate.physicalInputProfile.touchpads.values.first else { return }
+        self.touchpad = touchpad
+        touchpad.touchDown = { [weak self] _, x, _, _, _ in
+            Task { @MainActor in self?.touchpadRotor.begin(x: x) }
+        }
+        touchpad.touchMoved = { [weak self] _, x, _, _, _ in
+            Task { @MainActor in self?.handleTouchpadMove(x: x) }
+        }
+        touchpad.touchUp = { [weak self] _, _, _, _, _ in
+            Task { @MainActor in self?.touchpadRotor.end() }
+        }
+    }
+
+    private func clearTouchpadHandlers() {
+        touchpad?.touchDown = nil
+        touchpad?.touchMoved = nil
+        touchpad?.touchUp = nil
+        touchpad = nil
+        touchpadRotor.end()
+    }
+
+    private func handleTouchpadMove(x: Float) {
+        guard quickNavigation.isActive, let direction = touchpadRotor.move(x: x) else { return }
+        announce(direction > 0 ? quickNavigation.nextCategory() : quickNavigation.previousCategory())
     }
 
     private func detach(_ candidate: GCController) {
         guard candidate == controller else { return }
         releaseActiveActions()
         controller?.extendedGamepad?.valueChangedHandler = nil
+        clearTouchpadHandlers()
         controller = nil
         connectedControllerName = nil
         availableInputs = []
@@ -235,10 +267,6 @@ final class DualSenseControllerAdapter {
             switch input {
             case .create, .circle:
                 announce(quickNavigation.exit() ?? "Quick Navigation off.")
-            case .dpadLeft:
-                announce(quickNavigation.previousCategory())
-            case .dpadRight:
-                announce(quickNavigation.nextCategory())
             case .rightStickUp:
                 if quickNavigation.category == .quickBar {
                     announce(quickNavigation.previousQuickBarAction())
@@ -463,6 +491,18 @@ final class DualSenseControllerAdapter {
         handle(inputLifecycle.receive(input, pressed: pressed, at: time))
     }
 
+    func beginTouchpadSwipeForTesting(x: Float) {
+        touchpadRotor.begin(x: x)
+    }
+
+    func moveTouchpadForTesting(x: Float) {
+        handleTouchpadMove(x: x)
+    }
+
+    func endTouchpadSwipeForTesting() {
+        touchpadRotor.end()
+    }
+
     /// Test seam for the production D-pad normalization path.
     func receiveDpadForTesting(
         up: Bool,
@@ -526,6 +566,7 @@ final class DualSenseControllerAdapter {
         _ = inputLifecycle.releaseAll()
         leftStick.reset()
         rightStick.reset()
+        touchpadRotor.end()
         layerEngine.reset()
         _ = quickNavigation.exit()
         isTextModeActive = false
