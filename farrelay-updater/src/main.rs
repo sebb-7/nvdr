@@ -383,7 +383,7 @@ fn main() {
         }
         "status" => load_config().map(|c| {
             println!(
-                "FarRelay {} ({})\nInstall: {}\nGateway: {}\nActivated: {}",
+                "FarRelay {} ({})\nInstall: {}\nGateway: {}\nCredential installed: {} (SYSTEM/Administrator access)",
                 c.installed_version,
                 c.channel,
                 c.install_dir.display(),
