@@ -472,6 +472,127 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
+    func testTouchpadMovementRecoversWhenDownCallbackWasMissed() {
+        let (_, adapter, sink, _, diagnostics) = makeAdapter()
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: -0.6)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+
+        // One contact still consumes only one rotor step.
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.8)
+        adapter.receiveTouchpadContactForTesting(.moving, x: -0.8)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+
+        adapter.receiveTouchpadContactForTesting(.up, x: -0.8)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.6)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(
+            diagnostics.entries.contains {
+                $0.result == "Touchpad: recovered contact from movement"
+            }
+        )
+    }
+
+    func testTouchpadDoesNotRotateWhileActionLayerOwnsInput() {
+        let (_, adapter, sink, _, _) = makeAdapter()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.1)
+        adapter.receiveTouchpadContactForTesting(.up, x: 0.0)
+
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
+    func testTextModeClearsInFlightTouchpadContactBeforeQuickNavigationReturns() {
+        let (_, adapter, _, _, _) = makeAdapter()
+
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .touchpadPress, pressed: false, at: 1.1)
+        XCTAssertTrue(adapter.isTextModeActive)
+
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .touchpadPress, pressed: false, at: 1.3)
+        XCTAssertFalse(adapter.isTextModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        // Movement from the old finger contact must not rotate after mode exit.
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.6)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+    }
+
+    func testQuickCommandModeClearsInFlightTouchpadContact() {
+        let (mappings, adapter, _, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+
+        adapter.exitQuickCommandMode()
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.6)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+    }
+
+    func testQuickNavigationExitClearsInFlightTouchpadContact() {
+        let (_, adapter, _, _, _) = makeAdapter()
+
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.1)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.receiveForTesting(input: .create, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .create, pressed: false, at: 1.3)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.6)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+    }
+
+    func testTouchpadDiagnosticsNeverContainRawCoordinates() {
+        let (_, adapter, _, _, diagnostics) = makeAdapter()
+
+        adapter.receiveTouchpadContactForTesting(.down, x: -0.612345)
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.123456)
+
+        XCTAssertFalse(
+            diagnostics.entries.contains {
+                $0.result.contains("-0.612345") || $0.result.contains("0.123456")
+            }
+        )
+        XCTAssertTrue(
+            diagnostics.entries.contains {
+                $0.result.contains("Touchpad: rotor threshold crossed")
+            }
+        )
+    }
+
     func testEditingRotorExecutesSelectedEditingChord() async {
         let (_, adapter, sink, _, _) = makeAdapter()
 

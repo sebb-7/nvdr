@@ -155,6 +155,17 @@ final class ControllerModesTests: XCTestCase {
         gesture.end()
     }
 
+    func testTouchpadRotorEndAlwaysRequiresANewBegin() {
+        var gesture = TouchpadRotorGesture()
+        gesture.begin(x: -0.6)
+        gesture.end()
+
+        XCTAssertNil(gesture.move(x: 0.6))
+
+        gesture.begin(x: -0.6)
+        XCTAssertEqual(gesture.move(x: 0.0), 1)
+    }
+
     func testTextMapperUsesShiftForUppercaseAndCommonPunctuation() {
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "A"), .init(key: .a, modifiers: [.shift]))
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "z"), .init(key: .z))
