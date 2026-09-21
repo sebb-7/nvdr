@@ -83,6 +83,13 @@ begin
   end;
 end;
 
+function IsExistingActivatedInstallation: Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{commonappdata}\FarRelay\device.credential')) and
+    FileExists(ExpandConstant('{commonappdata}\FarRelay\install.json'));
+end;
+
 function IsSafeActivationCode(Value: String): Boolean;
 var
   I: Integer;
@@ -111,10 +118,15 @@ begin
   TesterCodePage.Add('Activation code:', False);
 end;
 
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = TesterCodePage.ID) and IsExistingActivatedInstallation;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if CurPageID = TesterCodePage.ID then begin
+  if (CurPageID = TesterCodePage.ID) and (not IsExistingActivatedInstallation) then begin
     if not IsSafeActivationCode(TesterCodePage.Values[0]) then begin
       MsgBox('Enter a valid FarRelay tester activation code.', mbError, MB_OK);
       Result := False;
@@ -168,6 +180,7 @@ var
   ResultCode: Integer;
   Code, Params: String;
 begin
+  if IsExistingActivatedInstallation then Exit;
   Code := Uppercase(Trim(TesterCodePage.Values[0]));
   if not IsSafeActivationCode(Code) then
     RaiseException('A valid FarRelay tester activation code is required.');
