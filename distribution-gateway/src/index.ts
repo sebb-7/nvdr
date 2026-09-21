@@ -559,10 +559,10 @@ async function inviteLanding(request: Request, env: Env, code: string): Promise<
     : '<p>Please send the FarRelay developer anything that failed, felt unclear, or required help during onboarding.</p>';
   const body = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta onboarding</title></head><body><main style="font-family:system-ui;max-width:50rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Hello ' +
     htmlEscape(invite.label) + '! Welcome to the FarRelay beta.</h1><p>Please complete this onboarding on your own as much as possible. I specifically want feedback on anything that does not work, feels confusing, or makes you unsure what to do next.</p><h2>1. Join the iPhone beta</h2><p>You need the FarRelay app on your iPhone to test remote control. Install Apple TestFlight first if you do not already have it, then use the beta link below.</p>' +
-    testflight + '<h2>2. Install FarRelay on this Windows PC</h2><p>The Windows installer will ask for your FarRelay activation code. Keep this onboarding page open until activation succeeds.</p><label for="activation-code"><strong>Activation code</strong></label><br><input id="activation-code" type="text" readonly value="' + htmlEscape(normalizeCode(code)) + '" style="width:100%;box-sizing:border-box;font:inherit;padding:.55rem"><p><a href="' + htmlEscape(installer) + '">Download the FarRelay Windows installer</a></p><p>Your installer invitation expires ' +
+    testflight + '<h2>2. Install FarRelay on this Windows PC</h2><p>The Windows installer will ask for your FarRelay activation code. Keep this onboarding page open until activation succeeds.</p><label for="activation-code"><strong>Activation code</strong></label><br><input id="activation-code" type="text" readonly value="' + htmlEscape(normalizeCode(code)) + '" style="width:100%;box-sizing:border-box;font:inherit;padding:.55rem"><p><button id="copy-activation-code" type="button">Copy activation code</button> <span id="copy-activation-status" role="status" aria-live="polite"></span></p><p><a href="' + htmlEscape(installer) + '">Download the FarRelay Windows installer</a></p><p>Your installer invitation expires ' +
     htmlEscape(invite.expires_at || "when revoked") + '. After activation, this device receives ' + invite.access_days +
     ' day(s) of beta access.</p><h2>3. Open FarRelay Control Center</h2><p>After setup, use the FarRelay Control Center shortcut. It will guide you through OpenSSH, Tailscale, travel readiness, connection instructions, updates, and beta status.</p><h2>4. Give onboarding feedback</h2>' +
-    feedback + '</main></body></html>';
+    feedback + '<script>document.getElementById("copy-activation-code").addEventListener("click",async function(){const field=document.getElementById("activation-code");const status=document.getElementById("copy-activation-status");try{await navigator.clipboard.writeText(field.value);status.textContent="Activation code copied.";}catch(e){field.focus();field.select();status.textContent="Activation code selected. Copy it with Ctrl+C or your screen reader copy command.";}});</script></main></body></html>';
   return new Response(body, {
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -570,7 +570,7 @@ async function inviteLanding(request: Request, env: Env, code: string): Promise<
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
       "x-frame-options": "DENY",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
     },
   });
 }
