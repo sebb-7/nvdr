@@ -578,24 +578,66 @@ final class ControllerMappingSettings {
         moveItems(in: &draftProfile.quickBar, from: offsets, to: destination)
     }
 
-    func moveQuickBarEntry(id: UUID, direction: Int) {
+    @discardableResult
+    func moveQuickBarEntry(id: UUID, direction: Int) -> Int? {
         guard let index = draftProfile.quickBar.firstIndex(where: { $0.id == id }),
-              direction != 0 else { return }
+              direction != 0 else { return nil }
         let destination = index + (direction < 0 ? -1 : 1)
-        guard draftProfile.quickBar.indices.contains(destination) else { return }
+        guard draftProfile.quickBar.indices.contains(destination) else { return nil }
         draftProfile.quickBar.swapAt(index, destination)
+        return destination
+    }
+
+    @discardableResult
+    func moveQuickBarEntryToStart(id: UUID) -> Int? {
+        guard let index = draftProfile.quickBar.firstIndex(where: { $0.id == id }),
+              index > 0 else { return nil }
+        let entry = draftProfile.quickBar.remove(at: index)
+        draftProfile.quickBar.insert(entry, at: 0)
+        return 0
+    }
+
+    @discardableResult
+    func moveQuickBarEntryToEnd(id: UUID) -> Int? {
+        guard let index = draftProfile.quickBar.firstIndex(where: { $0.id == id }),
+              index < draftProfile.quickBar.count - 1 else { return nil }
+        let destination = draftProfile.quickBar.count - 1
+        let entry = draftProfile.quickBar.remove(at: index)
+        draftProfile.quickBar.append(entry)
+        return destination
     }
 
     func moveQuickNavigationCategories(from offsets: IndexSet, to destination: Int) {
         moveItems(in: &draftProfile.quickNavigationOrder, from: offsets, to: destination)
     }
 
-    func moveQuickNavigationCategory(_ category: QuickNavigationCategory, direction: Int) {
+    @discardableResult
+    func moveQuickNavigationCategory(_ category: QuickNavigationCategory, direction: Int) -> Int? {
         guard let index = draftProfile.quickNavigationOrder.firstIndex(of: category),
-              direction != 0 else { return }
+              direction != 0 else { return nil }
         let destination = index + (direction < 0 ? -1 : 1)
-        guard draftProfile.quickNavigationOrder.indices.contains(destination) else { return }
+        guard draftProfile.quickNavigationOrder.indices.contains(destination) else { return nil }
         draftProfile.quickNavigationOrder.swapAt(index, destination)
+        return destination
+    }
+
+    @discardableResult
+    func moveQuickNavigationCategoryToStart(_ category: QuickNavigationCategory) -> Int? {
+        guard let index = draftProfile.quickNavigationOrder.firstIndex(of: category),
+              index > 0 else { return nil }
+        draftProfile.quickNavigationOrder.remove(at: index)
+        draftProfile.quickNavigationOrder.insert(category, at: 0)
+        return 0
+    }
+
+    @discardableResult
+    func moveQuickNavigationCategoryToEnd(_ category: QuickNavigationCategory) -> Int? {
+        guard let index = draftProfile.quickNavigationOrder.firstIndex(of: category),
+              index < draftProfile.quickNavigationOrder.count - 1 else { return nil }
+        let destination = draftProfile.quickNavigationOrder.count - 1
+        draftProfile.quickNavigationOrder.remove(at: index)
+        draftProfile.quickNavigationOrder.append(category)
+        return destination
     }
 
     func restoreRecommendedQuickNavigationOrder() {

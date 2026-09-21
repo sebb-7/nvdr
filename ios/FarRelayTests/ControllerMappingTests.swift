@@ -359,6 +359,34 @@ final class ControllerMappingTests: XCTestCase {
         )
     }
 
+    func testAccessibleReorderOperationsReportPositionsAndRespectEdges() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        let firstQuickBarID = settings.draftProfile.quickBar[0].id
+        XCTAssertNil(settings.moveQuickBarEntry(id: firstQuickBarID, direction: -1))
+        XCTAssertNil(settings.moveQuickBarEntryToStart(id: firstQuickBarID))
+        XCTAssertEqual(
+            settings.moveQuickBarEntryToEnd(id: firstQuickBarID),
+            settings.draftProfile.quickBar.count - 1
+        )
+        XCTAssertEqual(settings.draftProfile.quickBar.last?.id, firstQuickBarID)
+        XCTAssertNil(settings.moveQuickBarEntryToEnd(id: firstQuickBarID))
+        XCTAssertEqual(settings.moveQuickBarEntryToStart(id: firstQuickBarID), 0)
+        XCTAssertEqual(settings.draftProfile.quickBar.first?.id, firstQuickBarID)
+
+        XCTAssertNil(settings.moveQuickNavigationCategory(.quickBar, direction: -1))
+        XCTAssertNil(settings.moveQuickNavigationCategoryToStart(.quickBar))
+        XCTAssertEqual(
+            settings.moveQuickNavigationCategoryToEnd(.quickBar),
+            settings.draftProfile.quickNavigationOrder.count - 1
+        )
+        XCTAssertEqual(settings.draftProfile.quickNavigationOrder.last, .quickBar)
+        XCTAssertNil(settings.moveQuickNavigationCategoryToEnd(.quickBar))
+        XCTAssertEqual(settings.moveQuickNavigationCategoryToStart(.quickBar), 0)
+        XCTAssertEqual(settings.draftProfile.quickNavigationOrder.first, .quickBar)
+    }
+
     func testV3ProfileMigratesWithRecommendedRotorOrder() throws {
         let defaults = makeDefaults()
         let store = ControllerProfileStore(defaults: defaults, key: "profile")

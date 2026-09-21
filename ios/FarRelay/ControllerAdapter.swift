@@ -58,6 +58,7 @@ final class DualSenseControllerAdapter {
     private(set) var textModeBuffer = ""
     var layerStateForTesting: ControllerLayerEngine.State { layerEngine.state }
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
+    var quickNavigationCategoryForTesting: QuickNavigationCategory { quickNavigation.category }
 
     private(set) var connectedControllerName: String?
     private(set) var controllerStatus: ControllerDeviceStatus?
