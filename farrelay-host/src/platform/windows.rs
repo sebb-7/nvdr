@@ -17,11 +17,11 @@ impl NvdaProcessProbe for SysinfoNvdaProcessProbe {
         let mut process_ids: Vec<u32> = System::new_all()
             .processes()
             .iter()
-            .filter_map(|(pid, process)| {
-                (process.name().eq_ignore_ascii_case("nvda.exe")
-                    || process.name().eq_ignore_ascii_case("nvda"))
-                .then(|| pid.as_u32())
+            .filter(|(_, process)| {
+                process.name().eq_ignore_ascii_case("nvda.exe")
+                    || process.name().eq_ignore_ascii_case("nvda")
             })
+            .map(|(pid, _)| pid.as_u32())
             .collect();
         process_ids.sort_unstable();
         process_ids
