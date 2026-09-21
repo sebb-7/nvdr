@@ -14,7 +14,7 @@ struct QuickCommandEntryView: View {
                     QuickCommandTextEditor(controller: controller)
                         .frame(minHeight: 120)
                 } footer: {
-                    Text("Plus means keys together. Comma means then. Examples: ctrl+v or win+r,powershell,enter. Nothing is sent while you type.")
+                    Text("Plus means keys together. Comma means then. With English UEB Braille Screen Input, type plus as dot 5, then dots 2-3-5. Examples: ctrl+v or win+r,powershell,enter. Nothing is sent while you type.")
                 }
 
                 if let status = controller.quickCommandStatus {
@@ -62,7 +62,7 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         textView.smartQuotesType = .no
         textView.smartInsertDeleteType = .no
         textView.accessibilityLabel = "Quick Command entry"
-        textView.accessibilityHint = "Type a local command. Plus means together and comma means then. Nothing is sent until Send Command."
+        textView.accessibilityHint = "Type a local command. Plus means together and comma means then. With English UEB Braille Screen Input, plus is dot 5, then dots 2-3-5. Nothing is sent until Send Command."
         textView.text = controller.quickCommandBuffer
 
         DispatchQueue.main.async { [weak textView] in
