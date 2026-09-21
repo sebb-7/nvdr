@@ -11,6 +11,7 @@ interface DashboardInvite {
   channel: Channel;
   max_activations: number;
   activation_count: number;
+  access_days: number;
   expires_at: string | null;
   revoked_at: string | null;
   created_at: string;
@@ -22,6 +23,7 @@ interface DashboardDevice {
   channel: Channel;
   created_at: string;
   last_seen_at: string | null;
+  access_expires_at: string | null;
   revoked_at: string | null;
 }
 
@@ -42,6 +44,7 @@ interface CreatedInvite {
   activationCode: string;
   installerUrl: string;
   expiresAt: string;
+  accessDays: number;
 }
 
 const SESSION_COOKIE = "fr_admin";
@@ -243,17 +246,24 @@ async function renderDashboard(
   created?: CreatedInvite,
   errorMessage?: string
 ): Promise<Response> {
-  const [inviteResult, deviceResult, releaseResult] = await Promise.all([
+  const [inviteResult, deviceResult, releaseResult, settingsResult] = await Promise.all([
     env.DB.prepare(
-      "SELECT id, label, channel, max_activations, activation_count, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
+      "SELECT id, label, channel, max_activations, activation_count, access_days, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
     ).all<DashboardInvite>(),
     env.DB.prepare(
-      "SELECT id, label, channel, created_at, last_seen_at, revoked_at FROM devices ORDER BY created_at DESC"
+      "SELECT id, label, channel, created_at, last_seen_at, access_expires_at, revoked_at FROM devices ORDER BY created_at DESC"
     ).all<DashboardDevice>(),
     env.DB.prepare(
       "SELECT channel, version, published_at FROM releases ORDER BY channel"
     ).all<DashboardRelease>(),
+    env.DB.prepare(
+      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url')"
+    ).all<{ key: string; value: string }>(),
   ]);
+
+  const programSettings = new Map(settingsResult.results.map((row) => [row.key, row.value]));
+  const testflightUrl = programSettings.get("testflight_url") || "";
+  const feedbackUrl = programSettings.get("feedback_url") || "";
 
   const url = new URL(request.url);
   const notice = errorMessage || noticeFromUrl(url);
@@ -387,11 +397,13 @@ async function createInvite(
   const channelValue = form.get("channel");
   const maxValue = Number(form.get("max_activations"));
   const hoursValue = Number(form.get("expires_in_hours"));
+  const accessDaysValue = Number(form.get("access_days"));
   const label = typeof labelValue === "string" ? labelValue.trim() : "";
   const channel = channelValue === "beta" || channelValue === "stable" ? channelValue : null;
   if (!label || !channel || !Number.isInteger(maxValue) || maxValue < 1 || maxValue > 10 ||
-      !Number.isFinite(hoursValue) || hoursValue <= 0 || hoursValue > 720) {
-    return renderDashboard(request, env, session, undefined, "Check the tester name, channel, activation limit, and expiration.");
+      !Number.isFinite(hoursValue) || hoursValue <= 0 || hoursValue > 720 ||
+      !Number.isInteger(accessDaysValue) || accessDaysValue < 1 || accessDaysValue > 365) {
+    return renderDashboard(request, env, session, undefined, "Check the tester name, channel, activation limit, invitation expiration, and beta access duration.");
   }
 
   const code = "FR-" + channel.toUpperCase() + "-" + randomText(10).toUpperCase();
@@ -399,8 +411,8 @@ async function createInvite(
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + hoursValue * 3600000).toISOString();
   await env.DB.prepare(
-    "INSERT INTO invites(id, code_hash, label, channel, max_activations, activation_count, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
-  ).bind(id, await sha256Hex(code.trim().toUpperCase()), label.slice(0, 120), channel, maxValue, expiresAt, now).run();
+    "INSERT INTO invites(id, code_hash, label, channel, max_activations, activation_count, access_days, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)"
+  ).bind(id, await sha256Hex(code.trim().toUpperCase()), label.slice(0, 120), channel, maxValue, accessDaysValue, expiresAt, now).run();
   await audit(env, "invite_created", id, label.slice(0, 120));
   const origin = new URL(request.url).origin;
   return renderDashboard(request, env, session, {
@@ -409,6 +421,7 @@ async function createInvite(
     activationCode: code,
     installerUrl: origin + "/invite/" + encodeURIComponent(code) + "/installer",
     expiresAt,
+    accessDays: accessDaysValue,
   });
 }
 
