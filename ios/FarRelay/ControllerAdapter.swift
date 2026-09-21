@@ -51,11 +51,16 @@ final class DualSenseControllerAdapter {
     private var textOperationTail: Task<Void, Never>?
     private var textOperationGeneration = 0
     private var textMirrorSession = TextModeMirrorSession()
+    private var quickCommandTask: Task<Void, Never>?
+    private var quickCommandGeneration = 0
     private var lastQuickBarAction: ControllerAction?
     private var nextDiagnosticEventID = 1
 
     private(set) var isTextModeActive = false
     private(set) var textModeBuffer = ""
+    private(set) var isQuickCommandModeActive = false
+    private(set) var quickCommandBuffer = ""
+    private(set) var quickCommandStatus: String?
     var layerStateForTesting: ControllerLayerEngine.State { layerEngine.state }
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
     var quickNavigationCategoryForTesting: QuickNavigationCategory { quickNavigation.category }
@@ -89,7 +94,7 @@ final class DualSenseControllerAdapter {
 
     func start() {
         guard connectObservation == nil, disconnectObservation == nil else { return }
-        if !isTextModeActive { _ = quickNavigation.activate() }
+        if !isTextModeActive && !isQuickCommandModeActive { _ = quickNavigation.activate() }
         connectObservation = NotificationCenter.default.addObserver(
             of: GCController.self, for: .didConnect
         ) { [weak self] message in
@@ -106,6 +111,10 @@ final class DualSenseControllerAdapter {
     func stop() {
         releaseActiveActions()
         isTextModeActive = false
+        isQuickCommandModeActive = false
+        quickCommandBuffer = ""
+        quickCommandStatus = nil
+        cancelQuickCommand()
         if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
         if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
         connectObservation = nil
@@ -374,6 +383,15 @@ final class DualSenseControllerAdapter {
 
     /// Returns true if a local mode fully consumed the input.
     private func handleModeInput(_ input: ControllerInput, pressed: Bool, eventID: Int) -> Bool {
+        if isQuickCommandModeActive {
+            switch input {
+            case .circle:
+                setQuickCommandMode(false)
+            default:
+                diagnostics.observeController(eventID: eventID, input: input, pressed: pressed, stage: "Quick Command Mode: controller input gated")
+            }
+            return true
+        }
         if isTextModeActive {
             switch input {
             case .touchpadPress, .circle:
@@ -489,6 +507,9 @@ final class DualSenseControllerAdapter {
         switch action {
         case .textMode:
             setTextMode(!isTextModeActive)
+            return true
+        case .quickCommandMode:
+            setQuickCommandMode(!isQuickCommandModeActive)
             return true
         case .repeatLastQuickBar:
             guard let lastQuickBarAction else {
@@ -657,6 +678,9 @@ final class DualSenseControllerAdapter {
     }
 
     private func setTextMode(_ active: Bool) {
+        if active, isQuickCommandModeActive {
+            setQuickCommandMode(false, restoreQuickNavigation: false, announceChange: false)
+        }
         isTextModeActive = active
         textMirrorSession.reset()
         textModeBuffer = ""
@@ -671,6 +695,333 @@ final class DualSenseControllerAdapter {
     }
 
     func exitTextMode() { setTextMode(false) }
+
+    private func setQuickCommandMode(
+        _ active: Bool,
+        restoreQuickNavigation: Bool = true,
+        announceChange: Bool = true
+    ) {
+        if active, isTextModeActive {
+            setTextMode(false)
+        }
+        isQuickCommandModeActive = active
+        quickCommandBuffer = ""
+        quickCommandStatus = nil
+        cancelQuickCommand()
+        if active {
+            _ = quickNavigation.exit()
+        } else if restoreQuickNavigation {
+            releaseActiveActions(exitQuickNavigation: false)
+            _ = quickNavigation.activate()
+        }
+        if announceChange {
+            announce(active ? "Quick Command Mode" : "Quick Command Mode off")
+        }
+    }
+
+    func exitQuickCommandMode() { setQuickCommandMode(false) }
+
+    func updateQuickCommandBuffer(_ value: String) {
+        guard isQuickCommandModeActive else { return }
+        quickCommandBuffer = value
+        quickCommandStatus = nil
+    }
+
+    /// Parses and validates the entire command locally before launching any
+    /// remote input. The Send button is the explicit confirmation boundary.
+    @discardableResult
+    func sendQuickCommand() -> Bool {
+        guard isQuickCommandModeActive else { return false }
+
+        let command: QuickCommand
+        do {
+            command = try QuickCommandParser.parse(quickCommandBuffer)
+        } catch let error as QuickCommandParseError {
+            quickCommandStatus = error.message
+            diagnostics.observe(source: .controller, result: "Quick Command: parse rejected")
+            announcePrivate(error.message)
+            return false
+        } catch {
+            quickCommandStatus = "Quick Command could not be parsed."
+            diagnostics.observe(source: .controller, result: "Quick Command: parse rejected")
+            announcePrivate("Quick Command could not be parsed.")
+            return false
+        }
+
+        guard let targetID = router.activeTargetID,
+              let route = router.routeLease(for: targetID),
+              let target = router.target(for: route),
+              target.kind == .nvdaRemote else {
+            quickCommandStatus = "Quick Command currently requires an active NVDA Remote target."
+            diagnostics.observe(source: .controller, result: "Quick Command: NVDA target unavailable")
+            announcePrivate(quickCommandStatus!)
+            return false
+        }
+
+        let plan: [[UInt16]]
+        do {
+            plan = try resolveWindowsQuickCommandPlan(command)
+        } catch let error as QuickCommandExecutionError {
+            quickCommandStatus = error.message
+            diagnostics.observe(source: .controller, result: "Quick Command: target validation rejected")
+            announcePrivate(error.message)
+            return false
+        } catch {
+            quickCommandStatus = "Quick Command is not available for this target."
+            diagnostics.observe(source: .controller, result: "Quick Command: target validation rejected")
+            announcePrivate(quickCommandStatus!)
+            return false
+        }
+
+        cancelQuickCommand()
+        let generation = quickCommandGeneration
+        diagnostics.observe(
+            source: .controller,
+            result: "Quick Command: validated \(command.steps.count) steps; payload redacted"
+        )
+        quickCommandStatus = "Sending command."
+        quickCommandTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.executeQuickCommandPlan(plan, via: route, generation: generation)
+            guard generation == self.quickCommandGeneration, !Task.isCancelled else { return }
+            switch result {
+            case .performed:
+                self.quickCommandStatus = "Command sent."
+                self.diagnostics.observe(source: .controller, result: "Quick Command: completed")
+                self.announcePrivate("Command sent")
+                self.setQuickCommandMode(false, announceChange: false)
+            case .unsupported:
+                self.quickCommandStatus = "Quick Command is unsupported by the active target."
+                self.diagnostics.observe(source: .controller, result: "Quick Command: executor unsupported")
+                self.announcePrivate(self.quickCommandStatus!)
+            case .unavailable:
+                self.quickCommandStatus = "Quick Command target became unavailable."
+                self.diagnostics.observe(source: .controller, result: "Quick Command: target unavailable")
+                self.announcePrivate(self.quickCommandStatus!)
+            case .failed:
+                self.quickCommandStatus = "Quick Command failed."
+                self.diagnostics.observe(source: .controller, result: "Quick Command: transport failed")
+                self.announcePrivate(self.quickCommandStatus!)
+            }
+        }
+        return true
+    }
+
+    func waitForQuickCommandForTesting() async {
+        await quickCommandTask?.value
+    }
+
+    private func cancelQuickCommand() {
+        quickCommandGeneration += 1
+        quickCommandTask?.cancel()
+        quickCommandTask = nil
+    }
+
+    private enum QuickCommandExecutionError: Error {
+        case unsupportedModifier(String)
+        case unsupportedKey(String)
+        case unsupportedTextCharacter
+        case resolvedChordTooLarge
+
+        var message: String {
+            switch self {
+            case .unsupportedModifier(let name):
+                "\(name) is not available for Windows/NVDA Quick Command."
+            case .unsupportedKey(let name):
+                "\(name) is not available for Windows/NVDA Quick Command."
+            case .unsupportedTextCharacter:
+                "Quick Command text contains a character that cannot be typed yet."
+            case .resolvedChordTooLarge:
+                "Quick Command resolves to more than four physical keys at once."
+            }
+        }
+    }
+
+    private func resolveWindowsQuickCommandPlan(_ command: QuickCommand) throws -> [[UInt16]] {
+        var plan: [[UInt16]] = []
+        for step in command.steps {
+            switch step {
+            case .chord(let chord):
+                let keys = try resolveWindowsChord(chord)
+                guard keys.count <= QuickCommandParser.maximumChordKeys else {
+                    throw QuickCommandExecutionError.resolvedChordTooLarge
+                }
+                plan.append(keys)
+            case .text(let text):
+                for character in text {
+                    guard let action = ControllerTextCharacterMapper.action(for: character) else {
+                        throw QuickCommandExecutionError.unsupportedTextCharacter
+                    }
+                    let modifiers = windowsVirtualKeys(for: action.modifiers)
+                    let keys = modifiers + [action.key.virtualKey]
+                    guard keys.count <= QuickCommandParser.maximumChordKeys else {
+                        throw QuickCommandExecutionError.resolvedChordTooLarge
+                    }
+                    plan.append(keys)
+                }
+            }
+        }
+        return plan
+    }
+
+    private func resolveWindowsChord(_ chord: QuickCommandChord) throws -> [UInt16] {
+        var result: [UInt16] = []
+        for key in chord.keys {
+            switch key {
+            case .modifier(let modifier):
+                switch modifier {
+                case .control: result.append(VK.control)
+                case .shift: result.append(VK.shift)
+                case .alt: result.append(VK.menu)
+                case .windows: result.append(VK.lwin)
+                case .nvda:
+                    switch settings.nvdaModifier {
+                    case .capsLock:
+                        result.append(VK.capital)
+                    case .voKeys:
+                        result.append(contentsOf: [VK.control, VK.menu])
+                    }
+                case .command:
+                    throw QuickCommandExecutionError.unsupportedModifier("Command")
+                case .option:
+                    throw QuickCommandExecutionError.unsupportedModifier("Option")
+                }
+            case .key(let key):
+                result.append(try windowsVirtualKey(for: key))
+            }
+        }
+        guard Set(result).count == result.count else {
+            throw QuickCommandExecutionError.unsupportedKey("Duplicate resolved key")
+        }
+        return result
+    }
+
+    private func windowsVirtualKeys(
+        for modifiers: Set<ControllerKeyboardModifier>
+    ) -> [UInt16] {
+        let order: [ControllerKeyboardModifier] = [.control, .alt, .shift, .windows, .nvda]
+        var result: [UInt16] = []
+        for modifier in order where modifiers.contains(modifier) {
+            result.append(contentsOf: stickyModifierVirtualKeys(for: modifier))
+        }
+        return result
+    }
+
+    private func windowsVirtualKey(for key: QuickCommandKey) throws -> UInt16 {
+        switch key {
+        case .function(let number):
+            guard (1...24).contains(number) else {
+                throw QuickCommandExecutionError.unsupportedKey("Function key")
+            }
+            return 0x70 + UInt16(number - 1)
+        case .character(let character):
+            let lower = String(character).lowercased()
+            if let scalar = lower.unicodeScalars.first, lower.unicodeScalars.count == 1 {
+                if (97...122).contains(scalar.value) {
+                    return UInt16(scalar.value - 32)
+                }
+                if (48...57).contains(scalar.value) {
+                    return UInt16(scalar.value)
+                }
+            }
+            throw QuickCommandExecutionError.unsupportedKey(String(character))
+        case .named(let named):
+            return switch named {
+            case .tab: WindowsKeyboardKey.tab.virtualKey
+            case .enter: WindowsKeyboardKey.enter.virtualKey
+            case .escape: WindowsKeyboardKey.escape.virtualKey
+            case .space: WindowsKeyboardKey.space.virtualKey
+            case .backspace: WindowsKeyboardKey.backspace.virtualKey
+            case .delete: WindowsKeyboardKey.delete.virtualKey
+            case .insert: WindowsKeyboardKey.insert.virtualKey
+            case .home: WindowsKeyboardKey.home.virtualKey
+            case .end: WindowsKeyboardKey.end.virtualKey
+            case .pageUp: WindowsKeyboardKey.pageUp.virtualKey
+            case .pageDown: WindowsKeyboardKey.pageDown.virtualKey
+            case .left: WindowsKeyboardKey.left.virtualKey
+            case .right: WindowsKeyboardKey.right.virtualKey
+            case .up: WindowsKeyboardKey.up.virtualKey
+            case .down: WindowsKeyboardKey.down.virtualKey
+            case .capsLock: WindowsKeyboardKey.capsLock.virtualKey
+            case .pause: WindowsKeyboardKey.pause.virtualKey
+            case .printScreen: WindowsKeyboardKey.printScreen.virtualKey
+            case .scrollLock: WindowsKeyboardKey.scrollLock.virtualKey
+            case .numLock: WindowsKeyboardKey.numLock.virtualKey
+            case .contextMenu: WindowsKeyboardKey.contextMenu.virtualKey
+            case .comma: WindowsKeyboardKey.comma.virtualKey
+            case .period: WindowsKeyboardKey.period.virtualKey
+            case .slash: WindowsKeyboardKey.slash.virtualKey
+            case .backslash: WindowsKeyboardKey.backslash.virtualKey
+            case .semicolon: WindowsKeyboardKey.semicolon.virtualKey
+            case .quote: WindowsKeyboardKey.quote.virtualKey
+            case .grave: WindowsKeyboardKey.grave.virtualKey
+            case .minus: WindowsKeyboardKey.minus.virtualKey
+            case .equal: WindowsKeyboardKey.equal.virtualKey
+            case .leftBracket: WindowsKeyboardKey.leftBracket.virtualKey
+            case .rightBracket: WindowsKeyboardKey.rightBracket.virtualKey
+            }
+        }
+    }
+
+    private func executeQuickCommandPlan(
+        _ plan: [[UInt16]],
+        via route: RemoteIntentRoute,
+        generation: Int
+    ) async -> RemoteIntentResult {
+        for chord in plan {
+            guard generation == quickCommandGeneration,
+                  !Task.isCancelled,
+                  isQuickCommandModeActive else {
+                return .unavailable("Quick Command was cancelled.")
+            }
+
+            var pressed: [UInt16] = []
+            for virtualKey in chord {
+                guard generation == quickCommandGeneration,
+                      !Task.isCancelled,
+                      isQuickCommandModeActive else {
+                    await releaseQuickCommandKeys(pressed, via: route)
+                    return .unavailable("Quick Command was cancelled.")
+                }
+                let result = await router.route(
+                    .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: true),
+                    via: route
+                )
+                if result != .performed {
+                    await releaseQuickCommandKeys(pressed, via: route)
+                    return result
+                }
+                pressed.append(virtualKey)
+            }
+
+            for virtualKey in pressed.reversed() {
+                let result = await router.route(
+                    .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: false),
+                    via: route
+                )
+                if result != .performed {
+                    return result
+                }
+            }
+        }
+        return .performed
+    }
+
+    private func releaseQuickCommandKeys(
+        _ keys: [UInt16],
+        via route: RemoteIntentRoute
+    ) async {
+        for virtualKey in keys.reversed() {
+            _ = await router.route(
+                .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: false),
+                via: route
+            )
+        }
+    }
+
+    private func announcePrivate(_ text: String) {
+        UIAccessibility.post(notification: .announcement, argument: text)
+    }
 
     /// Mirrors local BSI/editor deltas one character at a time through the
     /// same router used by controller bindings. It intentionally records only
@@ -923,6 +1274,10 @@ final class DualSenseControllerAdapter {
         textMirrorSession.reset()
         textModeBuffer = ""
         cancelTextOperations()
+        isQuickCommandModeActive = false
+        quickCommandBuffer = ""
+        quickCommandStatus = nil
+        cancelQuickCommand()
         repeatTask?.cancel()
         repeatTask = nil
         for (_, active) in actions { route(active, transition: .released) }

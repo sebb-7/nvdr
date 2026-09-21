@@ -70,6 +70,12 @@ struct FarRelayApp: App {
                 )) {
                     TextModeEntryView(controller: controllerAdapter)
                 }
+                .sheet(isPresented: Binding(
+                    get: { controllerAdapter.isQuickCommandModeActive },
+                    set: { if !$0 { controllerAdapter.exitQuickCommandMode() } }
+                )) {
+                    QuickCommandEntryView(controller: controllerAdapter)
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         // FarRelay is an always-on remote-control surface.

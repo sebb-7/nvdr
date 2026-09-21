@@ -431,6 +431,7 @@ enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     case layer = "Layer"
     case quickNavigation = "NVDA Quick Navigation"
     case textMode = "Text Mode"
+    case quickCommandMode = "Quick Command Mode"
     case repeatLastQuickBar = "Repeat Last Quick Bar Action"
     case nextProfile = "Next Profile"
     case previousProfile = "Previous Profile"
@@ -438,7 +439,8 @@ enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static let quickBarCases: [ControllerMappingActionType] = [
-        .unassigned, .keyboard, .textMode, .repeatLastQuickBar, .nextProfile, .previousProfile
+        .unassigned, .keyboard, .textMode, .quickCommandMode,
+        .repeatLastQuickBar, .nextProfile, .previousProfile
     ]
 }
 
@@ -483,6 +485,10 @@ struct ControllerBindingEditorState: Equatable {
             type = .textMode
             key = nil
             modifiers = []
+        case .farRelay(.quickCommandMode):
+            type = .quickCommandMode
+            key = nil
+            modifiers = []
         case .farRelay(.repeatLastQuickBar):
             type = .repeatLastQuickBar
             key = nil
@@ -517,6 +523,8 @@ struct ControllerBindingEditorState: Equatable {
             return .quickNavigation(.toggle)
         case .textMode:
             return .farRelay(.textMode)
+        case .quickCommandMode:
+            return .farRelay(.quickCommandMode)
         case .repeatLastQuickBar:
             return .farRelay(.repeatLastQuickBar)
         case .nextProfile:
@@ -643,6 +651,11 @@ private struct ControllerActionEditorSections: View {
         case .textMode:
             Section("Text Mode") {
                 Text("Opens the local iPhone editor for VoiceOver Braille Screen Input and mirrors supported text to the remote field.")
+                    .foregroundStyle(.secondary)
+            }
+        case .quickCommandMode:
+            Section("Quick Command Mode") {
+                Text("Opens a local Braille Screen Input editor for a one-shot keyboard lifeboat. Plus means keys together and comma means then. Nothing is sent until Send Command is activated.")
                     .foregroundStyle(.secondary)
             }
         case .repeatLastQuickBar:
