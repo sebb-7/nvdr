@@ -35,7 +35,7 @@ Source: "{#SourceDir}\farrelay.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\farrelay-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\farrelay-updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\farrelay-host\scripts\Install-FarRelayNvdaRecoveryTask.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "..\release\Test-FarRelayTravelReadiness.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\release\Test-FarRelayTravelReadiness.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion\nSource: "..\release\Prepare-FarRelayTravel.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "Install-FarRelayUpdaterTask.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceDir}\FarRelayBridge-{#AppVersion}.nvda-addon"; DestDir: "{app}\addons"; Flags: ignoreversion
 
