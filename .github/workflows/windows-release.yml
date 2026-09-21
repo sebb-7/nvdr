@@ -54,9 +54,19 @@ jobs:
           if (-not $env:GATEWAY_URL.StartsWith("https://")) { throw "gateway_url must use HTTPS" }
           if ($env:GATEWAY_URL.EndsWith("/")) { throw "gateway_url must not end with a slash" }
 
-      - name: Test update policy and staging transaction
-        working-directory: farrelay-updater
+      - name: Test FarRelay core
         run: cargo test --locked
+
+      - name: Test FarRelay Host
+        run: cargo test --locked --manifest-path farrelay-host/Cargo.toml
+
+      - name: Test update policy and staging transaction
+        run: cargo test --locked --manifest-path farrelay-updater/Cargo.toml
+
+      - name: Parse travel-readiness script
+        shell: pwsh
+        run: |
+          [void][scriptblock]::Create((Get-Content windows/release/Test-FarRelayTravelReadiness.ps1 -Raw))
 
       - name: Build distribution binaries
         shell: pwsh
