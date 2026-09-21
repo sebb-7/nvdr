@@ -1,1 +1,5 @@
 target
+distribution-gateway/node_modules/
+distribution-gateway/.wrangler/
+windows/dist/
+travel-readiness.txt
