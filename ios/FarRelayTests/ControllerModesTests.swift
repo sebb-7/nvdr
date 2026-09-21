@@ -35,7 +35,7 @@ final class ControllerModesTests: XCTestCase {
         let second = ControllerProfile.newDefault(name: "Hearthstone")
         let profiles = [first, second]
 
-        XCTAssertEqual(rotor.toggle(), "Quick Navigation. Quick Bar.")
+        XCTAssertTrue(rotor.isActive)
         XCTAssertEqual(rotor.category, .quickBar)
         XCTAssertNil(rotor.category.key)
         XCTAssertEqual(rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles), "Quick Bar. Windows+D")
@@ -57,7 +57,7 @@ final class ControllerModesTests: XCTestCase {
 
     func testQuickNavigationReportsRotorWrapBoundaries() {
         var rotor = QuickNavigationEngine()
-        _ = rotor.toggle()
+        XCTAssertTrue(rotor.isActive)
 
         let backwards = rotor.previousCategoryChange()
         XCTAssertTrue(backwards.wrapped)
