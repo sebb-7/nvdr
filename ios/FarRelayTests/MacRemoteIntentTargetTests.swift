@@ -42,12 +42,13 @@ final class MacRemoteIntentTargetTests: XCTestCase {
         router.register(mac)
         XCTAssertTrue(router.setActiveTarget(id: MacRemoteIntentTarget.defaultID))
 
-        XCTAssertEqual(await router.route(.sendKey(.tab)), .performed)
+        let tabResult = await router.route(.sendKey(.tab))
+        XCTAssertEqual(tabResult, .performed)
         let v = try XCTUnwrap(RemoteKey.letter("v"))
-        XCTAssertEqual(
-            await router.route(.sendChord(.init(modifiers: [.commandOrWindows], key: v))),
-            .performed
+        let pasteResult = await router.route(
+            .sendChord(.init(modifiers: [.commandOrWindows], key: v))
         )
+        XCTAssertEqual(pasteResult, .performed)
 
         XCTAssertEqual(
             controller.keyTransitions,
@@ -82,10 +83,13 @@ final class MacRemoteIntentTargetTests: XCTestCase {
         let mac = MacRemoteIntentTarget(controller: controller)
         let key = try XCTUnwrap(RemoteKey.hidUsage(0x19))
 
-        XCTAssertEqual(await mac.perform(.sendKeyTransition(key, pressed: true)), .performed)
+        let firstPress = await mac.perform(.sendKeyTransition(key, pressed: true))
+        XCTAssertEqual(firstPress, .performed)
         controller.remoteIntentGeneration = 2
-        XCTAssertEqual(await mac.perform(.sendKeyTransition(key, pressed: true)), .performed)
-        XCTAssertEqual(await mac.perform(.sendKeyTransition(key, pressed: false)), .performed)
+        let secondPress = await mac.perform(.sendKeyTransition(key, pressed: true))
+        XCTAssertEqual(secondPress, .performed)
+        let release = await mac.perform(.sendKeyTransition(key, pressed: false))
+        XCTAssertEqual(release, .performed)
 
         XCTAssertEqual(
             controller.keyTransitions,
@@ -139,8 +143,10 @@ final class MacRemoteIntentTargetTests: XCTestCase {
         XCTAssertTrue(windowsRouter.setActiveTarget(id: NVDARemoteIntentTarget.defaultID))
         XCTAssertTrue(macRouter.setActiveTarget(id: MacRemoteIntentTarget.defaultID))
 
-        XCTAssertEqual(await windowsRouter.route(intent), .performed)
-        XCTAssertEqual(await macRouter.route(intent), .performed)
+        let windowsResult = await windowsRouter.route(intent)
+        let macResult = await macRouter.route(intent)
+        XCTAssertEqual(windowsResult, .performed)
+        XCTAssertEqual(macResult, .performed)
         XCTAssertEqual(windowsSink.transitions, ["13 down", "13 up"])
         XCTAssertEqual(macController.actions, [.activate])
     }
