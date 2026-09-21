@@ -269,7 +269,7 @@ async function renderDashboard(
       "SELECT channel, version, published_at FROM releases ORDER BY channel"
     ).all<DashboardRelease>(),
     env.DB.prepare(
-      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url','public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
+      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url','feedback_notification_email','feedback_from_email','public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
     ).all<{ key: string; value: string }>(),
     env.DB.prepare(
       "SELECT id, tester_name, category, message, contact, source, created_at FROM beta_feedback ORDER BY created_at DESC LIMIT 100"
@@ -279,6 +279,8 @@ async function renderDashboard(
   const programSettings = new Map(settingsResult.results.map((row) => [row.key, row.value]));
   const testflightUrl = programSettings.get("testflight_url") || "";
   const feedbackUrl = programSettings.get("feedback_url") || "";
+  const feedbackNotificationEmail = programSettings.get("feedback_notification_email") || "";
+  const feedbackFromEmail = programSettings.get("feedback_from_email") || "";
   const publicEnrollmentEnabled = programSettings.get("public_enrollment_enabled") === "true";
   const publicEnrollmentAccessDays = Number(programSettings.get("public_enrollment_access_days") || "30");
   const publicEnrollmentInviteHours = Number(programSettings.get("public_enrollment_invite_hours") || "168");
@@ -407,6 +409,13 @@ ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">V
 <label for="feedback-url">External feedback link (optional)</label>
 <input id="feedback-url" name="feedback_url" type="text" inputmode="url" value="${escapeHtml(feedbackUrl)}" placeholder="https://...">
 <p class="sr-note">Leave this blank to use FarRelay's built-in feedback form. If supplied, this HTTPS link overrides the built-in form for testers.</p>
+<h3>Feedback email notifications</h3>
+<p>Optional. Feedback is always saved to the dashboard first. Email notifications require a Cloudflare Email Service binding named EMAIL.</p>
+<label for="feedback-notification-email">Send new feedback notifications to</label>
+<input id="feedback-notification-email" name="feedback_notification_email" type="text" inputmode="email" value="${escapeHtml(feedbackNotificationEmail)}" placeholder="you@example.com">
+<label for="feedback-from-email">Notification sender address</label>
+<input id="feedback-from-email" name="feedback_from_email" type="text" inputmode="email" value="${escapeHtml(feedbackFromEmail)}" placeholder="feedback@yourdomain.com">
+<p class="sr-note">The destination must be verified in Cloudflare Email Service. The sender must belong to a domain onboarded to Cloudflare Email Service.</p>
 <h3>Public tester enrollment</h3>
 <p>This creates one shareable forum link. Each person enters their own name and Windows PC/laptop type, then receives a personal one-use invitation and personalized onboarding page.</p>
 <label for="public-enrollment-enabled">Public enrollment</label>
@@ -507,6 +516,8 @@ async function saveProgramSettings(
   }
   const testflight = typeof form.get("testflight_url") === "string" ? String(form.get("testflight_url")).trim() : "";
   const feedback = typeof form.get("feedback_url") === "string" ? String(form.get("feedback_url")).trim() : "";
+  const feedbackNotificationEmail = typeof form.get("feedback_notification_email") === "string" ? String(form.get("feedback_notification_email")).trim() : "";
+  const feedbackFromEmail = typeof form.get("feedback_from_email") === "string" ? String(form.get("feedback_from_email")).trim() : "";
   const publicEnrollmentEnabled = form.get("public_enrollment_enabled") === "true";
   const publicEnrollmentAccessDays = Number(form.get("public_enrollment_access_days"));
   const publicEnrollmentInviteHours = Number(form.get("public_enrollment_invite_hours"));
@@ -517,6 +528,13 @@ async function saveProgramSettings(
     if (value && !/^https:\/\//i.test(value)) {
       return renderDashboard(request, env, session, undefined, name + " link must use HTTPS.");
     }
+  }
+  const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  if (feedbackNotificationEmail && !emailPattern.test(feedbackNotificationEmail)) {
+    return renderDashboard(request, env, session, undefined, "Feedback notification email is not valid.");
+  }
+  if (feedbackFromEmail && !emailPattern.test(feedbackFromEmail)) {
+    return renderDashboard(request, env, session, undefined, "Feedback sender email is not valid.");
   }
   if (!Number.isInteger(publicEnrollmentAccessDays) || publicEnrollmentAccessDays < 1 || publicEnrollmentAccessDays > 365 ||
       !Number.isInteger(publicEnrollmentInviteHours) || publicEnrollmentInviteHours < 1 || publicEnrollmentInviteHours > 720 ||
@@ -531,6 +549,12 @@ async function saveProgramSettings(
     env.DB.prepare(
       "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_url', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(feedback, now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_notification_email', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(feedbackNotificationEmail, now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_from_email', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(feedbackFromEmail, now),
     env.DB.prepare(
       "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_enabled', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(publicEnrollmentEnabled ? "true" : "false", now),
