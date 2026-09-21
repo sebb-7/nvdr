@@ -35,13 +35,22 @@ Source: "{#SourceDir}\farrelay.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\farrelay-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\farrelay-updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\farrelay-host\scripts\Install-FarRelayNvdaRecoveryTask.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "..\release\Test-FarRelayTravelReadiness.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion\nSource: "..\release\Prepare-FarRelayTravel.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\release\Test-FarRelayTravelReadiness.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\release\Prepare-FarRelayTravel.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\release\Start-FarRelayControlCenter.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "Install-FarRelayUpdaterTask.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#SourceDir}\FarRelayBridge-{#AppVersion}.nvda-addon"; DestDir: "{app}\addons"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\FarRelay Control Center"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\Start-FarRelayControlCenter.ps1"""; WorkingDir: "{app}"
+Name: "{userdesktop}\FarRelay Control Center"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\Start-FarRelayControlCenter.ps1"""; WorkingDir: "{app}"
+Name: "{group}\FarRelay Prepare for Travel"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -NoExit -File ""{app}\scripts\Prepare-FarRelayTravel.ps1"" -Repair"; WorkingDir: "{app}"
+Name: "{group}\FarRelay Travel Readiness"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -NoExit -File ""{app}\scripts\Prepare-FarRelayTravel.ps1"""; WorkingDir: "{app}"
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\Install-FarRelayNvdaRecoveryTask.ps1"" -AllowMissingNvda"; Flags: runhidden waituntilterminated
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\Install-FarRelayUpdaterTask.ps1"" -InstallDirectory ""{app}"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\Start-FarRelayControlCenter.ps1"""; Description: "Open FarRelay Control Center"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
