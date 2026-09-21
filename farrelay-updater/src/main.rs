@@ -2,7 +2,7 @@ use farrelay_updater::{
     apply_staged_release, plan_update, rollback_release, unzip_update, verify_file, Channel,
     InstallConfig,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -27,6 +27,14 @@ fn config_path() -> PathBuf {
 
 fn credential_path() -> PathBuf {
     data_dir().join("device.credential")
+}
+
+fn tester_profile_path() -> PathBuf {
+    data_dir().join("tester.json")
+}
+
+fn update_status_path() -> PathBuf {
+    data_dir().join("update-status.json")
 }
 
 fn valid_manifest_url(value: &str) -> bool {
@@ -249,6 +257,72 @@ struct ActivationResponse {
     device_id: String,
     device_token: String,
     channel: Channel,
+    #[serde(default)]
+    tester_name: Option<String>,
+    #[serde(default)]
+    activated_at: Option<String>,
+    #[serde(default)]
+    access_expires_at: Option<String>,
+    #[serde(default)]
+    testflight_url: String,
+    #[serde(default)]
+    feedback_url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TesterProfile {
+    tester_name: String,
+    computer_name: String,
+    channel: Channel,
+    activated_at: String,
+    access_expires_at: Option<String>,
+    #[serde(default)]
+    testflight_url: String,
+    #[serde(default)]
+    feedback_url: String,
+    #[serde(default)]
+    current_release: Option<String>,
+}
+
+fn save_tester_profile(profile: &TesterProfile) -> Result<(), String> {
+    fs::create_dir_all(data_dir()).map_err(|e| format!("creating FarRelay data directory: {e}"))?;
+    fs::write(
+        tester_profile_path(),
+        serde_json::to_vec_pretty(profile).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("writing tester profile: {e}"))
+}
+
+fn sync_tester_profile(config: &InstallConfig, token: &str, work: &Path) -> Result<(), String> {
+    let profile_file = work.join("profile.json");
+    let profile_url = format!("{}/v1/profile", gateway_origin(&config.manifest_url)?);
+    curl_download(&profile_url, &profile_file, Some(token))?;
+    let raw = fs::read_to_string(&profile_file).map_err(|e| e.to_string())?;
+    let profile: TesterProfile =
+        serde_json::from_str(&raw).map_err(|e| format!("invalid tester profile: {e}"))?;
+    save_tester_profile(&profile)
+}
+
+fn write_update_status(
+    state: &str,
+    installed_version: &str,
+    latest_version: Option<&str>,
+    update_available: bool,
+    message: &str,
+) -> Result<(), String> {
+    fs::create_dir_all(data_dir()).map_err(|e| e.to_string())?;
+    let value = serde_json::json!({
+        "state": state,
+        "installed_version": installed_version,
+        "latest_version": latest_version,
+        "update_available": update_available,
+        "message": message,
+    });
+    fs::write(
+        update_status_path(),
+        serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("writing update status: {e}"))
 }
 
 fn activate(code: String) -> Result<(), String> {
@@ -272,6 +346,17 @@ fn activate(code: String) -> Result<(), String> {
         return Err("activation response did not contain a valid device credential".into());
     }
     protect_device_token(&activation.device_token)?;
+    let profile = TesterProfile {
+        tester_name: activation.tester_name.unwrap_or_else(|| "Tester".into()),
+        computer_name: device_name,
+        channel: activation.channel,
+        activated_at: activation.activated_at.unwrap_or_else(|| "unknown".into()),
+        access_expires_at: activation.access_expires_at,
+        testflight_url: activation.testflight_url,
+        feedback_url: activation.feedback_url,
+        current_release: Some(config.installed_version.clone()),
+    };
+    save_tester_profile(&profile)?;
     println!(
         "FarRelay tester access activated for device {} on the {} channel.",
         activation.device_id, activation.channel
@@ -350,6 +435,16 @@ fn check_and_install(install: bool) -> Result<(), String> {
     let token = load_device_token()?;
     let work = data_dir().join("updates");
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    if let Err(error) = sync_tester_profile(&config, &token, &work) {
+        eprintln!("farrelay-updater: warning: could not refresh beta profile: {error}");
+    }
+    write_update_status(
+        "checking",
+        &config.installed_version,
+        None,
+        false,
+        "Checking the private FarRelay release channel.",
+    )?;
     let manifest_file = work.join("manifest.json");
     curl_download(&config.manifest_url, &manifest_file, Some(&token))?;
     let manifest = fs::read_to_string(&manifest_file).map_err(|e| e.to_string())?;
@@ -364,6 +459,13 @@ fn check_and_install(install: bool) -> Result<(), String> {
             "FarRelay {} is current on the {} channel.",
             config.installed_version, config.channel
         );
+        write_update_status(
+            "current",
+            &config.installed_version,
+            Some(&config.installed_version),
+            false,
+            "FarRelay is current.",
+        )?;
         return Ok(());
     };
     println!(
@@ -371,6 +473,13 @@ fn check_and_install(install: bool) -> Result<(), String> {
         config.installed_version, plan.version
     );
     if !install {
+        write_update_status(
+            "available",
+            &config.installed_version,
+            Some(&plan.version),
+            true,
+            "A FarRelay update is available.",
+        )?;
         return Ok(());
     }
     if binaries_busy() {
@@ -392,6 +501,16 @@ fn check_and_install(install: bool) -> Result<(), String> {
         serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
+    write_update_status(
+        "installed",
+        &config.installed_version,
+        Some(&config.installed_version),
+        false,
+        "FarRelay update installed successfully.",
+    )?;
+    if let Ok(token) = load_device_token() {
+        let _ = sync_tester_profile(&config, &token, &work);
+    }
     println!("FarRelay update installed.");
     Ok(())
 }
@@ -431,6 +550,17 @@ fn main() {
         }
     };
     if let Err(error) = result {
+        if matches!(command.as_str(), "check" | "update" | "--check-and-install") {
+            if let Ok(config) = load_config() {
+                let _ = write_update_status(
+                    "error",
+                    &config.installed_version,
+                    None,
+                    false,
+                    &error,
+                );
+            }
+        }
         eprintln!("farrelay-updater: {error}");
         std::process::exit(1);
     }
