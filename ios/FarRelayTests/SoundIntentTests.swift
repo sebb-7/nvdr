@@ -7,6 +7,7 @@ final class SoundIntentTests: XCTestCase {
         XCTAssertEqual(InteractionSoundIntent.remoteConnected.filename, "connected.wav")
         XCTAssertEqual(InteractionSoundIntent.keyboardRemote.filename, "keyboard-remote.wav")
         XCTAssertEqual(InteractionSoundIntent.copied.filename, "copied.wav")
+        XCTAssertEqual(InteractionSoundIntent.layerExit.filename, "exit.wav")
     }
 
     func testCanonicalSoundResourcesResolveFromBuiltAppBundle() {
@@ -16,7 +17,7 @@ final class SoundIntentTests: XCTestCase {
             "terminal-open.wav", "push_clipboard.wav",
             "receive_clipboard.wav", "nvda-started.wav",
             "nvda-stopped.wav", "action.wav", "success.wav",
-            "warning.wav", "error.wav", "copied.wav",
+            "warning.wav", "error.wav", "copied.wav", "exit.wav",
             "browseMode.wav", "focusMode.wav"
         ]
 
@@ -49,6 +50,10 @@ final class SoundIntentTests: XCTestCase {
     func testConnectionAndKeyboardCuesAreTransitionSpecific() {
         XCTAssertEqual(BridgeClient.soundIntent(from: .connecting, to: .ready), .remoteConnected)
         XCTAssertNil(BridgeClient.soundIntent(from: .ready, to: .ready))
+        XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .waitingForNVDA), .nvdaStopped)
+        XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .nvdaNotConnected), .nvdaStopped)
+        XCTAssertEqual(BridgeClient.soundIntent(from: .waitingForNVDA, to: .ready), .nvdaStarted)
+        XCTAssertEqual(BridgeClient.soundIntent(from: .nvdaNotConnected, to: .ready), .nvdaStarted)
         XCTAssertEqual(BridgeClient.soundIntent(from: .ready, to: .disconnected(reason: "relay")), .disconnected)
         XCTAssertNil(BridgeClient.soundIntent(from: .failed(message: "no"), to: .disconnected(reason: "relay")))
         XCTAssertNotEqual(InteractionSoundIntent.keyboardRemote, .keyboardLocal)
