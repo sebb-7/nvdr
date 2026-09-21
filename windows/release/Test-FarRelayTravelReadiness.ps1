@@ -134,13 +134,13 @@ try {
         Fail "Recovery task RunLevel is $($task.Principal.RunLevel); expected Limited."
     } else { Pass "Recovery task uses Limited run level." }
 
-    if (-not $action.Execute.EndsWith('nvda_uiAccess.exe', [System.StringComparison]::OrdinalIgnoreCase)) {
-        Fail "Recovery task action is not nvda_uiAccess.exe: $($action.Execute)"
-    } else { Pass "Recovery task launches NVDA UIAccess directly." }
+    if (-not $action.Execute.EndsWith('nvda_slave.exe', [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail "Recovery task action is not NVDA's signed launcher helper: $($action.Execute)"
+    } else { Pass "Recovery task uses NVDA's signed launcher helper." }
 
-    if ($action.Arguments) {
-        Fail "Recovery task unexpectedly has arguments: $($action.Arguments)"
-    } else { Pass "Recovery task has no caller-controlled arguments." }
+    if (($action.Arguments ?? '').Trim() -ne 'launchNVDA') {
+        Fail "Recovery task arguments are not the fixed NVDA launch action: $($action.Arguments)"
+    } else { Pass "Recovery task arguments are fixed to launchNVDA." }
 } catch {
     Fail "Could not validate the fixed NVDA recovery task. $($_.Exception.Message)"
 }

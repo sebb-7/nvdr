@@ -55,7 +55,8 @@ regression test unless the exception and the physical-only reason are recorded.
 | MAC-REMOTE-001 | Not yet enforced | Mac Remote readiness is component-specific; no physical remote-control claim is made until hardware and permission validation passes. |
 | RECOVERY-001 | Enforced | Windows accessibility recovery is independent of the NVDA relay. Status comes only from an authenticated SSH + `farrelay-host` response; relay state is never used as recovery health. |
 | RECOVERY-002 | Enforced | Recovery executes the saved profile's host command. Empty commands and commands containing line breaks/NUL fail closed rather than silently falling back to a different executable. |
-| RECOVERY-003 | Enforced | Remote NVDA restart can invoke only the fixed `FarRelay Recover NVDA` scheduled task; the remote request cannot choose an executable, task name, script, or arguments. |
+| RECOVERY-003 | Enforced | Remote NVDA restart can invoke only the fixed `FarRelay Recover NVDA` scheduled task. The task uses NVDA's signed `nvda_slave.exe launchNVDA` helper; the remote request cannot choose an executable, task name, script, or arguments. |
+| RECOVERY-004 | Enforced | Task Scheduler accepting a recovery request is not recovery success. FarRelay reports restart performed only after it observes NVDA transition to a new process identity. |
 | DISTRIBUTION-001 | Enforced in installer/readiness scope | The managed Windows installer places its FarRelay directory first in machine PATH, and the travel-readiness check rejects ambiguous or version-mismatched PATH-visible FarRelay binaries. |
 
 ## iOS lifecycle, protocol, persistence, and ownership
