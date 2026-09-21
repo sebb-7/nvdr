@@ -28,19 +28,30 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertNil(engine.layerForAction())
     }
 
-    func testQuickNavigationCategoriesAndQuickBarAreStable() {
+    func testQuickNavigationCategoriesQuickBarAndProfilesAreStable() {
         var rotor = QuickNavigationEngine()
-        XCTAssertEqual(rotor.toggle(), "Quick Navigation. Quick Bar. Show Desktop.")
+        let quickBar = QuickBarEntry.recommended
+        let first = ControllerProfile.newDefault(name: "Desktop")
+        let second = ControllerProfile.newDefault(name: "Hearthstone")
+        let profiles = [first, second]
+
+        XCTAssertEqual(rotor.toggle(), "Quick Navigation. Quick Bar.")
         XCTAssertEqual(rotor.category, .quickBar)
         XCTAssertNil(rotor.category.key)
-        XCTAssertEqual(rotor.nextQuickBarAction(), "NVDA Menu")
-        XCTAssertEqual(rotor.previousQuickBarAction(), "Show Desktop")
+        XCTAssertEqual(rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles), "Quick Bar. Windows+D")
+        XCTAssertEqual(rotor.nextQuickBarAction(in: quickBar), "NVDA modifier+N")
+        XCTAssertEqual(rotor.previousQuickBarAction(in: quickBar), "Windows+D")
+
+        XCTAssertEqual(rotor.nextCategory(), "Profiles")
+        rotor.synchronizeProfileSelection(profiles: profiles, activeProfileID: first.id)
+        XCTAssertEqual(rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles), "Profiles. Desktop")
+        XCTAssertEqual(rotor.nextProfile(in: profiles), "Hearthstone")
+        XCTAssertEqual(rotor.previousProfile(in: profiles), "Desktop")
+
         XCTAssertEqual(rotor.nextCategory(), "Headings")
         XCTAssertEqual(rotor.category.key, .h)
         XCTAssertEqual(rotor.nextCategory(), "Links")
         XCTAssertEqual(rotor.category.key, .k)
-        XCTAssertEqual(rotor.previousCategory(), "Headings")
-        XCTAssertEqual(rotor.previousCategory(), "Quick Bar. Show Desktop")
         XCTAssertEqual(rotor.exit(), "Quick Navigation off.")
     }
 
@@ -58,7 +69,7 @@ final class ControllerModesTests: XCTestCase {
 
         let ordinary = rotor.nextCategoryChange()
         XCTAssertFalse(ordinary.wrapped)
-        XCTAssertEqual(rotor.category, .headings)
+        XCTAssertEqual(rotor.category, .profiles)
     }
 
     func testTouchpadRotorGestureRequiresHorizontalThresholdAndConsumesOneStep() {
@@ -110,6 +121,10 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(profile.action(for: .options), .layer(.init()))
         XCTAssertEqual(profile.action(for: .create), .quickNavigation(.toggle))
         XCTAssertEqual(profile.action(for: .touchpadPress), .farRelay(.textMode))
+        XCTAssertEqual(profile.action(for: .home), .farRelay(.nextProfile))
+        XCTAssertEqual(profile.action(for: .cross, layerID: "extended"), .farRelay(.repeatLastQuickBar))
+        XCTAssertEqual(profile.action(for: .home, layerID: "extended"), .farRelay(.previousProfile))
         XCTAssertEqual(profile.action(for: .dpadUp, layerID: "extended"), .keyboard(.init(key: .pageUp)))
+        XCTAssertFalse(profile.quickBar.isEmpty)
     }
 }

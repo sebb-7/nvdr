@@ -36,6 +36,14 @@ hardware before calling a build physically validated.
 - [ ] Test VoiceOver on with Quick Nav on and off, then VoiceOver off; record which arrows iOS reserves.
 - [ ] Test BSI enter/type/send/exit/browse/re-enter, including terminal end and app background while BSI is active.
 - [ ] Repeat F-key smoke tests with Magic Keyboard, generic Bluetooth keyboard, Windows-layout keyboard, and USB keyboard where supported.
+- [ ] Enter Quick Navigation and swipe the DualSense touchpad horizontally: confirm Quick Bar → Profiles → Headings ordering and one rotor step per swipe.
+- [ ] In Quick Bar, press Cross and verify the selected Quick Bar action runs without a remote Enter.
+- [ ] In Profiles, browse with right-stick Up/Down and press Cross; verify the profile changes without a remote Enter.
+- [ ] In Headings/Links, press Cross and verify Enter is sent normally.
+- [ ] Hold a remotely mapped key, switch profiles, then release the physical key; verify the old key was released before the profile switch and the later physical release is inert.
+- [ ] Map Repeat Last Quick Bar Action, execute a repeatable Quick Bar keyboard action, and confirm repeat replays it exactly once with balanced key transitions.
+- [ ] With Haptic Feedback enabled, feel a light DualSense pulse for ordinary rotor section changes and a stronger double pulse when wrapping Lists ↔ Quick Bar.
+- [ ] Disable Haptic Feedback and confirm rotor/controller behavior is unchanged except for vibration.
 
 ## Mac Remote foundation
 

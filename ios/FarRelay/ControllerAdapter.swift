@@ -41,6 +41,7 @@ final class DualSenseControllerAdapter {
     private var textOperationTail: Task<Void, Never>?
     private var textOperationGeneration = 0
     private var textMirrorSession = TextModeMirrorSession()
+    private var lastQuickBarAction: ControllerAction?
     private var nextDiagnosticEventID = 1
 
     private(set) var isTextModeActive = false
@@ -143,10 +144,19 @@ final class DualSenseControllerAdapter {
         let change = direction > 0
             ? quickNavigation.nextCategoryChange()
             : quickNavigation.previousCategoryChange()
+        if quickNavigation.category == .profiles {
+            quickNavigation.synchronizeProfileSelection(
+                profiles: mappings.profiles,
+                activeProfileID: mappings.activeProfileID
+            )
+        }
         if settings.hapticFeedbackEnabled {
             controllerHaptics.play(change.wrapped ? .boundary : .selection)
         }
-        announce(change.announcement)
+        announce(quickNavigation.currentSectionAnnouncement(
+            quickBar: mappings.activeProfile.quickBar,
+            profiles: mappings.profiles
+        ))
     }
 
     private func detach(_ candidate: GCController) {
@@ -251,11 +261,22 @@ final class DualSenseControllerAdapter {
             present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
             return true
         case .quickNavigation:
-            announce(quickNavigation.toggle())
+            let state = quickNavigation.toggle()
+            if quickNavigation.isActive {
+                quickNavigation.synchronizeProfileSelection(
+                    profiles: mappings.profiles,
+                    activeProfileID: mappings.activeProfileID
+                )
+                announce("Quick Navigation. \(quickNavigation.currentSectionAnnouncement(
+                    quickBar: mappings.activeProfile.quickBar,
+                    profiles: mappings.profiles
+                )).")
+            } else {
+                announce(state)
+            }
             return true
-        case .farRelay(.textMode):
-            setTextMode(!isTextModeActive)
-            return true
+        case .farRelay(let farRelayAction):
+            return performFarRelayAction(farRelayAction, input: input, eventID: eventID)
         }
     }
 
@@ -277,29 +298,51 @@ final class DualSenseControllerAdapter {
             case .create, .circle:
                 announce(quickNavigation.exit() ?? "Quick Navigation off.")
             case .rightStickUp:
-                if quickNavigation.category == .quickBar {
-                    announce(quickNavigation.previousQuickBarAction())
-                } else if let key = quickNavigation.category.key {
-                    start(
-                        action: .keyboard(.init(key: key, modifiers: [.shift])),
-                        input: input,
-                        eventID: eventID
-                    )
+                switch quickNavigation.category {
+                case .quickBar:
+                    announce(quickNavigation.previousQuickBarAction(in: mappings.activeProfile.quickBar))
+                case .profiles:
+                    announce(quickNavigation.previousProfile(in: mappings.profiles))
+                default:
+                    if let key = quickNavigation.category.key {
+                        start(
+                            action: .keyboard(.init(key: key, modifiers: [.shift])),
+                            input: input,
+                            eventID: eventID
+                        )
+                    }
                 }
             case .rightStickDown:
-                if quickNavigation.category == .quickBar {
-                    announce(quickNavigation.nextQuickBarAction())
-                } else if let key = quickNavigation.category.key {
-                    start(action: .keyboard(.init(key: key)), input: input, eventID: eventID)
+                switch quickNavigation.category {
+                case .quickBar:
+                    announce(quickNavigation.nextQuickBarAction(in: mappings.activeProfile.quickBar))
+                case .profiles:
+                    announce(quickNavigation.nextProfile(in: mappings.profiles))
+                default:
+                    if let key = quickNavigation.category.key {
+                        start(action: .keyboard(.init(key: key)), input: input, eventID: eventID)
+                    }
                 }
             case .cross:
-                if quickNavigation.category == .quickBar {
-                    start(
-                        action: .keyboard(quickNavigation.selectedQuickBarAction.keyboardAction),
-                        input: input,
-                        eventID: eventID
-                    )
-                } else {
+                switch quickNavigation.category {
+                case .quickBar:
+                    guard let entry = quickNavigation.selectedQuickBarEntry(in: mappings.activeProfile.quickBar),
+                          let action = entry.action else {
+                        announce("Quick Bar action is unassigned")
+                        return true
+                    }
+                    _ = executeQuickBarAction(action, input: input, eventID: eventID, recordAsLast: true)
+                case .profiles:
+                    guard let profile = quickNavigation.selectedProfile(in: mappings.profiles) else {
+                        announce("No profiles")
+                        return true
+                    }
+                    if let name = mappings.activateProfile(id: profile.id) {
+                        lastQuickBarAction = nil
+                        if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
+                        announce("Profile: \(name)")
+                    }
+                default:
                     start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
                 }
             default:
@@ -308,6 +351,69 @@ final class DualSenseControllerAdapter {
             return true
         }
         return false
+    }
+
+    @discardableResult
+    private func executeQuickBarAction(
+        _ action: ControllerAction,
+        input: ControllerInput,
+        eventID: Int,
+        recordAsLast: Bool
+    ) -> Bool {
+        guard action.isAllowedInQuickBar else {
+            diagnostics.observeController(
+                eventID: eventID,
+                input: input,
+                pressed: true,
+                stage: "Quick Bar: disallowed control action rejected"
+            )
+            announce("That action is not available in Quick Bar")
+            return false
+        }
+
+        let started = start(action: action, input: input, eventID: eventID)
+        if started, recordAsLast, action.isRepeatableQuickBarAction {
+            lastQuickBarAction = action
+        }
+        return started
+    }
+
+    @discardableResult
+    private func performFarRelayAction(
+        _ action: FarRelayControllerAction,
+        input: ControllerInput,
+        eventID: Int
+    ) -> Bool {
+        switch action {
+        case .textMode:
+            setTextMode(!isTextModeActive)
+            return true
+        case .repeatLastQuickBar:
+            guard let lastQuickBarAction else {
+                announce("No Quick Bar action to repeat")
+                return true
+            }
+            return executeQuickBarAction(
+                lastQuickBarAction,
+                input: input,
+                eventID: eventID,
+                recordAsLast: false
+            )
+        case .nextProfile:
+            if let name = mappings.activateNextProfile() {
+                lastQuickBarAction = nil
+                if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
+                announce("Profile: \(name)")
+            }
+            return true
+        case .previousProfile:
+            if let name = mappings.activatePreviousProfile() {
+                lastQuickBarAction = nil
+                if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
+                announce("Profile: \(name)")
+            }
+            return true
+        }
     }
 
     private func layerControlAction(for input: ControllerInput) -> ControllerLayerAction? {
