@@ -184,7 +184,16 @@ function Ensure-PowerReadiness {
 }
 
 if ($Repair -and -not (Test-IsAdministrator)) {
-    throw 'Repair mode requires Administrator privileges. Run PowerShell as Administrator and rerun with -Repair.'
+    $arguments = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-NoExit',
+        '-File', ('"' + $PSCommandPath + '"'),
+        '-Repair'
+    )
+    if ($RequireLidClosedReady) { $arguments += '-RequireLidClosedReady' }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments
+    exit 0
 }
 
 Write-Output 'FarRelay Prepare for Travel'
