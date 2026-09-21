@@ -18,12 +18,22 @@ provisioned, beta artifacts may show SmartScreen warnings and must be treated as
 internal/tester builds. A failed update must be tested by the local updater's
 rollback path before a travel-critical release is promoted.
 
+For a travel-critical Windows target, run
+`windows/release/Test-FarRelayTravelReadiness.ps1` from an elevated PowerShell
+after installing the candidate. Zero failures are required. The script verifies
+unambiguous FarRelay binary resolution/version, automatic running `sshd`, an
+SSH listener, the structured recovery status path, the fixed Interactive/Limited
+NVDA recovery task, and AC sleep/hibernate policy. Lid-close policy may be a
+warning unless `-RequireLidClosedReady` is supplied. This automated gate does
+not replace a real remote test from the phone over the network path that will be
+used during travel.
+
 | Maturity | Required evidence |
 | --- | --- |
 | Developer build | Builds, deterministic unit/reliability tests, and `git diff --check` pass. |
 | Internal beta | Affected iOS/macOS/host CI is green; protocol malformed-input and persistence tests pass; known issues reviewed. |
 | External beta | Internal-beta evidence plus physical iPhone/iPad accessibility and hardware-keyboard smoke checklist completed for the build. |
-| Release candidate | External-beta evidence plus target shutdown/network-loss tests, rollback review, and no unreviewed data-loss or stuck-input issue. |
+| Release candidate | External-beta evidence plus target shutdown/network-loss tests, rollback review, zero travel-readiness failures for an unattended Windows target, and no unreviewed data-loss or stuck-input issue. |
 
 ## Rollback
 
