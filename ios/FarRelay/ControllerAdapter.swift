@@ -176,7 +176,7 @@ final class DualSenseControllerAdapter {
             batteryStateLabel: batteryStateLabel,
             supportsHaptics: candidate.haptics?.supportedLocalities.contains(.default) == true,
             supportsTouchpad:
-                candidate.extendedGamepad is GCDualSenseGamepad ||
+                (candidate.extendedGamepad as? GCDualSenseGamepad) != nil ||
                 !candidate.physicalInputProfile.touchpads.isEmpty
         )
     }
