@@ -2,19 +2,24 @@ import SwiftUI
 import UIKit
 
 /// Local-only Braille Screen Input surface for one-shot Quick Commands.
-/// Unlike Text Mode, editing never mirrors characters remotely. Only the
-/// explicit Send Command action can start remote input.
+/// Unlike Text Mode, editing never mirrors characters remotely. Every send
+/// first presents FarRelay's interpretation for explicit confirmation.
 struct QuickCommandEntryView: View {
     @Bindable var controller: DualSenseControllerAdapter
+    @State private var confirmationMessage = ""
+    @State private var isShowingConfirmation = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    QuickCommandTextEditor(controller: controller)
-                        .frame(minHeight: 120)
+                    QuickCommandTextEditor(
+                        controller: controller,
+                        onSubmit: requestConfirmation
+                    )
+                    .frame(minHeight: 120)
                 } footer: {
-                    Text("Plus means keys together. Comma means then. With English UEB Braille Screen Input, type plus as dot 5, then dots 2-3-5. Examples: ctrl+v or win+r,powershell,enter. Nothing is sent while you type.")
+                    Text("Plus means keys together. Comma means then. With English UEB Braille Screen Input, type plus as dot 5, then dots 2-3-5. In BSI, three-finger swipe up acts as Return and opens confirmation. Examples: ctrl+v or win+r,powershell,enter. Nothing is sent until you choose Send in the alert.")
                 }
 
                 if let status = controller.quickCommandStatus {
@@ -32,22 +37,50 @@ struct QuickCommandEntryView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Send Command") {
-                        _ = controller.sendQuickCommand()
+                        requestConfirmation()
                     }
                     .disabled(controller.quickCommandBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityHint("Parses and sends this one-shot command to the active Windows/NVDA or Mac Remote keyboard target.")
+                    .accessibilityHint("Shows FarRelay's interpretation before anything is sent.")
+                }
+            }
+            .alert("Send Quick Command?", isPresented: $isShowingConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    controller.cancelQuickCommandConfirmation()
+                }
+                Button("Send") {
+                    _ = controller.confirmQuickCommand()
+                }
+            } message: {
+                Text(confirmationMessage)
+            }
+            .onChange(of: isShowingConfirmation) { _, shown in
+                if !shown {
+                    controller.cancelQuickCommandConfirmation()
                 }
             }
         }
+    }
+
+    private func requestConfirmation() {
+        guard let preview = controller.prepareQuickCommandForConfirmation() else { return }
+        confirmationMessage = preview
+        isShowingConfirmation = true
+    }
+}
+
+enum QuickCommandTextInputPolicy {
+    static func requestsConfirmation(replacementText: String) -> Bool {
+        replacementText.contains("\n") || replacementText.contains("\r")
     }
 }
 
 @MainActor
 private struct QuickCommandTextEditor: UIViewRepresentable {
     let controller: DualSenseControllerAdapter
+    let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(controller: controller)
+        Coordinator(controller: controller, onSubmit: onSubmit)
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -62,7 +95,7 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         textView.smartQuotesType = .no
         textView.smartInsertDeleteType = .no
         textView.accessibilityLabel = "Quick Command entry"
-        textView.accessibilityHint = "Type a local command. Plus means together and comma means then. With English UEB Braille Screen Input, plus is dot 5, then dots 2-3-5. Nothing is sent until Send Command."
+        textView.accessibilityHint = "Type a local command. Plus means together and comma means then. With English UEB Braille Screen Input, plus is dot 5, then dots 2-3-5. Three-finger swipe up opens confirmation. Nothing is sent until you choose Send in the alert."
         textView.text = controller.quickCommandBuffer
 
         DispatchQueue.main.async { [weak textView] in
@@ -84,9 +117,23 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let controller: DualSenseControllerAdapter
+        let onSubmit: () -> Void
 
-        init(controller: DualSenseControllerAdapter) {
+        init(controller: DualSenseControllerAdapter, onSubmit: @escaping () -> Void) {
             self.controller = controller
+            self.onSubmit = onSubmit
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText replacement: String
+        ) -> Bool {
+            if QuickCommandTextInputPolicy.requestsConfirmation(replacementText: replacement) {
+                onSubmit()
+                return false
+            }
+            return true
         }
 
         func textViewDidChange(_ textView: UITextView) {

@@ -203,6 +203,13 @@ final class QuickCommandTests: XCTestCase {
         )
     }
 
+    func testReturnRequestsQuickCommandConfirmationInsteadOfEnteringNewline() {
+        XCTAssertTrue(QuickCommandTextInputPolicy.requestsConfirmation(replacementText: "\n"))
+        XCTAssertTrue(QuickCommandTextInputPolicy.requestsConfirmation(replacementText: "\r"))
+        XCTAssertFalse(QuickCommandTextInputPolicy.requestsConfirmation(replacementText: ","))
+        XCTAssertFalse(QuickCommandTextInputPolicy.requestsConfirmation(replacementText: "+"))
+    }
+
     func testEmptyInputHasAUsefulError() {
         XCTAssertThrowsError(
             try QuickCommandParser.parse("   ")

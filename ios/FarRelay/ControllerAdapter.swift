@@ -56,8 +56,16 @@ final class DualSenseControllerAdapter {
     private var textOperationTail: Task<Void, Never>?
     private var textOperationGeneration = 0
     private var textMirrorSession = TextModeMirrorSession()
+    private struct PreparedQuickCommand {
+        let command: QuickCommand
+        let preview: String
+        let plan: [[RemoteKey]]
+        let route: RemoteIntentRoute
+    }
+
     private var quickCommandTask: Task<Void, Never>?
     private var quickCommandGeneration = 0
+    private var preparedQuickCommand: PreparedQuickCommand?
     private var lastQuickBarAction: ControllerAction?
     private var nextDiagnosticEventID = 1
 
@@ -119,6 +127,7 @@ final class DualSenseControllerAdapter {
         isQuickCommandModeActive = false
         quickCommandBuffer = ""
         quickCommandStatus = nil
+        preparedQuickCommand = nil
         cancelQuickCommand()
         if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
         if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
@@ -861,9 +870,11 @@ final class DualSenseControllerAdapter {
         if active, isTextModeActive {
             setTextMode(false)
         }
+        if !active, !isQuickCommandModeActive { return }
         isQuickCommandModeActive = active
         quickCommandBuffer = ""
         quickCommandStatus = nil
+        preparedQuickCommand = nil
         cancelQuickCommand()
         if active {
             _ = quickNavigation.exit()
@@ -882,13 +893,15 @@ final class DualSenseControllerAdapter {
         guard isQuickCommandModeActive else { return }
         quickCommandBuffer = value
         quickCommandStatus = nil
+        preparedQuickCommand = nil
     }
 
-    /// Parses and validates the entire command locally before launching any
-    /// remote input. The Send button is the explicit confirmation boundary.
+    /// Parses and fully validates the local buffer without sending any remote
+    /// input. The returned text is exactly how FarRelay interpreted it and is
+    /// intended for the confirmation alert.
     @discardableResult
-    func sendQuickCommand() -> Bool {
-        guard isQuickCommandModeActive else { return false }
+    func prepareQuickCommandForConfirmation() -> String? {
+        guard isQuickCommandModeActive else { return nil }
 
         let command: QuickCommand
         do {
@@ -897,12 +910,12 @@ final class DualSenseControllerAdapter {
             quickCommandStatus = error.message
             diagnostics.observe(source: .controller, result: "Quick Command: parse rejected")
             announcePrivate(error.message)
-            return false
+            return nil
         } catch {
             quickCommandStatus = "Quick Command could not be parsed."
             diagnostics.observe(source: .controller, result: "Quick Command: parse rejected")
             announcePrivate("Quick Command could not be parsed.")
-            return false
+            return nil
         }
 
         guard let targetID = router.activeTargetID,
@@ -913,7 +926,8 @@ final class DualSenseControllerAdapter {
             quickCommandStatus = "Quick Command requires an active Windows/NVDA or Mac Remote keyboard target."
             diagnostics.observe(source: .controller, result: "Quick Command: raw keyboard target unavailable")
             announcePrivate(quickCommandStatus!)
-            return false
+            preparedQuickCommand = nil
+            return nil
         }
 
         let plan: [[RemoteKey]]
@@ -927,37 +941,83 @@ final class DualSenseControllerAdapter {
                 quickCommandStatus = "Quick Command is not available for this target."
                 diagnostics.observe(source: .controller, result: "Quick Command: unsupported target")
                 announcePrivate(quickCommandStatus!)
-                return false
+                preparedQuickCommand = nil
+                return nil
             }
         } catch let error as QuickCommandExecutionError {
             quickCommandStatus = error.message
             diagnostics.observe(source: .controller, result: "Quick Command: target validation rejected")
             announcePrivate(error.message)
-            return false
+            preparedQuickCommand = nil
+            return nil
         } catch {
             quickCommandStatus = "Quick Command is not available for this target."
             diagnostics.observe(source: .controller, result: "Quick Command: target validation rejected")
             announcePrivate(quickCommandStatus!)
+            preparedQuickCommand = nil
+            return nil
+        }
+
+        let preview = command.spokenDescription
+        preparedQuickCommand = PreparedQuickCommand(
+            command: command,
+            preview: preview,
+            plan: plan,
+            route: route
+        )
+        quickCommandStatus = "Ready to confirm."
+        diagnostics.observe(
+            source: .controller,
+            result: "Quick Command: confirmation prepared; payload redacted"
+        )
+        return preview
+    }
+
+    func cancelQuickCommandConfirmation() {
+        preparedQuickCommand = nil
+        if isQuickCommandModeActive, quickCommandStatus == "Ready to confirm." {
+            quickCommandStatus = nil
+        }
+    }
+
+    /// The alert's Send button is the only execution boundary.
+    @discardableResult
+    func confirmQuickCommand() -> Bool {
+        guard isQuickCommandModeActive, let prepared = preparedQuickCommand else {
             return false
         }
+        preparedQuickCommand = nil
 
         cancelQuickCommand()
         let generation = quickCommandGeneration
         diagnostics.observe(
             source: .controller,
-            result: "Quick Command: validated \(command.steps.count) steps; payload redacted"
+            result: "Quick Command: confirmed \(prepared.command.steps.count) steps; payload redacted"
         )
         quickCommandStatus = "Sending command."
         quickCommandTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let result = await self.executeQuickCommandPlan(plan, via: route, generation: generation)
+            let result = await self.executeQuickCommandPlan(
+                prepared.plan,
+                via: prepared.route,
+                generation: generation
+            )
             guard generation == self.quickCommandGeneration, !Task.isCancelled else { return }
             switch result {
             case .performed:
-                self.quickCommandStatus = "Command sent."
                 self.diagnostics.observe(source: .controller, result: "Quick Command: completed")
-                self.announcePrivate("Command sent")
-                self.setQuickCommandMode(false, announceChange: false)
+                self.releaseActiveActions(exitQuickNavigation: false)
+                self.isQuickCommandModeActive = false
+                self.quickCommandBuffer = ""
+                self.preparedQuickCommand = nil
+                self.quickCommandStatus = "Command sent."
+                _ = self.quickNavigation.activate()
+                self.feedback.play(.success)
+                let section = self.quickNavigation.currentSectionAnnouncement(
+                    quickBar: self.mappings.activeProfile.quickBar,
+                    profiles: self.mappings.profiles
+                )
+                self.announce("Command sent. Quick Navigation. \(section).")
             case .unsupported:
                 self.quickCommandStatus = "Quick Command is unsupported by the active target."
                 self.diagnostics.observe(source: .controller, result: "Quick Command: executor unsupported")
@@ -1664,6 +1724,7 @@ final class DualSenseControllerAdapter {
         isQuickCommandModeActive = false
         quickCommandBuffer = ""
         quickCommandStatus = nil
+        preparedQuickCommand = nil
         cancelQuickCommand()
         repeatTask?.cancel()
         repeatTask = nil
