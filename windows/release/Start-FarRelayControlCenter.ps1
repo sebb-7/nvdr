@@ -251,7 +251,7 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 <dt>Beta access expires</dt><dd id="beta-expires">Checking...</dd>
 <dt>Time remaining</dt><dd id="beta-remaining">Checking...</dd>
 <dt>TestFlight</dt><dd><a id="testflight-link" href="#">Checking...</a></dd>
-<dt>Feedback</dt><dd><a id="feedback-link" href="#">Checking...</a></dd>
+<dt>Feedback</dt><dd><a id="feedback-link" href="#" target="_blank" rel="noopener">Checking...</a></dd>
 <dt>Installed version</dt><dd id="beta-installed-version">Checking...</dd>
 <dt>Latest published version</dt><dd id="beta-latest-version">Checking...</dd>
 <dt>Update status</dt><dd id="beta-update-status">Checking...</dd>
@@ -312,8 +312,14 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 
 <section class="panel" aria-labelledby="connection-heading">
 <h2 id="connection-heading">Connect from iPhone</h2>
-<p>Use the short setup below. FarRelay stores SSH credentials in the iPhone Keychain.</p>
-<textarea id="connection" readonly aria-label="FarRelay iPhone connection instructions">Waiting for Tailscale address...</textarea>
+<p>Three short steps. FarRelay stores SSH credentials in the iPhone Keychain.</p>
+<h3>1. Add this computer</h3>
+<p id="connect-computer">Waiting for Tailscale address...</p>
+<h3>2. SSH authentication</h3>
+<p id="connect-auth">Waiting for Tailscale address...</p>
+<h3>3. NVDA Remote</h3>
+<p id="connect-nvda">Waiting for Tailscale address...</p>
+<textarea id="connection-copy" readonly tabindex="-1" aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px"></textarea>
 <p><button id="copy">Copy connection instructions</button></p>
 </section>
 
@@ -334,6 +340,7 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 <script>
 const token=location.hash.slice(1);
 history.replaceState(null,"",location.pathname);
+let connectionText="";
 const get=id=>document.getElementById(id);
 const ready=v=>v?"Ready":"Needs attention";
 const yes=v=>v?"Yes":"No";
@@ -374,7 +381,17 @@ function render(s){
   set("beta-expires",s.beta&&s.beta.access_expires_at?s.beta.access_expires_at:"Not recorded yet");
   set("beta-remaining",remaining(s.beta&&s.beta.access_expires_at?s.beta.access_expires_at:""));
   setLink("testflight-link",s.beta?s.beta.testflight_url:"","Join the FarRelay iPhone beta in TestFlight","TestFlight link not configured yet");
-  setLink("feedback-link",s.beta?s.beta.feedback_url:"","Send beta feedback","Feedback link not configured yet");
+  let feedbackUrl=s.beta?s.beta.feedback_url:"";
+  if(feedbackUrl){
+    try{
+      const feedbackAddress=new URL(feedbackUrl);
+      if(feedbackAddress.pathname.startsWith("/feedback/")){
+        feedbackAddress.searchParams.set("source","control-center");
+        feedbackUrl=feedbackAddress.toString();
+      }
+    }catch{}
+  }
+  setLink("feedback-link",feedbackUrl,"Send beta feedback (opens in new tab)","Feedback link not configured yet");
   set("beta-installed-version",s.update&&s.update.installed_version?s.update.installed_version:s.version);
   set("beta-latest-version",s.update&&s.update.latest_version?s.update.latest_version:"Not checked yet");
   set("beta-update-status",s.update?s.update.message:"No update check has been recorded yet.");
@@ -398,9 +415,22 @@ function render(s){
   set("setup-step",s.setup.step||"None");
   set("setup-message",s.setup.message||"");
   set("setup-updated",s.setup.updated_at||"Not yet");
-  get("connection").value=s.connection.ssh
-    ? "1. In FarRelay on iPhone, add a Windows computer: address "+s.tailscale.ip+", port 22, username "+s.windows_user+".\n\n2. Authentication: Private Key. Paste the private key that matches the public key authorized for this Windows account; enter its passphrase if it has one.\n\n3. Under Accessibility, turn on Configure NVDA Remote and Enable NVDA Remote. Use relay host nvdaremote.com, port 6837, and the channel key for the NVDA Remote session you want to join. Leave fingerprint blank and Insecure off unless your relay specifically requires otherwise.\n\nSSH check: "+s.connection.ssh+"\nFarRelay host check: "+s.connection.host_test
-    : "Tailscale does not have an IPv4 address yet. Use Sign in to Tailscale, complete authentication, then refresh.";
+  if(s.connection.ssh){
+    const computer="In FarRelay on iPhone, add a Windows computer. Address: "+s.tailscale.ip+". Port: 22. Username: "+s.windows_user+".";
+    const auth="Choose Private Key. Paste the private key matching the public key authorized for this Windows account. Enter its passphrase if it has one.";
+    const nvda="Under Accessibility, turn on Configure NVDA Remote and Enable NVDA Remote. Relay host: nvdaremote.com. Port: 6837. Enter the channel key for the NVDA Remote session you want to join. Leave fingerprint blank and Insecure off unless your relay requires otherwise.";
+    set("connect-computer",computer);
+    set("connect-auth",auth);
+    set("connect-nvda",nvda);
+    connectionText="1. Add this computer\n"+computer+"\n\n2. SSH authentication\n"+auth+"\n\n3. NVDA Remote\n"+nvda+"\n\nSSH check: "+s.connection.ssh+"\nFarRelay host check: "+s.connection.host_test;
+  }else{
+    const pending="Tailscale does not have an IPv4 address yet. Use Sign in to Tailscale, complete authentication, then refresh.";
+    set("connect-computer",pending);
+    set("connect-auth","Complete Tailscale sign-in first.");
+    set("connect-nvda","Complete Tailscale sign-in first.");
+    connectionText=pending;
+  }
+  get("connection-copy").value=connectionText;
 }
 async function refresh(){
   try{render(await api("/api/status"));}catch(e){set("activity","Status error: "+e.message);}
@@ -415,8 +445,8 @@ document.querySelectorAll("[data-action]").forEach(b=>b.addEventListener("click"
 }));
 get("refresh").addEventListener("click",refresh);
 get("copy").addEventListener("click",async()=>{
-  try{await navigator.clipboard.writeText(get("connection").value);set("activity","Connection instructions copied.");}
-  catch{get("connection").focus();get("connection").select();set("activity","Press Ctrl+C to copy the selected connection instructions.");}
+  try{await navigator.clipboard.writeText(connectionText);set("activity","Connection instructions copied.");}
+  catch{const field=get("connection-copy");field.focus();field.select();set("activity","Connection instructions selected. Press Ctrl+C to copy them.");}
 });
 get("close").addEventListener("click",async()=>{
   try{await api("/api/close",{method:"POST"});}catch{}
