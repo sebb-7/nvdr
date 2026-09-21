@@ -175,6 +175,117 @@ function htmlEscape(value: unknown): string {
 }
 
 
+function boundedInteger(value: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
+}
+
+async function publicEnrollmentConfig(env: Env): Promise<{
+  enabled: boolean;
+  accessDays: number;
+  inviteHours: number;
+  maxSignups: number;
+}> {
+  const result = await env.DB.prepare(
+    "SELECT key, value FROM program_settings WHERE key IN ('public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
+  ).all<{ key: string; value: string }>();
+  const settings = new Map(result.results.map((row) => [row.key, row.value]));
+  return {
+    enabled: settings.get("public_enrollment_enabled") === "true",
+    accessDays: boundedInteger(settings.get("public_enrollment_access_days") || "", 30, 1, 365),
+    inviteHours: boundedInteger(settings.get("public_enrollment_invite_hours") || "", 168, 1, 720),
+    maxSignups: boundedInteger(settings.get("public_enrollment_max_signups") || "", 100, 1, 10000),
+  };
+}
+
+function publicEnrollmentHtml(config: { accessDays: number; inviteHours: number }, message = "", status = 200): Response {
+  const notice = message ? '<p role="alert"><strong>' + htmlEscape(message) + '</strong></p>' : "";
+  const body = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join the FarRelay beta</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Join the FarRelay beta</h1><p>FarRelay is being tested with screen-reader users who want to remotely access and recover a Windows PC from an iPhone. Each signup receives a personal one-use Windows activation and personalized onboarding page.</p>' +
+    notice +
+    '<h2>Create your tester invitation</h2><form method="post" action="/join"><label for="tester-name"><strong>Your name</strong></label><br><input id="tester-name" name="tester_name" type="text" maxlength="120" required autocomplete="name" style="width:100%;box-sizing:border-box;font:inherit;padding:.55rem"><br><br><label for="computer-type"><strong>Windows PC or laptop type</strong></label><br><input id="computer-type" name="computer_type" type="text" maxlength="160" required placeholder="Example: ASUS G14, Surface Laptop, desktop PC" style="width:100%;box-sizing:border-box;font:inherit;padding:.55rem"><p>Use a short model or description. Do not enter a serial number.</p><p>Your generated installer invitation will be valid for ' +
+    config.inviteHours +
+    ' hour(s). After activation, your device receives ' +
+    config.accessDays +
+    ' day(s) of beta access.</p><button type="submit">Create my FarRelay beta invitation</button></form><h2>What happens next</h2><p>After submitting this form, you will go directly to your personal FarRelay onboarding page with the iPhone TestFlight link, Windows installer, activation code, setup instructions, and feedback form.</p></main></body></html>';
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    },
+  });
+}
+
+async function handlePublicEnrollment(request: Request, env: Env): Promise<Response> {
+  const config = await publicEnrollmentConfig(env);
+  if (!config.enabled) {
+    return new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>FarRelay beta enrollment closed</title></head><body><main><h1>FarRelay beta enrollment is currently closed</h1><p>Public tester enrollment is not accepting new signups right now.</p></main></body></html>', {
+      status: 403,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
+  const totalRow = await env.DB.prepare("SELECT COUNT(*) AS count FROM public_signup_events").first<{ count: number }>();
+  if (Number(totalRow?.count || 0) >= config.maxSignups) {
+    return publicEnrollmentHtml(config, "The current public beta signup limit has been reached.", 403);
+  }
+
+  if (request.method === "GET") return publicEnrollmentHtml(config);
+  if (request.method !== "POST") return error("method not allowed", 405);
+
+  const form = await request.formData().catch(() => null);
+  const testerName = typeof form?.get("tester_name") === "string" ? String(form.get("tester_name")).trim() : "";
+  const computerType = typeof form?.get("computer_type") === "string" ? String(form.get("computer_type")).trim() : "";
+  if (!testerName || testerName.length > 120 || !computerType || computerType.length > 160) {
+    return publicEnrollmentHtml(config, "Enter your name and a short Windows PC or laptop description.", 400);
+  }
+
+  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const userAgent = (request.headers.get("user-agent") || "unknown").slice(0, 240);
+  const requesterHash = await hmacHex(env.ADMIN_TOKEN, "public-signup:" + ip + "|" + userAgent);
+  const cutoff = new Date(Date.now() - 86400000).toISOString();
+  const recentRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM public_signup_events WHERE requester_hash = ? AND created_at > ?"
+  ).bind(requesterHash, cutoff).first<{ count: number }>();
+  if (Number(recentRow?.count || 0) >= 3) {
+    return publicEnrollmentHtml(config, "Too many invitations were created from this browser or network in the last 24 hours. Try again later or contact the FarRelay developer.", 429);
+  }
+
+  const code = "FR-BETA-" + randomText(10).toUpperCase();
+  const inviteId = crypto.randomUUID();
+  const signupId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + config.inviteHours * 3600000).toISOString();
+
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO invites(id, code_hash, label, channel, max_activations, activation_count, access_days, expires_at, created_at, requested_device) VALUES (?, ?, ?, 'beta', 1, 0, ?, ?, ?, ?)"
+    ).bind(inviteId, await sha256Hex(code), testerName, config.accessDays, expiresAt, now, computerType),
+    env.DB.prepare(
+      "INSERT INTO public_signup_events(id, requester_hash, invite_id, created_at) VALUES (?, ?, ?, ?)"
+    ).bind(signupId, requesterHash, inviteId, now),
+  ]);
+  if (!results.every((result) => result.success)) {
+    return publicEnrollmentHtml(config, "FarRelay could not create your tester invitation. Please try again.", 500);
+  }
+
+  await audit(env, "public_tester_signup", inviteId, computerType);
+  const location = new URL("/invite/" + encodeURIComponent(code), new URL(request.url).origin).toString();
+  return new Response(null, {
+    status: 303,
+    headers: {
+      location,
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    },
+  });
+}
+
+
 async function feedbackUrlForInvite(request: Request, env: Env, inviteId: string, returnPath?: string): Promise<string> {
   const signature = await hmacHex(env.ADMIN_TOKEN, "feedback:invite:" + inviteId);
   const url = new URL("/feedback/invite/" + encodeURIComponent(inviteId) + "/" + signature, new URL(request.url).origin);
@@ -580,6 +691,8 @@ export default {
     if (adminUi) return adminUi;
 
     if (request.method === "GET" && path === "/health") return json({ ok: true });
+
+    if (path === "/join") return handlePublicEnrollment(request, env);
 
 
     const feedbackMatch = path.match(/^\/feedback\/(invite|device)\/([^/]+)\/([a-f0-9]{64})$/);
