@@ -155,10 +155,12 @@ struct ControllerProfilesView: View {
 
             Section {
                 Button("Add Profile") {
-                    let id = mappings.createProfile()
+                    let savedExistingDraft = mappings.hasUnsavedChanges
+                    let id = mappings.createProfileForEditing()
                     let profile = mappings.profiles.first(where: { $0.id == id })
+                    let prefix = savedExistingDraft ? "Saved current profile. " : ""
                     AccessibilityNotification.Announcement(
-                        "Added \(profile?.name ?? "profile")."
+                        "\(prefix)Added \(profile?.name ?? "profile"). Ready to edit."
                     ).post()
                 }
                 Text("Profile order is also the order used by Next Profile and Previous Profile.")
