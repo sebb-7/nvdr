@@ -114,14 +114,69 @@ Integrate RemSound into FarRelay rather than requiring a separate iOS receiver a
 - If technically possible, independently include/exclude NVDA speech.
 - Audio failure must never break keyboard/NVDA/SSH control.
 
-### 4. Physical validation
+### 4. Usage profiles / app-specific profiles
+Add a FarRelay profile layer above HostProfile and ControllerProfile rather than duplicating either.
+
+#### Profile model
+A usage profile can reference:
+- Host/computer profile, e.g. G14.
+- Controller mapping profile.
+- Quick Bar layout.
+- Rotor sections and app-specific semantic commands.
+- Audio streaming policy / selected apps.
+- Microphone uplink policy.
+- Interaction sound/haptic preferences.
+- Optional launch/focus target for a Windows application.
+- Optional per-profile Extended-layer defaults.
+
+Examples:
+- Desktop: general NVDA navigation, BSI, standard Quick Bar.
+- Hearthstone: game-specific controller mappings, game Quick Bar, game/application audio enabled.
+- Discord: communication-oriented Quick Bar, Discord audio enabled, microphone uplink available.
+- Terminal: terminal-focused bindings and audio disabled.
+
+#### Switching
+- Explicit profile switch from FarRelay UI.
+- Mappable Quick Bar/controller action for Next/Previous Profile.
+- Announce the active profile.
+- Later consider app-aware suggestions/automatic switching, but never silently remap controls without an explicit user setting.
+
+### 5. Microphone uplink / remote headset mode
+Goal: capture the iPhone microphone in FarRelay and make it usable by Windows applications such as Discord on the G14.
+
+#### iOS
+- FarRelay owns microphone capture through AVFoundation.
+- Push-to-talk, toggle-to-talk, and always-on modes.
+- Accessible mute state and microphone level/status.
+- Encode for low latency, preferably Opus where compatible with the RemSound transport work.
+- Audio session must support simultaneous remote playback and microphone capture where iOS permits.
+
+#### Transport
+- Reverse audio direction alongside RemSound-compatible PC-to-iPhone playback.
+- Authenticate/encrypt microphone packets.
+- Keep microphone/audio transport independent of SSH/NVDA/controller control.
+- Graceful reconnect; never leave the remote microphone logically unmuted after transport loss.
+
+#### Windows
+Discord/Zoom/games require a Windows recording endpoint. Phase the implementation:
+1. Prototype: route received FarRelay mic audio into an existing virtual audio cable/capture endpoint.
+2. Managed setup: FarRelay host detects/configures the selected virtual microphone endpoint.
+3. Long term: evaluate a signed FarRelay virtual audio capture driver so users do not need a third-party virtual cable.
+
+#### Profile integration
+- Hearthstone profile can stream game audio with mic disabled.
+- Discord profile can enable selected PC audio plus iPhone microphone uplink.
+- Quick Bar actions: Mic Mute/Unmute, Push-to-Talk, Audio Stream On/Off, Open Audio Panel.
+- Per-profile mic state should default safe/muted unless the user explicitly chooses otherwise.
+
+### 6. Physical validation
 - Validate touchpad rotor on a real DualSense.
 - Validate Quick Bar Cross never sends Enter.
 - Validate Cross sends Enter after moving to Headings/Links/etc.
 - Validate BSI punctuation on the remote Windows target.
 - Build a fresh TestFlight after the exact-head iOS CI is green.
 
-### 5. Travel hardening
+### 7. Travel hardening
 - Configure NVDA Remote auto-connect.
 - Copy the appropriate NVDA settings for sign-in/secure screens and test carefully.
 - Test lock/sign-in, reboot, lid-closed, and cellular/off-home-network scenarios.
