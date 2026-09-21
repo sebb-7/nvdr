@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $installDir = Split-Path -Parent $PSScriptRoot
 $prepareScript = Join-Path $PSScriptRoot 'Prepare-FarRelayTravel.ps1'
 $configPath = Join-Path $env:ProgramData 'FarRelay\install.json'
+$progressPath = Join-Path $env:ProgramData 'FarRelay\travel-progress.json'
 
 function New-RandomHex([int]$Bytes = 32) {
     $data = New-Object byte[] $Bytes
@@ -84,6 +85,11 @@ function Get-FarRelayStatus {
     $powerReady = [bool](($sleep -eq 0) -and ($hibernate -eq 0))
     $ready = [bool]($sshReady -and $tailscaleReady -and $farRelayReady -and $powerReady)
 
+    $progress = $null
+    if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+        try { $progress = Get-Content -LiteralPath $progressPath -Raw | ConvertFrom-Json } catch {}
+    }
+
     $sshCommand = ''
     $hostCommand = ''
     if ($tailscaleIp) {
@@ -130,6 +136,12 @@ function Get-FarRelayStatus {
         connection = [ordered]@{
             ssh = $sshCommand
             host_test = $hostCommand
+        }
+        setup = [ordered]@{
+            state = if ($progress) { [string]$progress.state } else { 'idle' }
+            step = if ($progress) { [string]$progress.step } else { '' }
+            message = if ($progress) { [string]$progress.message } else { 'No setup operation is currently recorded.' }
+            updated_at = if ($progress) { [string]$progress.updated_at } else { '' }
         }
     }
 }
@@ -238,6 +250,16 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 </dl>
 </section>
 
+<section class="panel" aria-labelledby="setup-heading">
+<h2 id="setup-heading">Setup activity</h2>
+<dl>
+<dt>State</dt><dd id="setup-state">Idle</dd>
+<dt>Current step</dt><dd id="setup-step">None</dd>
+<dt>Latest message</dt><dd id="setup-message">No setup operation is currently recorded.</dd>
+<dt>Updated</dt><dd id="setup-updated">Not yet</dd>
+</dl>
+</section>
+
 <section class="panel" aria-labelledby="connection-heading">
 <h2 id="connection-heading">Connection instructions</h2>
 <textarea id="connection" readonly aria-label="FarRelay connection instructions">Waiting for Tailscale address...</textarea>
@@ -289,6 +311,10 @@ function render(s){
   set("sleep",s.power.ac_sleep_never?"Never":"Needs attention");
   set("hibernate",s.power.ac_hibernate_never?"Never":"Needs attention");
   set("lid",s.power.lid_do_nothing?"Do nothing":"Not configured to Do nothing");
+  set("setup-state",s.setup.state||"idle");
+  set("setup-step",s.setup.step||"None");
+  set("setup-message",s.setup.message||"");
+  set("setup-updated",s.setup.updated_at||"Not yet");
   get("connection").value=s.connection.ssh
     ? "Computer: "+s.computer+"\nWindows user: "+s.windows_user+"\nTailscale IPv4: "+s.tailscale.ip+"\n\nSSH:\n"+s.connection.ssh+"\n\nFarRelay host test:\n"+s.connection.host_test+"\n\nOn iPhone/iPad, connect Tailscale to the same tailnet, then add this computer in FarRelay using the address and Windows user above."
     : "Tailscale does not have an IPv4 address yet. Use Sign in to Tailscale, complete authentication, then refresh.";
