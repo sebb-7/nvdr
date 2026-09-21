@@ -13,7 +13,21 @@ use std::path::{Path, PathBuf};
 pub const SCHEMA_VERSION: u32 = 1;
 pub const DISTRIBUTION_BINARIES: [&str; 3] =
     ["farrelay.exe", "farrelay-host.exe", "farrelay-updater.exe"];
+pub const DISTRIBUTION_SUPPORT_FILES: [&str; 6] = [
+    "scripts/Install-FarRelayNvdaRecoveryTask.ps1",
+    "scripts/Install-FarRelayUpdaterTask.ps1",
+    "scripts/Install-FarRelayShellLinks.ps1",
+    "scripts/Prepare-FarRelayTravel.ps1",
+    "scripts/Start-FarRelayControlCenter.ps1",
+    "scripts/Test-FarRelayTravelReadiness.ps1",
+];
 pub const UPDATE_DOWNLOAD_PATH_PREFIX: &str = "/v1/download/";
+
+fn distribution_files() -> impl Iterator<Item = &'static str> {
+    DISTRIBUTION_BINARIES
+        .into_iter()
+        .chain(DISTRIBUTION_SUPPORT_FILES)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -226,7 +240,7 @@ pub fn apply_staged_release(
     staging_dir: &Path,
     rollback_dir: &Path,
 ) -> Result<(), String> {
-    for name in DISTRIBUTION_BINARIES {
+    for name in distribution_files() {
         let path = staging_dir.join(name);
         if !path.is_file() || fs::metadata(&path).map_err(|e| e.to_string())?.len() == 0 {
             return Err(format!("staging is incomplete: {name}"));
@@ -236,22 +250,34 @@ pub fn apply_staged_release(
     let fresh_rollback = rollback_dir.with_extension("new");
     let _ = fs::remove_dir_all(&fresh_rollback);
     fs::create_dir_all(&fresh_rollback).map_err(|e| format!("creating rollback directory: {e}"))?;
-    for name in DISTRIBUTION_BINARIES {
+    for name in distribution_files() {
         let installed = install_dir.join(name);
         if installed.exists() {
-            fs::copy(&installed, fresh_rollback.join(name))
-                .map_err(|e| format!("backing up {name}: {e}"))?;
+            let backup = fresh_rollback.join(name);
+            if let Some(parent) = backup.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("creating rollback path for {name}: {e}"))?;
+            }
+            fs::copy(&installed, backup).map_err(|e| format!("backing up {name}: {e}"))?;
         }
     }
     let _ = fs::remove_dir_all(rollback_dir);
     fs::rename(&fresh_rollback, rollback_dir)
         .map_err(|e| format!("activating rollback copy: {e}"))?;
     let mut replaced = Vec::new();
-    for name in DISTRIBUTION_BINARIES {
-        let next = install_dir.join(format!(".{name}.next"));
-        fs::copy(staging_dir.join(name), &next).map_err(|e| format!("staging {name}: {e}"))?;
+    for name in distribution_files() {
         let installed = install_dir.join(name);
-        let previous = install_dir.join(format!(".{name}.previous"));
+        if let Some(parent) = installed.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("creating install path for {name}: {e}"))?;
+        }
+        let file_name = Path::new(name)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| format!("invalid distribution path {name}"))?;
+        let next = installed.with_file_name(format!(".{file_name}.next"));
+        fs::copy(staging_dir.join(name), &next).map_err(|e| format!("staging {name}: {e}"))?;
+        let previous = installed.with_file_name(format!(".{file_name}.previous"));
         let _ = fs::remove_file(&previous);
         if installed.exists() {
             fs::rename(&installed, &previous).map_err(|e| format!("preparing {name}: {e}"))?;
@@ -271,10 +297,15 @@ pub fn apply_staged_release(
 }
 
 pub fn rollback_release(install_dir: &Path, rollback_dir: &Path) -> Result<(), String> {
-    for name in DISTRIBUTION_BINARIES {
+    for name in distribution_files() {
         let old = rollback_dir.join(name);
         if old.is_file() {
-            fs::copy(&old, install_dir.join(name)).map_err(|e| format!("restoring {name}: {e}"))?;
+            let destination = install_dir.join(name);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("creating restore path for {name}: {e}"))?;
+            }
+            fs::copy(&old, destination).map_err(|e| format!("restoring {name}: {e}"))?;
         }
     }
     Ok(())
@@ -285,11 +316,15 @@ pub fn unzip_update(archive: &Path, staging: &Path) -> Result<(), String> {
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("invalid update archive: {e}"))?;
     let _ = fs::remove_dir_all(staging);
     fs::create_dir_all(staging).map_err(|e| e.to_string())?;
-    for name in DISTRIBUTION_BINARIES {
+    for name in distribution_files() {
         let mut item = zip
             .by_name(name)
             .map_err(|_| format!("update archive is missing {name}"))?;
-        let mut output = fs::File::create(staging.join(name)).map_err(|e| e.to_string())?;
+        let output_path = staging.join(name);
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut output = fs::File::create(output_path).map_err(|e| e.to_string())?;
         io::copy(&mut item, &mut output).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -403,9 +438,17 @@ mod tests {
         let stage = dir.join("stage");
         fs::create_dir_all(&install).unwrap();
         fs::create_dir_all(&stage).unwrap();
-        for name in DISTRIBUTION_BINARIES {
-            fs::write(install.join(name), format!("old-{name}")).unwrap();
-            fs::write(stage.join(name), format!("new-{name}")).unwrap();
+        for name in distribution_files() {
+            let installed = install.join(name);
+            let staged = stage.join(name);
+            if let Some(parent) = installed.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            if let Some(parent) = staged.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(installed, format!("old-{name}")).unwrap();
+            fs::write(staged, format!("new-{name}")).unwrap();
         }
         apply_staged_release(&install, &stage, &dir.join("rollback")).unwrap();
         assert_eq!(
