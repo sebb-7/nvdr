@@ -98,10 +98,10 @@ procedure AddFarRelayToSystemPath;
 var
   CurrentPath, UpdatedPath: String;
 begin
-  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control Session Manager\Environment', 'Path', CurrentPath) then begin
+  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', CurrentPath) then begin
     if not PathHasDirectory(CurrentPath, ExpandConstant('{app}')) then begin
       UpdatedPath := CurrentPath + ';' + ExpandConstant('{app}');
-      RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control Session Manager\Environment', 'Path', UpdatedPath);
+      RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', UpdatedPath);
     end;
   end;
 end;

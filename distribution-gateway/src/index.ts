@@ -199,11 +199,11 @@ async function activate(request: Request, env: Env): Promise<Response> {
 
   const results = await env.DB.batch([
     env.DB.prepare(
-      "UPDATE invites SET activation_count = activation_count + 1 WHERE id = ? AND revoked_at IS NULL AND activation_count < max_activations AND (expires_at IS NULL OR expires_at > ?)"
-    ).bind(invite.id, now),
-    env.DB.prepare(
-      "INSERT INTO devices(id, invite_id, label, token_hash, channel, created_at) SELECT ?, id, ?, ?, channel, ? FROM invites WHERE id = ? AND revoked_at IS NULL AND activation_count <= max_activations AND (expires_at IS NULL OR expires_at > ?)"
+      "INSERT INTO devices(id, invite_id, label, token_hash, channel, created_at) SELECT ?, id, ?, ?, channel, ? FROM invites WHERE id = ? AND revoked_at IS NULL AND activation_count < max_activations AND (expires_at IS NULL OR expires_at > ?)"
     ).bind(deviceId, body.device_name.trim().slice(0, 120) || "Windows device", tokenHash, now, invite.id, now),
+    env.DB.prepare(
+      "UPDATE invites SET activation_count = activation_count + 1 WHERE id = ? AND EXISTS (SELECT 1 FROM devices WHERE id = ?)"
+    ).bind(invite.id, deviceId),
   ]);
   if (!results[0].success || Number(results[0].meta.changes ?? 0) !== 1 || !results[1].success || Number(results[1].meta.changes ?? 0) !== 1) {
     return error("tester invitation could not be activated", 409);
