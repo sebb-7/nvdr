@@ -133,6 +133,23 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.prior, true), .init(VK.prior, false)])
     }
 
+    func testOneShotLayerIsConsumedBySuccessfulLocalAction() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.1)
+        XCTAssertEqual(adapter.layerStateForTesting, .oneShot("extended"))
+
+        // Extended + Cross defaults to Repeat Last Quick Bar Action. Even
+        // with no repeat history, the local command is handled and consumes
+        // the one-shot layer instead of leaving it armed.
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.3)
+        await settle()
+
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
     func testActionReleaseUsesOriginalResolvedActionAfterLayerChanges() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .options, pressed: true, at: 1)
