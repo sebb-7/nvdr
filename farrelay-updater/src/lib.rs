@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const SCHEMA_VERSION: u32 = 1;
 pub const DISTRIBUTION_BINARIES: [&str; 3] =
     ["farrelay.exe", "farrelay-host.exe", "farrelay-updater.exe"];
-pub const RELEASE_URL_PREFIX: &str = "https://github.com/sebb-7/farrelay-releases/releases/download/";
+pub const UPDATE_DOWNLOAD_PATH_PREFIX: &str = "/v1/download/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -173,10 +173,14 @@ pub fn plan_update(
 }
 
 pub fn validate_asset(asset: &UpdateAsset) -> Result<(), String> {
-    if !asset.archive_url.starts_with(RELEASE_URL_PREFIX) {
-        return Err(
-            "update archive URL is outside the trusted FarRelay GitHub release path".into(),
-        );
+    if !asset.archive_url.starts_with(UPDATE_DOWNLOAD_PATH_PREFIX)
+        || asset.archive_url.contains("..")
+        || asset.archive_url.contains("://")
+        || asset.archive_url.contains('\\')
+        || asset.archive_url.contains('?')
+        || asset.archive_url.contains('#')
+    {
+        return Err("update archive path is outside the authenticated FarRelay gateway".into());
     }
     if asset.size == 0 {
         return Err("update asset has an invalid size".into());
@@ -297,14 +301,14 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     fn asset(hash: &str) -> UpdateAsset {
         UpdateAsset {
-            archive_url: format!("{RELEASE_URL_PREFIX}v1/update.zip"),
+            archive_url: format!("{UPDATE_DOWNLOAD_PATH_PREFIX}v1/update.zip"),
             sha256: hash.into(),
             size: 1,
         }
     }
     fn manifest(version: &str, channel: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"channel":"{channel}","version":"{version}","published_at":"2026-09-20T00:00:00Z","assets":{{"windows_x86_64":{{"archive_url":"{RELEASE_URL_PREFIX}v1/update.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":1}}}}}}"#
+            r#"{{"schema_version":1,"channel":"{channel}","version":"{version}","published_at":"2026-09-20T00:00:00Z","assets":{{"windows_x86_64":{{"archive_url":"{UPDATE_DOWNLOAD_PATH_PREFIX}v1/update.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":1}}}}}}"#
         )
     }
     fn temp(label: &str) -> PathBuf {

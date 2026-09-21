@@ -1,10 +1,13 @@
-; Inno Setup is used for its mature, standard Windows controls and silent
-; deployment support. CI supplies AppVersion, Channel, and SourceDir.
+; FarRelay tester installer. Distribution authorization is handled by the
+; authenticated tester gateway; no GitHub credential is embedded in the app.
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
 #ifndef Channel
   #define Channel "beta"
+#endif
+#ifndef GatewayUrl
+  #define GatewayUrl "https://invalid.example"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist"
@@ -41,21 +44,64 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+Type: files; Name: "{commonappdata}\FarRelay\device.credential"
 
 [Code]
+var
+  TesterCodePage: TInputQueryWizardPage;
+
 function PathHasDirectory(Value, Directory: String): Boolean;
 begin
   Result := Pos(';' + Uppercase(Directory) + ';', ';' + Uppercase(Value) + ';') > 0;
+end;
+
+function IsSafeActivationCode(Value: String): Boolean;
+var
+  I: Integer;
+  C: Char;
+begin
+  Value := Uppercase(Trim(Value));
+  Result := Length(Value) >= 12;
+  if not Result then Exit;
+  for I := 1 to Length(Value) do begin
+    C := Value[I];
+    if not (((C >= 'A') and (C <= 'Z')) or ((C >= '0') and (C <= '9')) or (C = '-')) then begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  TesterCodePage := CreateInputQueryPage(
+    wpSelectDir,
+    'FarRelay tester access',
+    'Enter your tester activation code',
+    'FarRelay beta and stable builds are invite-only. Enter the code supplied by the FarRelay developer.'
+  );
+  TesterCodePage.Add('Activation code:', False);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = TesterCodePage.ID then begin
+    if not IsSafeActivationCode(TesterCodePage.Values[0]) then begin
+      MsgBox('Enter a valid FarRelay tester activation code.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
 end;
 
 procedure AddFarRelayToSystemPath;
 var
   CurrentPath, UpdatedPath: String;
 begin
-  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', CurrentPath) then begin
+  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control Session Manager\Environment', 'Path', CurrentPath) then begin
     if not PathHasDirectory(CurrentPath, ExpandConstant('{app}')) then begin
       UpdatedPath := CurrentPath + ';' + ExpandConstant('{app}');
-      RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', UpdatedPath);
+      RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control Session Manager\Environment', 'Path', UpdatedPath);
     end;
   end;
 end;
@@ -69,7 +115,6 @@ begin
   ForceDirectories(ConfigDir);
   ConfigPath := AddBackslash(ConfigDir) + 'install.json';
   SelectedChannel := '{#Channel}';
-  { Preserve an explicitly installed tester channel during an upgrade. }
   if LoadStringFromFile(ConfigPath, ExistingContentUtf8) then begin
     ExistingContent := Utf8Decode(ExistingContentUtf8);
     if Pos('"channel":"stable"', ExistingContent) > 0 then SelectedChannel := 'stable';
@@ -77,12 +122,27 @@ begin
   end;
   InstallPath := ExpandConstant('{app}');
   StringChangeEx(InstallPath, '\', '/', True);
-  UpdateUrl := 'https://github.com/sebb-7/farrelay-releases/releases/download/farrelay-' + SelectedChannel + '/update-' + SelectedChannel + '.json';
+  UpdateUrl := '{#GatewayUrl}';
+  while (Length(UpdateUrl) > 0) and (UpdateUrl[Length(UpdateUrl)] = '/') do
+    Delete(UpdateUrl, Length(UpdateUrl), 1);
+  UpdateUrl := UpdateUrl + '/v1/manifest';
   Content := '{"schema_version":1,"channel":"' + SelectedChannel + '","installed_version":"{#AppVersion}","install_dir":"' + InstallPath + '","manifest_url":"' + UpdateUrl + '"}';
   ContentUtf8 := Utf8Encode(Content);
-  { ProgramData is retained by uninstall; a later installer updates only distribution metadata. }
   if not SaveStringToFile(ConfigPath, ContentUtf8, False) then
     RaiseException('Unable to write FarRelay install configuration.');
+end;
+
+procedure ActivateTester;
+var
+  ResultCode: Integer;
+  Code, Params: String;
+begin
+  Code := Uppercase(Trim(TesterCodePage.Values[0]));
+  if not IsSafeActivationCode(Code) then
+    RaiseException('A valid FarRelay tester activation code is required.');
+  Params := 'activate "' + Code + '"';
+  if (not Exec(ExpandConstant('{app}\farrelay-updater.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    RaiseException('FarRelay tester activation failed. Confirm the code is current and this computer is online.');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -90,5 +150,6 @@ begin
   if CurStep = ssPostInstall then begin
     AddFarRelayToSystemPath;
     WriteInstallConfiguration;
+    ActivateTester;
   end;
 end;

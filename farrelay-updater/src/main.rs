@@ -1,11 +1,13 @@
 use farrelay_updater::{
-    apply_staged_release, plan_update, rollback_release, unzip_update, verify_file, InstallConfig,
-    RELEASE_URL_PREFIX,
+    apply_staged_release, plan_update, rollback_release, unzip_update, verify_file, Channel,
+    InstallConfig,
 };
+use serde::Deserialize;
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const DISTRIBUTION_VERSION: &str = match option_env!("FARRELAY_DIST_VERSION") {
     Some(version) => version,
@@ -18,27 +20,114 @@ fn data_dir() -> PathBuf {
         .or_else(|| env::var_os("PROGRAMDATA").map(|v| PathBuf::from(v).join("FarRelay")))
         .unwrap_or_else(|| PathBuf::from("C:/ProgramData/FarRelay"))
 }
+
 fn config_path() -> PathBuf {
     data_dir().join("install.json")
 }
+
+fn credential_path() -> PathBuf {
+    data_dir().join("device.credential")
+}
+
+fn valid_manifest_url(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("https://") else {
+        return false;
+    };
+    if rest.contains('@') || rest.contains('#') || rest.contains('?') {
+        return false;
+    }
+    let Some((host, path)) = rest.split_once('/') else {
+        return false;
+    };
+    !host.is_empty() && path == "v1/manifest"
+}
+
+fn gateway_origin(manifest_url: &str) -> Result<String, String> {
+    if !valid_manifest_url(manifest_url) {
+        return Err("install configuration has an invalid authenticated gateway URL".into());
+    }
+    let rest = manifest_url
+        .strip_prefix("https://")
+        .ok_or_else(|| "gateway must use HTTPS".to_string())?;
+    let (host, _) = rest
+        .split_once('/')
+        .ok_or_else(|| "gateway URL has no path".to_string())?;
+    Ok(format!("https://{host}"))
+}
+
 fn load_config() -> Result<InstallConfig, String> {
     let value = fs::read_to_string(config_path())
         .map_err(|e| format!("read {}: {e}", config_path().display()))?;
     let config: InstallConfig =
         serde_json::from_str(&value).map_err(|e| format!("invalid install configuration: {e}"))?;
-    if config.schema_version != 1 || !config.manifest_url.starts_with(RELEASE_URL_PREFIX) {
-        return Err("install configuration has an unsupported schema or update source".into());
+    if config.schema_version != 1 || !valid_manifest_url(&config.manifest_url) {
+        return Err("install configuration has an unsupported schema or gateway".into());
     }
     Ok(config)
 }
+
 fn architecture() -> &'static str {
     "windows_x86_64"
 }
-fn download(url: &str, destination: &Path) -> Result<(), String> {
-    if !url.starts_with(RELEASE_URL_PREFIX) {
-        return Err("refusing untrusted update URL".into());
+
+fn join_gateway_path(manifest_url: &str, relative: &str) -> Result<String, String> {
+    if !relative.starts_with("/v1/download/")
+        || relative.contains("..")
+        || relative.contains("://")
+        || relative.contains('\\')
+        || relative.contains('?')
+        || relative.contains('#')
+    {
+        return Err("update path is outside the authenticated FarRelay gateway".into());
     }
-    let status = Command::new("curl.exe")
+    Ok(format!("{}{}", gateway_origin(manifest_url)?, relative))
+}
+
+fn curl_download(url: &str, destination: &Path, bearer: Option<&str>) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("refusing non-HTTPS download".into());
+    }
+    let mut command = Command::new("curl.exe");
+    command.args([
+        "--fail",
+        "--location",
+        "--proto",
+        "=https",
+        "--tlsv1.2",
+        "--silent",
+        "--show-error",
+        "--config",
+        "-",
+        "--output",
+    ]);
+    command.arg(destination).arg(url).stdin(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("starting built-in HTTPS downloader: {e}"))?;
+    if let Some(token) = bearer {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "unable to secure updater authorization input".to_string())?;
+        writeln!(stdin, "header = \"Authorization: Bearer {token}\"")
+            .map_err(|e| format!("writing authorization header: {e}"))?;
+    }
+    drop(child.stdin.take());
+    let status = child
+        .wait()
+        .map_err(|e| format!("waiting for built-in HTTPS downloader: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("authenticated HTTPS download failed; tester access may be revoked".into())
+    }
+}
+
+fn curl_post_json(url: &str, body: &[u8]) -> Result<Vec<u8>, String> {
+    if !url.starts_with("https://") {
+        return Err("refusing non-HTTPS activation request".into());
+    }
+    let mut child = Command::new("curl.exe")
         .args([
             "--fail",
             "--location",
@@ -47,18 +136,162 @@ fn download(url: &str, destination: &Path) -> Result<(), String> {
             "--tlsv1.2",
             "--silent",
             "--show-error",
-            "--output",
+            "--request",
+            "POST",
+            "--header",
+            "Content-Type: application/json",
+            "--data-binary",
+            "@-",
         ])
-        .arg(destination)
         .arg(url)
-        .status()
-        .map_err(|e| format!("starting built-in HTTPS downloader: {e}"))?;
-    if status.success() {
-        Ok(())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("starting activation request: {e}"))?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "activation request has no input stream".to_string())?
+        .write_all(body)
+        .map_err(|e| format!("sending activation request: {e}"))?;
+    drop(child.stdin.take());
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("waiting for activation request: {e}"))?;
+    if output.status.success() {
+        Ok(output.stdout)
     } else {
-        Err("HTTPS download failed".into())
+        Err("tester activation was rejected or unavailable".into())
     }
 }
+
+fn powershell_transform(script: &str, input: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("starting Windows credential protection: {e}"))?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "credential protection has no input stream".to_string())?
+        .write_all(input.as_bytes())
+        .map_err(|e| format!("writing credential protection input: {e}"))?;
+    drop(child.stdin.take());
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("waiting for Windows credential protection: {e}"))?;
+    if !output.status.success() {
+        return Err("Windows credential protection failed".into());
+    }
+    String::from_utf8(output.stdout)
+        .map(|s| s.trim().to_owned())
+        .map_err(|e| format!("credential protection returned invalid UTF-8: {e}"))
+}
+
+fn protect_device_token(token: &str) -> Result<(), String> {
+    fs::create_dir_all(data_dir()).map_err(|e| format!("creating FarRelay data directory: {e}"))?;
+    let protected = powershell_transform(
+        "$p=[Console]::In.ReadToEnd();$b=[Text.Encoding]::UTF8.GetBytes($p);$e=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::LocalMachine);[Convert]::ToBase64String($e)",
+        token,
+    )?;
+    fs::write(credential_path(), protected.as_bytes())
+        .map_err(|e| format!("writing protected device credential: {e}"))?;
+    let status = Command::new("icacls.exe")
+        .arg(credential_path())
+        .args([
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-18:F",
+            "*S-1-5-32-544:F",
+        ])
+        .status()
+        .map_err(|e| format!("securing device credential ACL: {e}"))?;
+    if !status.success() {
+        return Err("unable to restrict device credential permissions".into());
+    }
+    Ok(())
+}
+
+fn load_device_token() -> Result<String, String> {
+    let protected = fs::read_to_string(credential_path()).map_err(|_| {
+        "FarRelay is not activated on this device. Run farrelay-updater activate as administrator."
+            .to_string()
+    })?;
+    let token = powershell_transform(
+        "$p=[Console]::In.ReadToEnd().Trim();$e=[Convert]::FromBase64String($p);$b=[Security.Cryptography.ProtectedData]::Unprotect($e,$null,[Security.Cryptography.DataProtectionScope]::LocalMachine);[Text.Encoding]::UTF8.GetString($b)",
+        &protected,
+    )?;
+    if token.trim().is_empty() {
+        Err("stored FarRelay device credential is empty".into())
+    } else {
+        Ok(token)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ActivationResponse {
+    device_id: String,
+    device_token: String,
+    channel: Channel,
+}
+
+fn activate(code: String) -> Result<(), String> {
+    let config = load_config()?;
+    let origin = gateway_origin(&config.manifest_url)?;
+    let device_name = env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows device".into());
+    let body = serde_json::json!({
+        "invite_code": code.trim(),
+        "device_name": device_name,
+    });
+    let response = curl_post_json(
+        &format!("{origin}/v1/activate"),
+        &serde_json::to_vec(&body).map_err(|e| e.to_string())?,
+    )?;
+    let activation: ActivationResponse =
+        serde_json::from_slice(&response).map_err(|e| format!("invalid activation response: {e}"))?;
+    if activation.channel != config.channel {
+        return Err("tester code is for a different FarRelay release channel".into());
+    }
+    if activation.device_token.len() < 32 || activation.device_id.trim().is_empty() {
+        return Err("activation response did not contain a valid device credential".into());
+    }
+    protect_device_token(&activation.device_token)?;
+    println!(
+        "FarRelay tester access activated for device {} on the {} channel.",
+        activation.device_id, activation.channel
+    );
+    Ok(())
+}
+
+fn read_activation_code() -> Result<String, String> {
+    if let Some(code) = env::args().nth(2) {
+        if !code.trim().is_empty() {
+            return Ok(code);
+        }
+    }
+    print!("Enter FarRelay tester activation code: ");
+    io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut code = String::new();
+    io::stdin()
+        .read_line(&mut code)
+        .map_err(|e| format!("reading activation code: {e}"))?;
+    let code = code.trim().to_owned();
+    if code.is_empty() {
+        Err("activation code is required".into())
+    } else {
+        Ok(code)
+    }
+}
+
 fn binaries_busy() -> bool {
     #[cfg(windows)]
     {
@@ -79,12 +312,14 @@ fn binaries_busy() -> bool {
         false
     }
 }
+
 fn check_and_install(install: bool) -> Result<(), String> {
     let mut config = load_config()?;
+    let token = load_device_token()?;
     let work = data_dir().join("updates");
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let manifest_file = work.join("manifest.json");
-    download(&config.manifest_url, &manifest_file)?;
+    curl_download(&config.manifest_url, &manifest_file, Some(&token))?;
     let manifest = fs::read_to_string(&manifest_file).map_err(|e| e.to_string())?;
     let Some(plan) = plan_update(
         &manifest,
@@ -110,7 +345,8 @@ fn check_and_install(install: bool) -> Result<(), String> {
         return Err("FarRelay is busy; update deferred without stopping active control".into());
     }
     let archive = work.join("download.zip");
-    download(&plan.asset.archive_url, &archive)?;
+    let archive_url = join_gateway_path(&config.manifest_url, &plan.asset.archive_url)?;
+    curl_download(&archive_url, &archive, Some(&token))?;
     verify_file(&archive, &plan.asset.sha256, plan.asset.size)?;
     let staging = work.join("staging");
     unzip_update(&archive, &staging)?;
@@ -124,11 +360,13 @@ fn check_and_install(install: bool) -> Result<(), String> {
     println!("FarRelay update installed.");
     Ok(())
 }
+
 fn usage() {
     eprintln!(
-        "Usage: farrelay-updater <status|check|update|rollback|--check-and-install|--version>"
+        "Usage: farrelay-updater <status|activate [code]|check|update|rollback|--check-and-install|--version>"
     );
 }
+
 fn main() {
     let command = env::args().nth(1).unwrap_or_else(|| "status".into());
     let result = match command.as_str() {
@@ -138,13 +376,15 @@ fn main() {
         }
         "status" => load_config().map(|c| {
             println!(
-                "FarRelay {} ({})\nInstall: {}\nSource: {}",
+                "FarRelay {} ({})\nInstall: {}\nGateway: {}\nActivated: {}",
                 c.installed_version,
                 c.channel,
                 c.install_dir.display(),
-                c.manifest_url
+                c.manifest_url,
+                if credential_path().is_file() { "yes" } else { "no" }
             )
         }),
+        "activate" => read_activation_code().and_then(activate),
         "check" => check_and_install(false),
         "update" | "--check-and-install" => check_and_install(true),
         "rollback" => load_config()
@@ -158,5 +398,29 @@ fn main() {
     if let Err(error) = result {
         eprintln!("farrelay-updater: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_root_https_manifest_endpoint() {
+        assert!(valid_manifest_url("https://example.workers.dev/v1/manifest"));
+        assert!(!valid_manifest_url("http://example.workers.dev/v1/manifest"));
+        assert!(!valid_manifest_url("https://user@example.workers.dev/v1/manifest"));
+        assert!(!valid_manifest_url("https://example.workers.dev/v1/other"));
+    }
+
+    #[test]
+    fn joins_only_authenticated_download_paths() {
+        let manifest = "https://example.workers.dev/v1/manifest";
+        assert_eq!(
+            join_gateway_path(manifest, "/v1/download/0.2.0-beta.3/windows_x86_64").unwrap(),
+            "https://example.workers.dev/v1/download/0.2.0-beta.3/windows_x86_64"
+        );
+        assert!(join_gateway_path(manifest, "https://evil.example/x").is_err());
+        assert!(join_gateway_path(manifest, "/v1/download/../secret").is_err());
     }
 }
