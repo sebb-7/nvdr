@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub const SCHEMA_VERSION: u32 = 1;
 pub const DISTRIBUTION_BINARIES: [&str; 3] =
     ["farrelay.exe", "farrelay-host.exe", "farrelay-updater.exe"];
-pub const RELEASE_URL_PREFIX: &str = "https://github.com/sebb-7/nvdr/releases/download/";
+pub const RELEASE_URL_PREFIX: &str = "https://github.com/sebb-7/farrelay-releases/releases/download/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

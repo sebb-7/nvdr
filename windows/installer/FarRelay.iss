@@ -77,7 +77,7 @@ begin
   end;
   InstallPath := ExpandConstant('{app}');
   StringChangeEx(InstallPath, '\', '/', True);
-  UpdateUrl := 'https://github.com/sebb-7/nvdr/releases/download/farrelay-' + SelectedChannel + '/update-' + SelectedChannel + '.json';
+  UpdateUrl := 'https://github.com/sebb-7/farrelay-releases/releases/download/farrelay-' + SelectedChannel + '/update-' + SelectedChannel + '.json';
   Content := '{"schema_version":1,"channel":"' + SelectedChannel + '","installed_version":"{#AppVersion}","install_dir":"' + InstallPath + '","manifest_url":"' + UpdateUrl + '"}';
   ContentUtf8 := Utf8Encode(Content);
   { ProgramData is retained by uninstall; a later installer updates only distribution metadata. }
