@@ -84,7 +84,70 @@ struct ControllerLayerAction: Codable, Hashable, Sendable {
 }
 
 enum QuickNavigationAction: String, Codable, Hashable, Sendable { case toggle }
-enum FarRelayControllerAction: String, Codable, Hashable, Sendable { case textMode }
+enum FarRelayControllerAction: String, Codable, Hashable, Sendable {
+    case textMode
+    case repeatLastQuickBar
+    case nextProfile
+    case previousProfile
+}
+
+extension ControllerAction {
+    var isRepeatableQuickBarAction: Bool {
+        if case .keyboard = self { return true }
+        return false
+    }
+
+    var isAllowedInQuickBar: Bool {
+        switch self {
+        case .keyboard, .farRelay:
+            return true
+        case .layer, .quickNavigation:
+            return false
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .keyboard(let keyboard):
+            let modifiers = keyboard.modifiers.map(\.label).sorted()
+            return (modifiers + [keyboard.key.label]).joined(separator: "+")
+        case .layer(let layer):
+            return "\(layer.layerID.capitalized) layer"
+        case .quickNavigation:
+            return "NVDA Quick Navigation"
+        case .farRelay(let action):
+            switch action {
+            case .textMode: return "Text Mode"
+            case .repeatLastQuickBar: return "Repeat Last Quick Bar Action"
+            case .nextProfile: return "Next Profile"
+            case .previousProfile: return "Previous Profile"
+            }
+        }
+    }
+}
+
+struct QuickBarEntry: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    var action: ControllerAction?
+
+    var label: String { action?.displayLabel ?? "Unassigned" }
+
+    init(id: UUID = UUID(), action: ControllerAction?) {
+        self.id = id
+        self.action = action
+    }
+
+    static var recommended: [QuickBarEntry] {
+        [
+            .init(action: .keyboard(.init(key: .d, modifiers: [.windows]))),
+            .init(action: .keyboard(.init(key: .n, modifiers: [.nvda]))),
+            .init(action: .keyboard(.init(key: .tab, modifiers: [.alt]))),
+            .init(action: .keyboard(.init(key: .f7, modifiers: [.nvda]))),
+            .init(action: .keyboard(.init(key: .t, modifiers: [.nvda]))),
+            .init(action: .keyboard(.init(key: .tab, modifiers: [.nvda])))
+        ]
+    }
+}
 
 struct ControllerLayerDefinition: Codable, Hashable, Identifiable, Sendable {
     static let extendedID = "extended"
@@ -111,8 +174,8 @@ struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
     var id: ControllerInput { sourceInput }
 }
 
-struct ControllerProfile: Codable, Hashable, Sendable {
-    static let currentSchemaVersion = 2
+struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
+    static let currentSchemaVersion = 3
     var schemaVersion: Int = currentSchemaVersion
     var id: UUID = UUID()
     var name: String = "Default Controller Profile"
@@ -121,9 +184,10 @@ struct ControllerProfile: Codable, Hashable, Sendable {
     /// Base remains `bindings` for backward-compatible v1 migration. Named
     /// layers keep their own stable input slots for future custom layers.
     var layers: [ControllerLayerDefinition] = []
+    var quickBar: [QuickBarEntry] = QuickBarEntry.recommended
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, name, controller, bindings, layers
+        case schemaVersion, id, name, controller, bindings, layers, quickBar
     }
 
     init(
@@ -132,7 +196,8 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         name: String = "Default Controller Profile",
         controller: ControllerHardware = .dualSense,
         bindings: [ControllerBinding] = ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) },
-        layers: [ControllerLayerDefinition] = []
+        layers: [ControllerLayerDefinition] = [],
+        quickBar: [QuickBarEntry] = QuickBarEntry.recommended
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -140,6 +205,7 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         self.controller = controller
         self.bindings = bindings
         self.layers = layers
+        self.quickBar = quickBar
     }
 
     init(from decoder: Decoder) throws {
@@ -152,6 +218,10 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         // v1 pre-dates named layers. Treat absence as an empty layer list so
         // the explicit migration below can preserve the base profile safely.
         layers = try container.decodeIfPresent([ControllerLayerDefinition].self, forKey: .layers) ?? []
+        // v1/v2 pre-date Quick Bar persistence. Only old schemas receive the
+        // recommended defaults; an explicitly empty v3 Quick Bar stays empty.
+        quickBar = try container.decodeIfPresent([QuickBarEntry].self, forKey: .quickBar)
+            ?? (schemaVersion < 3 ? QuickBarEntry.recommended : [])
     }
 
     func action(for input: ControllerInput) -> ControllerAction? { bindings.first { $0.sourceInput == input }?.action }
@@ -165,8 +235,8 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         return layers.first { $0.id == layerID }?.action(for: input)
     }
 
-    static func newDefault() -> ControllerProfile {
-        var profile = ControllerProfile()
+    static func newDefault(name: String = "Default Controller Profile") -> ControllerProfile {
+        var profile = ControllerProfile(name: name)
         profile.schemaVersion = currentSchemaVersion
         profile.setAction(.keyboard(.init(key: .up)), for: .dpadUp)
         profile.setAction(.keyboard(.init(key: .down)), for: .dpadDown)
@@ -188,6 +258,7 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         profile.setAction(.layer(.init()), for: .options)
         profile.setAction(.quickNavigation(.toggle), for: .create)
         profile.setAction(.farRelay(.textMode), for: .touchpadPress)
+        profile.setAction(.farRelay(.nextProfile), for: .home)
         var extended = ControllerLayerDefinition(
             id: ControllerLayerDefinition.extendedID,
             name: "Extended",
@@ -197,10 +268,29 @@ struct ControllerProfile: Codable, Hashable, Sendable {
         extended.setAction(.keyboard(.init(key: .pageDown)), for: .dpadDown)
         extended.setAction(.keyboard(.init(key: .home)), for: .dpadLeft)
         extended.setAction(.keyboard(.init(key: .end)), for: .dpadRight)
-        extended.setAction(.keyboard(.init(key: .w, modifiers: [.control])), for: .cross)
+        extended.setAction(.farRelay(.repeatLastQuickBar), for: .cross)
         extended.setAction(.keyboard(.init(key: .f4, modifiers: [.alt])), for: .circle)
+        extended.setAction(.farRelay(.previousProfile), for: .home)
         profile.layers = [extended]
+        profile.quickBar = QuickBarEntry.recommended
         return profile
+    }
+
+    func migratedToCurrentSchema() -> ControllerProfile? {
+        guard schemaVersion <= Self.currentSchemaVersion,
+              var normalized = normalizedBindingSlots() else { return nil }
+        if normalized.schemaVersion == 1 && normalized.layers.isEmpty {
+            normalized.layers = [
+                .init(
+                    id: ControllerLayerDefinition.extendedID,
+                    name: "Extended",
+                    bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) }
+                )
+            ]
+        }
+        normalized.schemaVersion = Self.currentSchemaVersion
+        guard Set(normalized.quickBar.map(\.id)).count == normalized.quickBar.count else { return nil }
+        return normalized
     }
 
     /// Older profile bytes can omit a controller input introduced by a later
@@ -245,7 +335,8 @@ enum ControllerRecommendedLayout {
         .rightStickRight: .keyboard(.init(key: .end)),
         .rightStickPress: .keyboard(.init(key: .backspace)),
         .create: .quickNavigation(.toggle),
-        .touchpadPress: .farRelay(.textMode)
+        .touchpadPress: .farRelay(.textMode),
+        .home: .farRelay(.nextProfile)
     ]
 
     static let extended: [ControllerInput: ControllerAction] = [
@@ -253,75 +344,164 @@ enum ControllerRecommendedLayout {
         .dpadDown: .keyboard(.init(key: .pageDown)),
         .dpadLeft: .keyboard(.init(key: .home)),
         .dpadRight: .keyboard(.init(key: .end)),
-        .cross: .keyboard(.init(key: .w, modifiers: [.control])),
+        .cross: .farRelay(.repeatLastQuickBar),
         .circle: .keyboard(.init(key: .f4, modifiers: [.alt])),
         .square: .keyboard(.init(key: .a, modifiers: [.control])),
         .triangle: .keyboard(.init(key: .delete)),
         .leftShoulder: .keyboard(.init(key: .tab, modifiers: [.alt])),
         .leftTrigger: .keyboard(.init(key: .tab, modifiers: [.shift, .alt])),
-        .rightStickPress: .keyboard(.init(key: .backspace))
+        .rightStickPress: .keyboard(.init(key: .backspace)),
+        .home: .farRelay(.previousProfile)
     ]
 }
 
-enum ControllerProfileLoadResult: Equatable { case profile(ControllerProfile), uninitialized, malformedOrUnsupported }
+enum ControllerProfileLoadResult: Equatable {
+    case profile(ControllerProfile)
+    case uninitialized
+    case malformedOrUnsupported
+}
 
 struct ControllerProfileStore {
     let defaults: UserDefaults
     let key: String
+
     func load() -> ControllerProfileLoadResult {
         guard let data = defaults.data(forKey: key) else { return .uninitialized }
-        guard var profile = try? JSONDecoder().decode(ControllerProfile.self, from: data),
-              profile.schemaVersion <= ControllerProfile.currentSchemaVersion,
-              let normalized = profile.normalizedBindingSlots() else { return .malformedOrUnsupported }
-        profile = normalized
-        if profile.schemaVersion == 1 {
-            // v1 profiles contained only base keyboard bindings. Preserve them
-            // exactly; add an editable empty Extended layer rather than
-            // overwriting a user's established mapping choices.
-            profile.schemaVersion = ControllerProfile.currentSchemaVersion
-            if profile.layers.isEmpty {
-                profile.layers = [.init(id: ControllerLayerDefinition.extendedID, name: "Extended", bindings: ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) })]
-            }
+        guard let decoded = try? JSONDecoder().decode(ControllerProfile.self, from: data),
+              let migrated = decoded.migratedToCurrentSchema() else {
+            return .malformedOrUnsupported
         }
-        guard profile.schemaVersion == ControllerProfile.currentSchemaVersion else { return .malformedOrUnsupported }
-        return .profile(profile)
+        return .profile(migrated)
     }
-    func save(_ profile: ControllerProfile) { defaults.set(try? JSONEncoder().encode(profile), forKey: key) }
+
+    func save(_ profile: ControllerProfile) {
+        defaults.set(try? JSONEncoder().encode(profile), forKey: key)
+    }
+}
+
+struct ControllerProfileLibrary: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 1
+
+    var schemaVersion: Int = currentSchemaVersion
+    var activeProfileID: UUID
+    var profiles: [ControllerProfile]
+
+    func normalized() -> ControllerProfileLibrary? {
+        guard schemaVersion <= Self.currentSchemaVersion,
+              !profiles.isEmpty,
+              Set(profiles.map(\.id)).count == profiles.count else { return nil }
+        var migratedProfiles: [ControllerProfile] = []
+        migratedProfiles.reserveCapacity(profiles.count)
+        for profile in profiles {
+            guard let migrated = profile.migratedToCurrentSchema() else { return nil }
+            migratedProfiles.append(migrated)
+        }
+        guard migratedProfiles.contains(where: { $0.id == activeProfileID }) else { return nil }
+        return .init(
+            schemaVersion: Self.currentSchemaVersion,
+            activeProfileID: activeProfileID,
+            profiles: migratedProfiles
+        )
+    }
+}
+
+enum ControllerProfileLibraryLoadResult: Equatable {
+    case library(ControllerProfileLibrary)
+    case uninitialized
+    case malformedOrUnsupported
+}
+
+struct ControllerProfileLibraryStore {
+    let defaults: UserDefaults
+    let key: String
+
+    func load() -> ControllerProfileLibraryLoadResult {
+        guard let data = defaults.data(forKey: key) else { return .uninitialized }
+        guard let decoded = try? JSONDecoder().decode(ControllerProfileLibrary.self, from: data),
+              let normalized = decoded.normalized() else {
+            return .malformedOrUnsupported
+        }
+        return .library(normalized)
+    }
+
+    func save(_ library: ControllerProfileLibrary) {
+        defaults.set(try? JSONEncoder().encode(library), forKey: key)
+    }
 }
 
 @Observable @MainActor
 final class ControllerMappingSettings {
-    /// The profile currently used by the controller adapter. It changes only
-    /// after the user explicitly saves the mapping session.
-    private(set) var activeProfile: ControllerProfile
-    /// The editable copy used by Controller Mapping. Keeping it separate from
-    /// `activeProfile` makes a mapping session one atomic profile write.
+    private(set) var profiles: [ControllerProfile]
+    private(set) var activeProfileID: UUID
+    private(set) var editingProfileID: UUID
     private(set) var draftProfile: ControllerProfile
-    private let store: ControllerProfileStore
-    /// The adapter releases any action it began before an edit is applied, so
-    /// changing or clearing a mapping cannot leave its former remote key held.
+
+    private let libraryStore: ControllerProfileLibraryStore
+    private let legacyStore: ControllerProfileStore
+
+    /// The adapter releases any action it began before an edit or active
+    /// profile switch is applied, so remapping can never strand a remote key.
     var willChangeActiveProfile: (@MainActor () -> Void)?
+
     init(defaults: UserDefaults = .standard) {
-        store = .init(defaults: defaults, key: "farrelay.controllerProfile.v1")
-        let profile: ControllerProfile
-        switch store.load() {
-        case .profile(let loadedProfile):
-            profile = loadedProfile
-        case .uninitialized, .malformedOrUnsupported:
-            profile = .newDefault()
+        let newLibraryStore = ControllerProfileLibraryStore(
+            defaults: defaults,
+            key: "farrelay.controllerProfileLibrary.v1"
+        )
+        let newLegacyStore = ControllerProfileStore(
+            defaults: defaults,
+            key: "farrelay.controllerProfile.v1"
+        )
+        libraryStore = newLibraryStore
+        legacyStore = newLegacyStore
+
+        let library: ControllerProfileLibrary
+        switch newLibraryStore.load() {
+        case .library(let loaded):
+            library = loaded
+        case .uninitialized:
+            let initialProfile: ControllerProfile
+            switch newLegacyStore.load() {
+            case .profile(let legacy):
+                initialProfile = legacy
+            case .uninitialized, .malformedOrUnsupported:
+                // A malformed legacy record is deliberately left untouched.
+                // The new library lives under a different key.
+                initialProfile = .newDefault()
+            }
+            library = .init(activeProfileID: initialProfile.id, profiles: [initialProfile])
+            newLibraryStore.save(library)
+        case .malformedOrUnsupported:
+            // Never overwrite malformed library bytes. Use a safe runtime
+            // profile until the user explicitly saves a later valid edit.
+            let fallback = ControllerProfile.newDefault()
+            library = .init(activeProfileID: fallback.id, profiles: [fallback])
         }
-        activeProfile = profile
-        draftProfile = profile
+
+        profiles = library.profiles
+        activeProfileID = library.activeProfileID
+        editingProfileID = library.activeProfileID
+        draftProfile = library.profiles.first(where: { $0.id == library.activeProfileID })!
     }
 
-    var hasUnsavedChanges: Bool { draftProfile != activeProfile }
+    var activeProfile: ControllerProfile {
+        profiles.first(where: { $0.id == activeProfileID })!
+    }
 
-    /// Starts a new edit session only when there is no existing draft. An
-    /// interrupted session therefore remains available rather than being
-    /// silently discarded when the user returns to this screen.
-    func beginEditing() {
-        guard !hasUnsavedChanges else { return }
-        draftProfile = activeProfile
+    var hasUnsavedChanges: Bool {
+        guard let saved = profiles.first(where: { $0.id == editingProfileID }) else { return true }
+        return draftProfile != saved
+    }
+
+    @discardableResult
+    func beginEditing(profileID: UUID? = nil) -> Bool {
+        let targetID = profileID ?? activeProfileID
+        guard let profile = profiles.first(where: { $0.id == targetID }) else { return false }
+        if hasUnsavedChanges && editingProfileID != targetID { return false }
+        if editingProfileID == targetID && hasUnsavedChanges { return true }
+        editingProfileID = targetID
+        draftProfile = profile
+        return true
     }
 
     func setAction(_ action: ControllerAction?, for input: ControllerInput) {
@@ -335,6 +515,36 @@ final class ControllerMappingSettings {
         }
         guard let index = draftProfile.layers.firstIndex(where: { $0.id == layerID }) else { return }
         draftProfile.layers[index].setAction(action, for: input)
+    }
+
+    func renameDraftProfile(_ name: String) {
+        draftProfile.name = name
+    }
+
+    func setQuickBarAction(_ action: ControllerAction?, entryID: UUID) {
+        guard let index = draftProfile.quickBar.firstIndex(where: { $0.id == entryID }) else { return }
+        draftProfile.quickBar[index].action = action
+    }
+
+    @discardableResult
+    func addQuickBarEntry(action: ControllerAction? = nil) -> UUID {
+        let entry = QuickBarEntry(action: action)
+        draftProfile.quickBar.append(entry)
+        return entry.id
+    }
+
+    func deleteQuickBarEntries(at offsets: IndexSet) {
+        for index in offsets.sorted(by: >) where draftProfile.quickBar.indices.contains(index) {
+            draftProfile.quickBar.remove(at: index)
+        }
+    }
+
+    func moveQuickBarEntries(from offsets: IndexSet, to destination: Int) {
+        moveItems(in: &draftProfile.quickBar, from: offsets, to: destination)
+    }
+
+    func restoreRecommendedQuickBar() {
+        draftProfile.quickBar = QuickBarEntry.recommended
     }
 
     /// Fills only currently unassigned slots. Existing user choices are never
@@ -385,13 +595,95 @@ final class ControllerMappingSettings {
     }
 
     func saveDraft() {
-        guard hasUnsavedChanges else { return }
-        willChangeActiveProfile?()
-        activeProfile = draftProfile
-        store.save(activeProfile)
+        guard hasUnsavedChanges,
+              let index = profiles.firstIndex(where: { $0.id == editingProfileID }) else { return }
+        if editingProfileID == activeProfileID { willChangeActiveProfile?() }
+        profiles[index] = draftProfile
+        persistLibrary()
     }
 
     func discardDraft() {
-        draftProfile = activeProfile
+        guard let saved = profiles.first(where: { $0.id == editingProfileID }) else { return }
+        draftProfile = saved
+    }
+
+    @discardableResult
+    func createProfile(name: String? = nil) -> UUID {
+        let defaultName = "Profile \(profiles.count + 1)"
+        let profile = ControllerProfile.newDefault(name: name ?? defaultName)
+        profiles.append(profile)
+        persistLibrary()
+        return profile.id
+    }
+
+    @discardableResult
+    func deleteProfile(id: UUID) -> Bool {
+        guard profiles.count > 1,
+              let index = profiles.firstIndex(where: { $0.id == id }) else { return false }
+
+        let deletingActive = id == activeProfileID
+        if deletingActive { willChangeActiveProfile?() }
+        profiles.remove(at: index)
+
+        if deletingActive {
+            activeProfileID = profiles[min(index, profiles.count - 1)].id
+        }
+        if editingProfileID == id {
+            editingProfileID = activeProfileID
+            draftProfile = activeProfile
+        }
+        persistLibrary()
+        return true
+    }
+
+    func moveProfiles(from offsets: IndexSet, to destination: Int) {
+        moveItems(in: &profiles, from: offsets, to: destination)
+        persistLibrary()
+    }
+
+    @discardableResult
+    func activateProfile(id: UUID) -> String? {
+        guard id != activeProfileID,
+              let profile = profiles.first(where: { $0.id == id }) else {
+            return profiles.first(where: { $0.id == id })?.name
+        }
+        willChangeActiveProfile?()
+        activeProfileID = id
+        persistLibrary()
+        return profile.name
+    }
+
+    @discardableResult
+    func activateNextProfile() -> String? {
+        guard profiles.count > 1,
+              let index = profiles.firstIndex(where: { $0.id == activeProfileID }) else {
+            return activeProfile.name
+        }
+        return activateProfile(id: profiles[(index + 1) % profiles.count].id)
+    }
+
+    @discardableResult
+    func activatePreviousProfile() -> String? {
+        guard profiles.count > 1,
+              let index = profiles.firstIndex(where: { $0.id == activeProfileID }) else {
+            return activeProfile.name
+        }
+        return activateProfile(id: profiles[(index - 1 + profiles.count) % profiles.count].id)
+    }
+
+    private func persistLibrary() {
+        libraryStore.save(.init(activeProfileID: activeProfileID, profiles: profiles))
+    }
+
+    private func moveItems<T>(in items: inout [T], from offsets: IndexSet, to destination: Int) {
+        let validOffsets = offsets.filter { items.indices.contains($0) }
+        guard !validOffsets.isEmpty else { return }
+        let moving = validOffsets.map { items[$0] }
+        for index in validOffsets.sorted(by: >) {
+            items.remove(at: index)
+        }
+        let removedBeforeDestination = validOffsets.filter { $0 < destination }.count
+        let insertion = max(0, min(items.count, destination - removedBeforeDestination))
+        items.insert(contentsOf: moving, at: insertion)
     }
 }

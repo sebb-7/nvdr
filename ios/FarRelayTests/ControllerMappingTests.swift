@@ -154,7 +154,7 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(settings.draftProfile.action(for: .touchpadPress), .farRelay(.textMode))
         XCTAssertEqual(
             settings.draftProfile.action(for: .cross, layerID: ControllerLayerDefinition.extendedID),
-            .keyboard(.init(key: .w, modifiers: [.control]))
+            .farRelay(.repeatLastQuickBar)
         )
     }
 
@@ -221,6 +221,118 @@ final class ControllerMappingTests: XCTestCase {
         duplicate.bindings.append(.init(sourceInput: .dpadUp, action: .keyboard(.init(key: .escape))))
         defaults.set(try JSONEncoder().encode(duplicate), forKey: "profile")
         XCTAssertEqual(store.load(), .malformedOrUnsupported)
+    }
+
+    func testV2ProfileWithoutQuickBarMigratesToRecommendedQuickBar() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        let id = UUID()
+        let fixture = """
+        {"schemaVersion":2,"id":"\(id.uuidString)","name":"V2","controller":"dualSense","bindings":[],"layers":[]}
+        """
+        defaults.set(Data(fixture.utf8), forKey: "profile")
+
+        guard case .profile(let migrated) = store.load() else {
+            return XCTFail("Expected v2 migration")
+        }
+        XCTAssertEqual(migrated.schemaVersion, ControllerProfile.currentSchemaVersion)
+        XCTAssertEqual(migrated.name, "V2")
+        XCTAssertFalse(migrated.quickBar.isEmpty)
+    }
+
+    func testProfileLibraryRejectsDuplicateIDsAndMissingActiveProfile() {
+        let defaults = makeDefaults()
+        let store = ControllerProfileLibraryStore(defaults: defaults, key: "library")
+        let profile = ControllerProfile.newDefault(name: "Desktop")
+
+        store.save(.init(activeProfileID: profile.id, profiles: [profile, profile]))
+        XCTAssertEqual(store.load(), .malformedOrUnsupported)
+
+        let otherID = UUID()
+        store.save(.init(activeProfileID: otherID, profiles: [profile]))
+        XCTAssertEqual(store.load(), .malformedOrUnsupported)
+    }
+
+    func testLegacySingleProfileMigratesIntoProfileLibraryWithoutChangingMapping() {
+        let defaults = makeDefaults()
+        let legacyStore = ControllerProfileStore(defaults: defaults, key: "farrelay.controllerProfile.v1")
+        var legacy = ControllerProfile.newDefault(name: "My Desktop")
+        legacy.setAction(.keyboard(.init(key: .f8)), for: .square)
+        legacyStore.save(legacy)
+
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        XCTAssertEqual(settings.profiles.count, 1)
+        XCTAssertEqual(settings.activeProfile.name, "My Desktop")
+        XCTAssertEqual(settings.activeProfile.action(for: .square), .keyboard(.init(key: .f8)))
+        XCTAssertEqual(settings.activeProfileID, legacy.id)
+    }
+
+    func testMalformedLegacyProfileBytesArePreservedDuringLibraryBootstrap() {
+        let defaults = makeDefaults()
+        let key = "farrelay.controllerProfile.v1"
+        let bytes = Data("DO_NOT_OVERWRITE".utf8)
+        defaults.set(bytes, forKey: key)
+
+        _ = ControllerMappingSettings(defaults: defaults)
+
+        XCTAssertEqual(defaults.data(forKey: key), bytes)
+    }
+
+    func testQuickBarEditsUseSameControllerActionModelAndPersistAtomically() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+        let originalCount = settings.draftProfile.quickBar.count
+        let entryID = settings.addQuickBarEntry(action: .farRelay(.nextProfile))
+        XCTAssertEqual(settings.draftProfile.quickBar.count, originalCount + 1)
+        XCTAssertEqual(
+            settings.draftProfile.quickBar.first(where: { $0.id == entryID })?.action,
+            .farRelay(.nextProfile)
+        )
+        XCTAssertTrue(settings.hasUnsavedChanges)
+
+        settings.saveDraft()
+        let reloaded = ControllerMappingSettings(defaults: defaults)
+        XCTAssertEqual(
+            reloaded.activeProfile.quickBar.first(where: { $0.id == entryID })?.action,
+            .farRelay(.nextProfile)
+        )
+    }
+
+    func testProfileCycleUsesSavedOrderAndWraps() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+        let firstID = settings.activeProfileID
+        let secondID = settings.createProfile(name: "Hearthstone")
+        let thirdID = settings.createProfile(name: "Discord")
+
+        XCTAssertEqual(settings.activateNextProfile(), "Hearthstone")
+        XCTAssertEqual(settings.activeProfileID, secondID)
+        XCTAssertEqual(settings.activateNextProfile(), "Discord")
+        XCTAssertEqual(settings.activeProfileID, thirdID)
+        XCTAssertEqual(settings.activateNextProfile(), settings.profiles.first?.name)
+        XCTAssertEqual(settings.activeProfileID, firstID)
+        XCTAssertEqual(settings.activatePreviousProfile(), "Discord")
+        XCTAssertEqual(settings.activeProfileID, thirdID)
+    }
+
+    func testCannotDeleteOnlyRemainingProfile() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+        XCTAssertFalse(settings.deleteProfile(id: settings.activeProfileID))
+        XCTAssertEqual(settings.profiles.count, 1)
+    }
+
+    func testBindingEditorRoundTripsFarRelayProfileActions() {
+        for action in [
+            FarRelayControllerAction.textMode,
+            .repeatLastQuickBar,
+            .nextProfile,
+            .previousProfile
+        ] {
+            let state = ControllerBindingEditorState(action: .farRelay(action))
+            XCTAssertEqual(state.action, .farRelay(action))
+        }
     }
 
     private func makeDefaults() -> UserDefaults {

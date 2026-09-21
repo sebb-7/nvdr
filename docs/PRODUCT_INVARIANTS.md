@@ -44,6 +44,9 @@ regression test unless the exception and the physical-only reason are recorded.
 | INPUT-005 | Enforced | A disconnect, session replacement, controller loss, or disabled forwarding must release every remotely held key/modifier. |
 | INPUT-006 | Partially enforced | Left/right modifiers are preserved on raw platform paths; priority-command fallbacks use an explicitly documented left-side logical mapping. |
 | INPUT-007 | Enforced in automated model/target scope | Controller mappings use typed press/repeat/release transitions; remapping, controller loss, inactivity, and adapter teardown release the original target’s held action. Physical DualSense and Windows/NVDA confirmation remains required. |
+| INPUT-008 | Enforced in automated controller scope | An active controller-profile change releases every held remote key/chord before the new profile becomes authoritative. A later physical release from the old mapping is inert and cannot release or trigger a key in the new profile. |
+| INPUT-009 | Enforced in automated controller scope | Quick Bar and Profiles are local Quick Navigation sections. Cross never synthesizes remote Enter in either section; Enter is emitted only in remote element-navigation sections such as Headings or Links. |
+| INPUT-010 | Enforced in automated controller scope | Repeat Last Quick Bar Action remembers only actions explicitly classified repeatable. The initial implementation records keyboard actions only; an empty history emits no remote input and non-repeatable local/recovery actions cannot become the remembered command. |
 
 ## App, host, diagnostics, and security
 
@@ -51,6 +54,7 @@ regression test unless the exception and the physical-only reason are recorded.
 | --- | --- | --- |
 | LIFECYCLE-001 | Partially enforced | Backgrounding suspends forwarding and releases held remote input; suspended sockets are not claimed alive without a later real transport event. |
 | ACCESSIBILITY-001 | Enforced | Connection status has a truthful text label and transitions can produce concise VoiceOver announcements without focus theft. |
+| ACCESSIBILITY-002 | Enforced in automated/UI-model scope | Controller profile and rotor state are exposed with stable text names. Profile changes announce the newly active profile; Quick Bar and Profiles remain distinguishable from remote Browse Mode navigation. |
 | DIAGNOSTICS-001 | Partially enforced | User-facing diagnostics use sanitized endpoint/status metadata and never include passwords, private keys, passphrases, channels, ordinary typing, or speech content. |
 | MAC-REMOTE-001 | Not yet enforced | Mac Remote readiness is component-specific; no physical remote-control claim is made until hardware and permission validation passes. |
 | RECOVERY-001 | Enforced | Windows accessibility recovery is independent of the NVDA relay. Status comes only from an authenticated SSH + `farrelay-host` response; relay state is never used as recovery health. |
@@ -70,6 +74,7 @@ regression test unless the exception and the physical-only reason are recorded.
 | PROTOCOL-002 | Partially enforced | Structured host version mismatch rejects safely; optional host operations are discovered through advertised capabilities before use. |
 | PERSISTENCE-001 | Enforced | A malformed saved-profile record does not crash startup or get overwritten with an empty record; it remains available for recovery. |
 | PERSISTENCE-002 | Partially enforced | Legacy profiles retain missing-field defaults and credentials remain Keychain-only. |
+| PERSISTENCE-003 | Enforced in automated controller-profile scope | The controller-profile library requires unique profile IDs and an active ID that resolves to a saved profile. Legacy single-profile mappings migrate without changing existing bindings, and malformed legacy bytes are never overwritten during bootstrap. |
 | OWNERSHIP-001 | Not yet enforced | Future multi-controller features must establish one explicit input-controller owner; current NVDA relay input has no lease protocol. |
 | DIAGNOSTICS-002 | Enforced | Test secret fixtures for passwords, keys, channels, and typed content must never appear in normal diagnostic output. |
 | STATUS-001 | Partially enforced | Home derives connection, NVDA, terminal, and controller text from current runtime state; it never labels a connect request as Connected. Physical multi-target validation remains required. |
@@ -77,8 +82,9 @@ regression test unless the exception and the physical-only reason are recorded.
 | OWNERSHIP-002 | Partially enforced | Controller lease state includes identity and generation gating. A lost/released lease rejects stale input locally; legacy NVDA IPC is explicitly unleased and must not be described as controller-owned. |
 | EVENT-001 | Enforced | Important in-app events are typed, bounded, safe-copy only, and coalesced by deterministic keys. A repeated critical event does not repeatedly announce. |
 | EVENT-002 | Enforced | Critical-event summaries, details, and copied status reports exclude credentials, relay channels, typed content, terminal transcripts, and speech content. |
-| PERSISTENCE-003 | Enforced | Saved profile records carry an explicit schema version. Legacy profile bytes migrate deterministically only after the original bytes are retained for recovery. |
-| PERSISTENCE-004 | Enforced | Malformed or newer unsupported profile schemas remain untouched; FarRelay presents recovery state instead of replacing them with an empty store. |
+| HAPTICS-001 | Enforced in deterministic rotor-state scope; physical validation required | Controller haptics are supplementary only: ordinary rotor changes and wrap boundaries are distinguished deterministically, unsupported/failed haptics cannot block navigation or remote input, and the user Haptic Feedback preference gates playback. |
+| PERSISTENCE-004 | Enforced | Saved profile records carry an explicit schema version. Legacy profile bytes migrate deterministically only after the original bytes are retained for recovery. |
+| PERSISTENCE-005 | Enforced | Malformed or newer unsupported profile schemas remain untouched; FarRelay presents recovery state instead of replacing them with an empty store. |
 
 ## Bug-to-regression policy
 

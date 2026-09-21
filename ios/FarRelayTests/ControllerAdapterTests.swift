@@ -181,8 +181,11 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
 
-        // A horizontal touchpad swipe rotates to Headings. Right-stick Down
-        // moves to the next heading, then Cross becomes remote Enter.
+        // Quick Bar -> Profiles -> Headings now takes two horizontal swipes.
+        // Right-stick Down then moves to the next heading and Cross becomes Enter.
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
@@ -200,6 +203,78 @@ final class ControllerAdapterTests: XCTestCase {
                 .init(VK.lwin, true), .init(0x44, true), .init(0x44, false), .init(VK.lwin, false),
                 .init(0x48, true), .init(0x48, false),
                 .init(VK.return, true), .init(VK.return, false)
+            ]
+        )
+    }
+
+    func testProfilesRotorActivatesSelectedProfileWithoutSendingEnter() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        let secondID = mappings.createProfile(name: "Hearthstone")
+
+        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
+        adapter.receiveForTesting(input: .rightStickDown, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .rightStickDown, pressed: false, at: 1.2)
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.4)
+        await settle()
+
+        XCTAssertEqual(mappings.activeProfileID, secondID)
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.repeatLastQuickBar), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1.4)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.5)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.lwin, true), .init(0x44, true), .init(0x44, false), .init(VK.lwin, false),
+                .init(VK.lwin, true), .init(0x44, true), .init(0x44, false), .init(VK.lwin, false)
+            ]
+        )
+        XCTAssertFalse(sink.transitions.contains { $0.key == VK.return })
+    }
+
+    func testProfileSwitchReleasesHeldActionBeforeNewMappingsBecomeActive() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        let firstID = mappings.activeProfileID
+        let secondID = mappings.createProfile(name: "Hearthstone")
+        XCTAssertTrue(mappings.beginEditing(profileID: secondID))
+        mappings.setAction(.keyboard(.init(key: .tab)), for: .dpadUp)
+        mappings.saveDraft()
+        XCTAssertEqual(mappings.activeProfileID, firstID)
+
+        adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1)
+        await settle()
+        adapter.receiveForTesting(input: .home, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .home, pressed: false, at: 1.2)
+        await settle()
+
+        XCTAssertEqual(mappings.activeProfileID, secondID)
+        adapter.receiveForTesting(input: .dpadUp, pressed: false, at: 1.3)
+        adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1.4)
+        adapter.receiveForTesting(input: .dpadUp, pressed: false, at: 1.5)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.up, true), .init(VK.up, false),
+                .init(VK.tab, true), .init(VK.tab, false)
             ]
         )
     }

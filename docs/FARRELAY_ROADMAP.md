@@ -74,6 +74,7 @@ Active branch: `feat/remote-intent-v2-recovery`
 ## Queued next
 
 ### 1. Controller haptics and rotor boundary feedback
+Implementation is in progress and covered by deterministic rotor-boundary tests.
 - Use the connected controller's native haptic actuators when available.
 - Light pulse for ordinary rotor section changes.
 - Stronger double pulse when the rotor wraps between the final section and Quick Bar.
@@ -82,6 +83,7 @@ Active branch: `feat/remote-intent-v2-recovery`
 - Physically validate the feel on DualSense and tune intensity if needed.
 
 ### 2. Configurable Quick Bar using the existing mapping/action system
+Implementation is in progress using ControllerAction and the existing mapping editor infrastructure.
 Do not create a separate command model.
 
 - Reuse the existing controller `ControllerAction` / keyboard/chord mapping model for Quick Bar entries.
@@ -91,6 +93,7 @@ Do not create a separate command model.
 - Add Restore Default Quick Bar.
 
 ### 3. Repeat Last Quick Bar Action
+Implementation is in progress as a first-class mappable FarRelay controller action.
 - Add a first-class mappable action: `Repeat Last Quick Bar Action`.
 - Recommended default binding: Extended layer + Cross.
 - Store only the last successful repeatable Quick Bar action.
@@ -125,6 +128,7 @@ Integrate RemSound into FarRelay rather than requiring a separate iOS receiver a
 - Audio failure must never break keyboard/NVDA/SSH control.
 
 ### 5. Usage profiles / app-specific profiles
+Implementation is in progress by evolving ControllerProfile into a saved profile library instead of adding a parallel mapping subsystem.
 Add a FarRelay profile layer above HostProfile and ControllerProfile rather than duplicating either.
 
 #### Profile model
