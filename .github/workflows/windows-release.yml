@@ -3,10 +3,6 @@ name: Windows Distribution Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Distribution version, for example 0.2.0-beta.3
-        required: true
-        type: string
       channel:
         description: Release channel
         required: true
@@ -25,7 +21,6 @@ jobs:
   package:
     runs-on: windows-latest
     env:
-      VERSION: ${{ inputs.version }}
       CHANNEL: ${{ inputs.channel }}
       GATEWAY_URL: ${{ inputs.gateway_url }}
       DIST: windows/dist
@@ -33,14 +28,36 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
+
+      - name: Resolve and validate FarRelay version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+(?:\.\d+)+(?:-[A-Za-z0-9.-]+)?$') {
+            throw "VERSION contains an invalid release version: $version"
+          }
+          foreach ($manifest in @("Cargo.toml", "farrelay-host/Cargo.toml", "farrelay-updater/Cargo.toml")) {
+            $match = Select-String -Path $manifest -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+            if (-not $match) { throw "$manifest has no package version" }
+            $manifestVersion = $match.Matches[0].Groups[1].Value
+            if ($manifestVersion -ne $version) {
+              throw "$manifest version $manifestVersion does not match VERSION $version"
+            }
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Validate private distribution configuration
         shell: pwsh
         run: |
           if (-not $env:GATEWAY_URL.StartsWith("https://")) { throw "gateway_url must use HTTPS" }
           if ($env:GATEWAY_URL.EndsWith("/")) { throw "gateway_url must not end with a slash" }
+
       - name: Test update policy and staging transaction
         working-directory: farrelay-updater
         run: cargo test --locked
+
       - name: Build distribution binaries
         shell: pwsh
         run: |
@@ -52,6 +69,23 @@ jobs:
           Copy-Item target/release/farrelay.exe $env:DIST
           Copy-Item farrelay-host/target/release/farrelay-host.exe $env:DIST
           Copy-Item farrelay-updater/target/release/farrelay-updater.exe $env:DIST
+
+      - name: Verify binary versions
+        shell: pwsh
+        run: |
+          $expected = $env:VERSION
+          $checks = @(
+            @{ Path = "$env:DIST/farrelay.exe"; Expected = "farrelay $expected" },
+            @{ Path = "$env:DIST/farrelay-host.exe"; Expected = "farrelay-host $expected" },
+            @{ Path = "$env:DIST/farrelay-updater.exe"; Expected = "farrelay-updater $expected" }
+          )
+          foreach ($check in $checks) {
+            $actual = (& $check.Path --version | Out-String).Trim()
+            if ($actual -ne $check.Expected) {
+              throw "$($check.Path) reported '$actual'; expected '$($check.Expected)'"
+            }
+          }
+
       - name: Build NVDA add-on
         shell: pwsh
         run: |
@@ -59,11 +93,13 @@ jobs:
           (Get-Content addon-build/manifest.ini) -replace '^version = .*$', "version = $env:VERSION" | Set-Content addon-build/manifest.ini
           $addon = Join-Path $env:DIST "FarRelayBridge-$env:VERSION.nvda-addon"
           Compress-Archive -Path addon-build/* -DestinationPath $addon -Force
+
       - name: Create updater payload and portable archive
         shell: pwsh
         run: |
           Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe" -DestinationPath "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip" -Force
           Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe", "$env:DIST/FarRelayBridge-$env:VERSION.nvda-addon" -DestinationPath "$env:DIST/FarRelay-Windows-Portable-$env:VERSION.zip" -Force
+
       - name: Write private-channel manifest and checksums
         shell: pwsh
         run: |
@@ -73,6 +109,7 @@ jobs:
           @{ schema_version = 1; channel = $env:CHANNEL; version = $env:VERSION; published_at = (Get-Date).ToUniversalTime().ToString('o'); assets = @{ windows_x86_64 = @{ archive_url = $assetPath; sha256 = $hash; size = $payload.Length } } } | ConvertTo-Json -Depth 5 | Set-Content "$env:DIST/update-$env:CHANNEL.json" -NoNewline
           Copy-Item "$env:DIST/update-$env:CHANNEL.json" "$env:DIST/update-manifest.json"
           Get-ChildItem "$env:DIST/*" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "{0}  {1}" -f $_.Hash.ToLowerInvariant(), $_.Path.Split([IO.Path]::DirectorySeparatorChar)[-1] } | Set-Content "$env:DIST/SHA256SUMS.txt"
+
       - name: Build accessible Inno Setup installer
         shell: pwsh
         run: |
@@ -81,8 +118,9 @@ jobs:
           iscc "/DAppVersion=$env:VERSION" "/DChannel=$env:CHANNEL" "/DGatewayUrl=$env:GATEWAY_URL" windows/installer/FarRelay.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "windows/output/FarRelay-Setup-$env:VERSION.exe" $env:DIST
+
       - uses: actions/upload-artifact@v4
         with:
-          name: FarRelay-Windows-${{ inputs.version }}
+          name: FarRelay-Windows-${{ steps.version.outputs.version }}
           path: windows/dist/*
           if-no-files-found: error
