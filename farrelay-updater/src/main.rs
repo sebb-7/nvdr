@@ -299,6 +299,31 @@ fn read_activation_code() -> Result<String, String> {
     }
 }
 
+fn provision_shell_links(install_dir: &Path) -> Result<(), String> {
+    let script = install_dir.join("scripts").join("Install-FarRelayShellLinks.ps1");
+    if !script.is_file() {
+        return Err("FarRelay shell-link provisioning script is missing".into());
+    }
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script)
+        .arg("-InstallDirectory")
+        .arg(install_dir)
+        .status()
+        .map_err(|e| format!("starting FarRelay shell-link provisioning: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("FarRelay shell-link provisioning failed".into())
+    }
+}
+
 fn binaries_busy() -> bool {
     #[cfg(windows)]
     {
@@ -358,6 +383,9 @@ fn check_and_install(install: bool) -> Result<(), String> {
     let staging = work.join("staging");
     unzip_update(&archive, &staging)?;
     apply_staged_release(&config.install_dir, &staging, &work.join("rollback"))?;
+    if let Err(error) = provision_shell_links(&config.install_dir) {
+        eprintln!("farrelay-updater: warning: {error}");
+    }
     config.installed_version = plan.version;
     fs::write(
         config_path(),
