@@ -17,7 +17,9 @@ final class ControllerHapticFeedback {
             return
         }
 
-        let engine = haptics.createEngine(withLocality: .default)
+        guard let engine = haptics.createEngine(withLocality: .default) else {
+            return
+        }
         engine.playsHapticsOnly = true
 
         do {
