@@ -4,6 +4,7 @@ interface Env {
   DB: D1Database;
   RELEASES: R2Bucket;
   ADMIN_TOKEN: string;
+  EMAIL?: SendEmail;
 }
 
 type Channel = "beta" | "stable";
@@ -163,6 +164,47 @@ async function programSetting(env: Env, key: string): Promise<string> {
     "SELECT value FROM program_settings WHERE key = ?"
   ).bind(key).first<{ value: string }>();
   return row?.value || "";
+}
+
+
+async function sendFeedbackNotification(
+  env: Env,
+  feedback: {
+    testerName: string;
+    category: string;
+    message: string;
+    contact: string;
+    source: string;
+    createdAt: string;
+  }
+): Promise<void> {
+  if (!env.EMAIL) return;
+  const [to, from] = await Promise.all([
+    programSetting(env, "feedback_notification_email"),
+    programSetting(env, "feedback_from_email"),
+  ]);
+  if (!to || !from) return;
+
+  const subject = "FarRelay beta feedback: " + feedback.category + " from " + feedback.testerName;
+  const text = [
+    "FarRelay beta feedback",
+    "",
+    "Tester: " + feedback.testerName,
+    "Category: " + feedback.category,
+    "Source: " + feedback.source,
+    "Received: " + feedback.createdAt,
+    "Contact: " + (feedback.contact || "Not provided"),
+    "",
+    "Feedback:",
+    feedback.message,
+  ].join("\n");
+
+  try {
+    await env.EMAIL.send({ to, from, subject, text });
+    await audit(env, "beta_feedback_email_sent", null, feedback.category);
+  } catch {
+    await audit(env, "beta_feedback_email_failed", null, feedback.category);
+  }
 }
 
 function htmlEscape(value: unknown): string {
@@ -419,6 +461,14 @@ async function handleFeedback(
     now
   ).run();
   await audit(env, "beta_feedback_submitted", feedbackId, category);
+  await sendFeedbackNotification(env, {
+    testerName: subject.testerName,
+    category,
+    message,
+    contact,
+    source: kind,
+    createdAt: now,
+  });
   return new Response(feedbackPageHtml(subject.testerName, formAction, true, returnPath, source), {
     headers: {
       "content-type": "text/html; charset=utf-8",
