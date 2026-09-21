@@ -138,7 +138,8 @@ try {
         Fail "Recovery task action is not NVDA's signed launcher helper: $($action.Execute)"
     } else { Pass "Recovery task uses NVDA's signed launcher helper." }
 
-    if (($action.Arguments ?? '').Trim() -ne 'launchNVDA') {
+    $actionArguments = if ($null -eq $action.Arguments) { '' } else { [string]$action.Arguments }
+    if ($actionArguments.Trim() -ne 'launchNVDA') {
         Fail "Recovery task arguments are not the fixed NVDA launch action: $($action.Arguments)"
     } else { Pass "Recovery task arguments are fixed to launchNVDA." }
 } catch {
