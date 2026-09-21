@@ -80,10 +80,16 @@ jobs:
             }
           }
 
-      - name: Parse travel-readiness script
+      - name: Parse Windows helper scripts
         shell: pwsh
         run: |
-          [void][scriptblock]::Create((Get-Content windows/release/Test-FarRelayTravelReadiness.ps1 -Raw))
+          foreach ($script in @(
+            "windows/release/Test-FarRelayTravelReadiness.ps1",
+            "windows/release/Prepare-FarRelayTravel.ps1",
+            "windows/release/Start-FarRelayControlCenter.ps1"
+          )) {
+            [void][scriptblock]::Create((Get-Content $script -Raw))
+          }
 
       - name: Prepare installer syntax fixture
         shell: pwsh
