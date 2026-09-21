@@ -189,7 +189,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.up, true), .init(VK.up, false)])
     }
 
-    func testStickyAltStaysHeldAcrossTabAndTogglesOff() async {
+    func testBaseStickyAltStillTogglesForBackwardCompatibility() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
         mappings.saveDraft()
@@ -212,29 +212,100 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
-    func testStickyModifierReleasesBeforeProfileSwitch() async {
+    func testLayerScopedShiftUsesBaseDpadAndReleasesWithLayerButton() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
-        mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .shift)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+
+        // Extended D-pad Up is Page Up, but once Shift is armed by the held
+        // layer the D-pad must temporarily resolve through Base: Up Arrow.
+        adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .dpadUp, pressed: false, at: 1.4)
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.5)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.shift, true),
+                .init(VK.up, true), .init(VK.up, false),
+                .init(VK.shift, false)
+            ]
+        )
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
+
+    func testLayerScopedAltKeepsAltDownAcrossRepeatedBaseTabUntilLayerRelease() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .alt)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: 1.4)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: 1.5)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: 1.6)
+        adapter.receiveForTesting(input: .options, pressed: false, at: 1.7)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.menu, true),
+                .init(VK.tab, true), .init(VK.tab, false),
+                .init(VK.tab, true), .init(VK.tab, false),
+                .init(VK.menu, false)
+            ]
+        )
+    }
+
+    func testLayerScopedModifierReleasesBeforeProfileSwitch() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .alt)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
         mappings.saveDraft()
         _ = mappings.createProfile(name: "Hearthstone")
 
-        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
-        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
-        adapter.receiveForTesting(input: .home, pressed: true, at: 1.2)
-        adapter.receiveForTesting(input: .home, pressed: false, at: 1.3)
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
+        mappings.activateNextProfile()
         await settle()
 
         XCTAssertEqual(sink.transitions, [.init(VK.menu, true), .init(VK.menu, false)])
         XCTAssertEqual(mappings.activeProfile.name, "Hearthstone")
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
     }
 
-    func testStickyModifierReleasesOnInactiveContext() async {
+    func testLayerScopedModifierReleasesOnInactiveContext() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
-        mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
+        mappings.setAction(
+            .stickyModifier(.init(modifier: .alt)),
+            for: .circle,
+            layerID: ControllerLayerDefinition.extendedID
+        )
         mappings.saveDraft()
 
-        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
-        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.2)
         adapter.suspendInputForInactiveContext()
         await settle()
 

@@ -82,6 +82,13 @@ Implementation is in progress and covered by deterministic rotor-boundary tests.
 - No-op safely on controllers without haptics.
 - Physically validate the feel on DualSense and tune intensity if needed.
 
+### Layer-scoped held modifiers
+- The existing Hold Modifier action remains part of the normal mapping editor.
+- When used from Base it preserves sticky-toggle behavior for compatibility.
+- When invoked from a physically held Action Layer, the modifier is owned by that layer hold and automatically releases when the Action-layer button is released.
+- While a layer-scoped modifier is active, ordinary inputs use Base mappings; other Hold Modifier actions in the layer remain available for multi-modifier combinations.
+- Invariants cover layer release, profile changes, inactive/background context, and preservation of Base sticky behavior.
+
 ### 2. Configurable Quick Bar using the existing mapping/action system
 Implementation is in progress using ControllerAction and the existing mapping editor infrastructure.
 Do not create a separate command model.

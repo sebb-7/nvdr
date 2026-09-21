@@ -17,6 +17,11 @@ struct ControllerLayerEngine: Sendable {
     private var suppressNextReleaseForLayerID: String?
     private let doubleTapWindow: TimeInterval
 
+    /// The layer whose physical controller button is still down. This remains
+    /// nil for one-shot and locked layers, which lets the adapter scope a
+    /// held modifier specifically to a real layer-button hold.
+    var physicallyHeldLayerID: String? { pressedLayerID }
+
     init(doubleTapWindow: TimeInterval = 0.35) {
         self.doubleTapWindow = doubleTapWindow
     }

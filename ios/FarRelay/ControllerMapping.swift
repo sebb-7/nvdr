@@ -117,7 +117,7 @@ extension ControllerAction {
             let modifiers = keyboard.modifiers.map(\.label).sorted()
             return (modifiers + [keyboard.key.label]).joined(separator: "+")
         case .stickyModifier(let sticky):
-            return "Sticky \(sticky.modifier.label)"
+            return "Hold \(sticky.modifier.label)"
         case .layer(let layer):
             return "\(layer.layerID.capitalized) layer"
         case .quickNavigation:
