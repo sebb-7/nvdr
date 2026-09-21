@@ -20,6 +20,7 @@ final class DualSenseControllerAdapter {
     private var quickNavigation = QuickNavigationEngine()
     private var touchpadRotor = TouchpadRotorGesture()
     private var touchpad: GCControllerTouchpad?
+    private let controllerHaptics = ControllerHapticFeedback()
     private var leftStick = ControllerStickDirectionClassifier(
         left: .leftStickLeft, right: .leftStickRight,
         up: .leftStickUp, down: .leftStickDown
@@ -95,6 +96,7 @@ final class DualSenseControllerAdapter {
         disconnectObservation = nil
         controller?.extendedGamepad?.valueChangedHandler = nil
         clearTouchpadHandlers()
+        controllerHaptics.detach()
         controller = nil
         connectedControllerName = nil
         availableInputs = []
@@ -111,6 +113,7 @@ final class DualSenseControllerAdapter {
             Task { @MainActor in self?.process(element: element, gamepad: gamepad) }
         }
         configureTouchpad(for: candidate)
+        controllerHaptics.attach(to: candidate)
     }
 
     private func configureTouchpad(for candidate: GCController) {
@@ -137,7 +140,13 @@ final class DualSenseControllerAdapter {
 
     private func handleTouchpadMove(x: Float) {
         guard quickNavigation.isActive, let direction = touchpadRotor.move(x: x) else { return }
-        announce(direction > 0 ? quickNavigation.nextCategory() : quickNavigation.previousCategory())
+        let change = direction > 0
+            ? quickNavigation.nextCategoryChange()
+            : quickNavigation.previousCategoryChange()
+        if settings.hapticFeedbackEnabled {
+            controllerHaptics.play(change.wrapped ? .boundary : .selection)
+        }
+        announce(change.announcement)
     }
 
     private func detach(_ candidate: GCController) {

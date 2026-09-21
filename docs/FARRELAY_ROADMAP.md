@@ -68,10 +68,20 @@ Active branch: `feat/remote-intent-v2-recovery`
 ### Interaction feedback
 - FarRelay interaction sound assets and sound intent plumbing exist.
 - Interaction sounds are distinct from streaming Windows application audio.
+- DualSense/controller haptics are being added through Apple's Game Controller + Core Haptics APIs.
+- Rotor section changes use a light controller pulse; wrapping across the rotor boundary uses a stronger double pulse.
 
 ## Queued next
 
-### 1. Configurable Quick Bar using the existing mapping/action system
+### 1. Controller haptics and rotor boundary feedback
+- Use the connected controller's native haptic actuators when available.
+- Light pulse for ordinary rotor section changes.
+- Stronger double pulse when the rotor wraps between the final section and Quick Bar.
+- Respect the existing Haptic Feedback preference.
+- No-op safely on controllers without haptics.
+- Physically validate the feel on DualSense and tune intensity if needed.
+
+### 2. Configurable Quick Bar using the existing mapping/action system
 Do not create a separate command model.
 
 - Reuse the existing controller `ControllerAction` / keyboard/chord mapping model for Quick Bar entries.
@@ -80,7 +90,7 @@ Do not create a separate command model.
 - Extend the action model only where a FarRelay-native semantic action is required.
 - Add Restore Default Quick Bar.
 
-### 2. Repeat Last Quick Bar Action
+### 3. Repeat Last Quick Bar Action
 - Add a first-class mappable action: `Repeat Last Quick Bar Action`.
 - Recommended default binding: Extended layer + Cross.
 - Store only the last successful repeatable Quick Bar action.
@@ -88,7 +98,7 @@ Do not create a separate command model.
 - Explicitly exclude destructive/recovery actions from repeat.
 - Reuse the same mapping system so the user can bind Repeat Last anywhere.
 
-### 3. RemSound audio streaming integration
+### 4. RemSound audio streaming integration
 Integrate RemSound into FarRelay rather than requiring a separate iOS receiver app. RemSound is MIT-licensed and its iOS companion speaks the same protocol, so prefer protocol-compatible receiver integration inside FarRelay over a second independent audio stack/app.
 
 #### Integration direction
@@ -114,7 +124,7 @@ Integrate RemSound into FarRelay rather than requiring a separate iOS receiver a
 - If technically possible, independently include/exclude NVDA speech.
 - Audio failure must never break keyboard/NVDA/SSH control.
 
-### 4. Usage profiles / app-specific profiles
+### 5. Usage profiles / app-specific profiles
 Add a FarRelay profile layer above HostProfile and ControllerProfile rather than duplicating either.
 
 #### Profile model
@@ -137,11 +147,14 @@ Examples:
 
 #### Switching
 - Explicit profile switch from FarRelay UI.
-- Mappable Quick Bar/controller action for Next/Previous Profile.
-- Announce the active profile.
+- First-class mappable controller actions for Next Profile and Previous Profile so a dedicated controller button can cycle profiles.
+- Add a Profiles rotor section: touchpad selects Profiles, right-stick Up/Down browses profiles, Cross activates the highlighted profile without sending Enter remotely.
+- Keep the dedicated-button binding user-configurable; Home is a candidate recommended binding when reliably exposed by the connected controller.
+- Announce the active profile and provide distinct tactile/audio confirmation.
+- Remember the last selected usage profile per host where appropriate.
 - Later consider app-aware suggestions/automatic switching, but never silently remap controls without an explicit user setting.
 
-### 5. Microphone uplink / remote headset mode
+### 6. Microphone uplink / remote headset mode
 Goal: capture the iPhone microphone in FarRelay and make it usable by Windows applications such as Discord on the G14.
 
 #### iOS
@@ -169,14 +182,14 @@ Discord/Zoom/games require a Windows recording endpoint. Phase the implementatio
 - Quick Bar actions: Mic Mute/Unmute, Push-to-Talk, Audio Stream On/Off, Open Audio Panel.
 - Per-profile mic state should default safe/muted unless the user explicitly chooses otherwise.
 
-### 6. Physical validation
+### 7. Physical validation
 - Validate touchpad rotor on a real DualSense.
 - Validate Quick Bar Cross never sends Enter.
 - Validate Cross sends Enter after moving to Headings/Links/etc.
 - Validate BSI punctuation on the remote Windows target.
 - Build a fresh TestFlight after the exact-head iOS CI is green.
 
-### 7. Travel hardening
+### 8. Travel hardening
 - Configure NVDA Remote auto-connect.
 - Copy the appropriate NVDA settings for sign-in/secure screens and test carefully.
 - Test lock/sign-in, reboot, lid-closed, and cellular/off-home-network scenarios.
