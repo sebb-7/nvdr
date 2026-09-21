@@ -6,6 +6,8 @@ $installDir = Split-Path -Parent $PSScriptRoot
 $prepareScript = Join-Path $PSScriptRoot 'Prepare-FarRelayTravel.ps1'
 $configPath = Join-Path $env:ProgramData 'FarRelay\install.json'
 $progressPath = Join-Path $env:ProgramData 'FarRelay\travel-progress.json'
+$testerProfilePath = Join-Path $env:ProgramData 'FarRelay\tester.json'
+$updateStatusPath = Join-Path $env:ProgramData 'FarRelay\update-status.json'
 
 function New-RandomHex([int]$Bytes = 32) {
     $data = New-Object byte[] $Bytes
@@ -90,6 +92,20 @@ function Get-FarRelayStatus {
         try { $progress = Get-Content -LiteralPath $progressPath -Raw | ConvertFrom-Json } catch {}
     }
 
+    $testerProfile = $null
+    if (Test-Path -LiteralPath $testerProfilePath -PathType Leaf) {
+        try { $testerProfile = Get-Content -LiteralPath $testerProfilePath -Raw | ConvertFrom-Json } catch {}
+    }
+
+    $updateStatus = $null
+    $updateStatusTime = ''
+    if (Test-Path -LiteralPath $updateStatusPath -PathType Leaf) {
+        try {
+            $updateStatus = Get-Content -LiteralPath $updateStatusPath -Raw | ConvertFrom-Json
+            $updateStatusTime = (Get-Item -LiteralPath $updateStatusPath).LastWriteTime.ToString('s')
+        } catch {}
+    }
+
     $sshCommand = ''
     $hostCommand = ''
     if ($tailscaleIp) {
@@ -142,6 +158,22 @@ function Get-FarRelayStatus {
             step = if ($progress) { [string]$progress.step } else { '' }
             message = if ($progress) { [string]$progress.message } else { 'No setup operation is currently recorded.' }
             updated_at = if ($progress) { [string]$progress.updated_at } else { '' }
+        }
+        beta = [ordered]@{
+            tester_name = if ($testerProfile) { [string]$testerProfile.tester_name } else { '' }
+            activated_at = if ($testerProfile) { [string]$testerProfile.activated_at } else { '' }
+            access_expires_at = if ($testerProfile) { [string]$testerProfile.access_expires_at } else { '' }
+            testflight_url = if ($testerProfile) { [string]$testerProfile.testflight_url } else { '' }
+            feedback_url = if ($testerProfile) { [string]$testerProfile.feedback_url } else { '' }
+            current_release = if ($testerProfile) { [string]$testerProfile.current_release } else { '' }
+        }
+        update = [ordered]@{
+            state = if ($updateStatus) { [string]$updateStatus.state } else { 'not_checked' }
+            installed_version = if ($updateStatus) { [string]$updateStatus.installed_version } else { if ($config) { [string]$config.installed_version } else { '' } }
+            latest_version = if ($updateStatus) { [string]$updateStatus.latest_version } else { '' }
+            update_available = if ($updateStatus) { [bool]$updateStatus.update_available } else { $false }
+            message = if ($updateStatus) { [string]$updateStatus.message } else { 'No update check has been recorded yet.' }
+            checked_at = $updateStatusTime
         }
     }
 }
@@ -210,6 +242,24 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 <p id="overall" role="status" aria-live="polite">Checking this computer...</p>
 </header>
 <main>
+<section class="panel" aria-labelledby="beta-heading">
+<h2 id="beta-heading">FarRelay beta</h2>
+<p id="beta-welcome">Loading beta information...</p>
+<p>Please complete onboarding on your own as much as possible. Report anything that does not work, feels confusing, or leaves you unsure what to do next.</p>
+<dl>
+<dt>Activated</dt><dd id="beta-activated">Checking...</dd>
+<dt>Beta access expires</dt><dd id="beta-expires">Checking...</dd>
+<dt>Time remaining</dt><dd id="beta-remaining">Checking...</dd>
+<dt>TestFlight</dt><dd><a id="testflight-link" href="#">Checking...</a></dd>
+<dt>Feedback</dt><dd><a id="feedback-link" href="#">Checking...</a></dd>
+<dt>Installed version</dt><dd id="beta-installed-version">Checking...</dd>
+<dt>Latest published version</dt><dd id="beta-latest-version">Checking...</dd>
+<dt>Update status</dt><dd id="beta-update-status">Checking...</dd>
+<dt>Last update check</dt><dd id="beta-update-checked">Checking...</dd>
+</dl>
+<p>You need the FarRelay iPhone app from TestFlight to test remote control from your phone.</p>
+</section>
+
 <section class="panel" aria-labelledby="computer-heading">
 <h2 id="computer-heading">This computer</h2>
 <dl>
@@ -287,6 +337,27 @@ const get=id=>document.getElementById(id);
 const ready=v=>v?"Ready":"Needs attention";
 const yes=v=>v?"Yes":"No";
 function set(id,value){get(id).textContent=value;}
+function remaining(value){
+  if(!value)return "Not available";
+  const ms=Date.parse(value)-Date.now();
+  if(!Number.isFinite(ms))return "Unknown";
+  if(ms<=0)return "Expired";
+  const days=Math.floor(ms/86400000);
+  const hours=Math.floor((ms%86400000)/3600000);
+  if(days>0)return days+" day(s), "+hours+" hour(s)";
+  const minutes=Math.max(0,Math.floor((ms%3600000)/60000));
+  return hours+" hour(s), "+minutes+" minute(s)";
+}
+function setLink(id,url,label,missing){
+  const a=get(id);
+  if(url){
+    a.href=url;
+    a.textContent=label;
+  }else{
+    a.removeAttribute("href");
+    a.textContent=missing;
+  }
+}
 async function api(path,options={}){
   options.headers=Object.assign({},options.headers||{},{"X-FarRelay-Control-Token":token});
   const r=await fetch(path,options);
@@ -296,6 +367,17 @@ async function api(path,options={}){
 function render(s){
   set("overall",s.ready?"READY FOR REMOTE TRAVEL":"SETUP OR ATTENTION REQUIRED");
   get("overall").className=s.ready?"good":"warn";
+  const tester=s.beta&&s.beta.tester_name?s.beta.tester_name:"Tester";
+  set("beta-welcome","Hello "+tester+"! Welcome to the FarRelay beta.");
+  set("beta-activated",s.beta&&s.beta.activated_at?s.beta.activated_at:"Not recorded yet");
+  set("beta-expires",s.beta&&s.beta.access_expires_at?s.beta.access_expires_at:"Not recorded yet");
+  set("beta-remaining",remaining(s.beta&&s.beta.access_expires_at?s.beta.access_expires_at:""));
+  setLink("testflight-link",s.beta?s.beta.testflight_url:"","Join the FarRelay iPhone beta in TestFlight","TestFlight link not configured yet");
+  setLink("feedback-link",s.beta?s.beta.feedback_url:"","Send beta feedback","Feedback link not configured yet");
+  set("beta-installed-version",s.update&&s.update.installed_version?s.update.installed_version:s.version);
+  set("beta-latest-version",s.update&&s.update.latest_version?s.update.latest_version:"Not checked yet");
+  set("beta-update-status",s.update?s.update.message:"No update check has been recorded yet.");
+  set("beta-update-checked",s.update&&s.update.checked_at?s.update.checked_at:"Not checked yet");
   set("computer",s.computer+" - Windows user "+s.windows_user);
   set("version",s.version); set("channel",s.channel);
   set("ssh",ready(s.ssh.ready)+" - service "+s.ssh.service+", startup "+s.ssh.startup);
