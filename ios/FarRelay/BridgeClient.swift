@@ -665,8 +665,26 @@ final class BridgeClient {
 
     static func soundIntent(from previous: Status, to current: Status) -> InteractionSoundIntent? {
         guard previous != current else { return nil }
-        if current == .ready { return .remoteConnected }
-        if case .disconnected = current, previous == .ready { return .disconnected }
+
+        if current == .ready {
+            switch previous {
+            case .waitingForNVDA, .nvdaNotConnected:
+                return .nvdaStarted
+            default:
+                return .remoteConnected
+            }
+        }
+
+        if previous == .ready {
+            switch current {
+            case .waitingForNVDA, .nvdaNotConnected:
+                return .nvdaStopped
+            case .disconnected:
+                return .disconnected
+            default:
+                break
+            }
+        }
         return nil
     }
 
