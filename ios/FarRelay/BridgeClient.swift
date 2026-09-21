@@ -61,6 +61,10 @@ final class BridgeClient {
     private var commandChannelID: UUID?
     private var inputReady = false
     private var inputState = SSHInputState()
+    /// Set only after a live Ready session falls back to an NVDA-unavailable
+    /// state. This prevents initial Waiting-for-NVDA -> Ready from being
+    /// misclassified as an NVDA restart.
+    private var nvdaLifecycleInterrupted = false
     /// Result of the most recent semantic remote transition. This is only
     /// diagnostic/result plumbing; it never changes input routing.
     private(set) var lastInputForwardingResult: InputForwardingResult?
@@ -105,6 +109,7 @@ final class BridgeClient {
         // An explicit Connect/Retry is the user's request to resume remote
         // input. Reconnection paths do not change this preference implicitly.
         forwardingEnabled = true
+        nvdaLifecycleInterrupted = false
 
         // Validate and summarize authentication up front so failures are
         // immediate and diagnostics still include the offered key fingerprint.
@@ -143,6 +148,7 @@ final class BridgeClient {
         commandContinuation = nil
         commandChannelID = nil
         inputReady = false
+        nvdaLifecycleInterrupted = false
         resetInputState()
         driver?.cancel()
         driver = nil
@@ -646,6 +652,7 @@ final class BridgeClient {
 
     private func setStatus(_ s: Status) {
         let previous = status
+        let wasInterrupted = nvdaLifecycleInterrupted
         status = s
         if previous == .ready,
            s == .waitingForNVDA || s == .nvdaNotConnected {
@@ -657,22 +664,40 @@ final class BridgeClient {
                 action: "Wait for NVDA to return or open Diagnostics"
             )
         }
-        if settings?.soundCuesEnabled == true,
-           let intent = Self.soundIntent(from: previous, to: s) {
-            InteractionSoundCue.play(intent)
+        if previous == .ready {
+            switch s {
+            case .waitingForNVDA, .nvdaNotConnected:
+                nvdaLifecycleInterrupted = true
+            default:
+                break
+            }
         }
+        if s == .ready {
+            nvdaLifecycleInterrupted = false
+        } else if case .disconnected = s {
+            nvdaLifecycleInterrupted = false
+        } else if case .failed = s {
+            nvdaLifecycleInterrupted = false
+        }
+
+        guard settings?.soundCuesEnabled == true,
+              let intent = Self.soundIntent(
+                from: previous,
+                to: s,
+               nvdaLifecycleInterrupted: wasInterrupted
+              ) else { return }
+        InteractionSoundCue.play(intent)
     }
 
-    static func soundIntent(from previous: Status, to current: Status) -> InteractionSoundIntent? {
+    static func soundIntent(
+        from previous: Status,
+        to current: Status,
+        nvdaLifecycleInterrupted: Bool = false
+    ) -> InteractionSoundIntent? {
         guard previous != current else { return nil }
 
         if current == .ready {
-            switch previous {
-            case .waitingForNVDA, .nvdaNotConnected:
-                return .nvdaStarted
-            default:
-                return .remoteConnected
-            }
+            return nvdaLifecycleInterrupted ? .nvdaStarted : .remoteConnected
         }
 
         if previous == .ready {
