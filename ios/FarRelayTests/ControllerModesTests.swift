@@ -48,6 +48,12 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(rotor.nextProfile(in: profiles), "Hearthstone")
         XCTAssertEqual(rotor.previousProfile(in: profiles), "Desktop")
 
+        XCTAssertEqual(rotor.nextCategory(), "Editing")
+        XCTAssertNil(rotor.category.key)
+        XCTAssertEqual(rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles), "Editing. Select All")
+        XCTAssertEqual(rotor.nextEditingAction(), "Copy")
+        XCTAssertEqual(rotor.previousEditingAction(), "Select All")
+
         XCTAssertEqual(rotor.nextCategory(), "Headings")
         XCTAssertEqual(rotor.category.key, .h)
         XCTAssertEqual(rotor.nextCategory(), "Links")
@@ -70,6 +76,21 @@ final class ControllerModesTests: XCTestCase {
         let ordinary = rotor.nextCategoryChange()
         XCTAssertFalse(ordinary.wrapped)
         XCTAssertEqual(rotor.category, .profiles)
+    }
+
+    func testCustomRotorOrderDrivesCategoryTraversal() {
+        var rotor = QuickNavigationEngine()
+        let order: [QuickNavigationCategory] = [.profiles, .editing, .quickBar, .headings]
+
+        XCTAssertEqual(rotor.nextCategory(in: order), "Headings")
+        XCTAssertEqual(rotor.nextCategory(in: order), "Profiles")
+        XCTAssertEqual(rotor.nextCategory(in: order), "Editing")
+    }
+
+    func testEditingRotorActionsMapToExpectedWindowsChords() {
+        XCTAssertEqual(QuickNavigationEditingAction.selectAll.keyboardAction, .init(key: .a, modifiers: [.control]))
+        XCTAssertEqual(QuickNavigationEditingAction.paste.keyboardAction, .init(key: .v, modifiers: [.control]))
+        XCTAssertEqual(QuickNavigationEditingAction.redo.keyboardAction, .init(key: .y, modifiers: [.control]))
     }
 
     func testControllerDeviceStatusIsAccessibleAndTruthful() {
