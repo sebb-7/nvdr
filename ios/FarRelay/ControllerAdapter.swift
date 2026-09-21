@@ -40,6 +40,9 @@ final class DualSenseControllerAdapter {
         let modifier: ControllerKeyboardModifier
         let virtualKeys: [UInt16]
         let route: RemoteIntentRoute
+        /// Non-nil when this hold was armed from a physically held Action
+        /// Layer. Releasing that layer must release this modifier.
+        let ownerLayerID: String?
     }
 
     private var activeActions: [ControllerInput: ActiveAction] = [:]
@@ -290,7 +293,21 @@ final class DualSenseControllerAdapter {
     }
 
     private func resolvedAction(for input: ControllerInput) -> ControllerAction? {
-        mappings.activeProfile.action(for: input, layerID: layerEngine.layerForAction())
+        let layerID = layerEngine.layerForAction()
+        guard let layerID else { return mappings.activeProfile.action(for: input) }
+
+        // Once a modifier has been armed from a physically held Action Layer,
+        // ordinary controls temporarily use Base mappings. Modifier controls
+        // in that layer remain reachable so combinations such as Ctrl+Shift
+        // can still be assembled without exposing Page Up/Page Down mappings
+        // where the user expects plain arrow keys.
+        if hasLayerScopedModifier(ownedBy: layerID) {
+            let layeredAction = mappings.activeProfile.action(for: input, layerID: layerID)
+            if case .stickyModifier? = layeredAction { return layeredAction }
+            return mappings.activeProfile.action(for: input)
+        }
+
+        return mappings.activeProfile.action(for: input, layerID: layerID)
     }
 
     @discardableResult
@@ -498,10 +515,20 @@ final class DualSenseControllerAdapter {
 
         let virtualKeys = stickyModifierVirtualKeys(for: modifier)
         guard !virtualKeys.isEmpty else { return false }
-        let lease = StickyModifierLease(modifier: modifier, virtualKeys: virtualKeys, route: route)
+        let ownerLayerID = layerEngine.physicallyHeldLayerID
+        let lease = StickyModifierLease(
+            modifier: modifier,
+            virtualKeys: virtualKeys,
+            route: route,
+            ownerLayerID: ownerLayerID
+        )
         stickyModifierLeases[modifier] = lease
         routeStickyModifier(lease, pressed: true, eventID: eventID, input: input)
-        announce("\(modifier.label) held")
+        if let ownerLayerID {
+            announce("\(modifier.label) held until \(ownerLayerID.capitalized) layer is released")
+        } else {
+            announce("\(modifier.label) held")
+        }
         if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
         return true
     }
@@ -543,6 +570,27 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    private func hasLayerScopedModifier(ownedBy layerID: String) -> Bool {
+        stickyModifierLeases.values.contains { $0.ownerLayerID == layerID }
+    }
+
+    private func releaseStickyModifiers(ownedBy layerID: String) {
+        let modifiers = ControllerKeyboardModifier.allCases.filter {
+            stickyModifierLeases[$0]?.ownerLayerID == layerID
+        }
+        let leases = modifiers.compactMap { modifier -> StickyModifierLease? in
+            stickyModifierLeases.removeValue(forKey: modifier)
+        }
+        for lease in leases.reversed() {
+            routeStickyModifier(
+                lease,
+                pressed: false,
+                eventID: diagnosticEventID(),
+                input: .home
+            )
+        }
+    }
+
     private func releaseStickyModifiers() {
         let leases = ControllerKeyboardModifier.allCases.compactMap { stickyModifierLeases[$0] }
         stickyModifierLeases.removeAll()
@@ -567,6 +615,10 @@ final class DualSenseControllerAdapter {
 
     private func releaseLayerControl(_ input: ControllerInput) {
         guard let layer = layerControlAction(for: input) else { return }
+        // A modifier armed while this physical Action Layer was down belongs
+        // to that hold. Release it before leaving the layer so remote modifier
+        // state can never outlive the gesture that created it.
+        releaseStickyModifiers(ownedBy: layer.layerID)
         if let stateChange = layerEngine.release(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime) {
             present(stateChange)
         }

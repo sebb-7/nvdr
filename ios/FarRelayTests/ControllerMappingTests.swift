@@ -23,7 +23,7 @@ final class ControllerMappingTests: XCTestCase {
         )
     }
 
-    func testStickyModifierEditorAndCodableRoundTrip() throws {
+    func testHoldModifierEditorAndCodableRoundTrip() throws {
         let action = ControllerAction.stickyModifier(.init(modifier: .alt))
         let state = ControllerBindingEditorState(action: action)
         XCTAssertEqual(state.type, .stickyModifier)

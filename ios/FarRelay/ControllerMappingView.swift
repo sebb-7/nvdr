@@ -310,7 +310,7 @@ struct ControllerQuickBarView: View {
 enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     case unassigned = "Unassigned"
     case keyboard = "Keyboard"
-    case stickyModifier = "Hold / Sticky Modifier"
+    case stickyModifier = "Hold Modifier"
     case layer = "Layer"
     case quickNavigation = "NVDA Quick Navigation"
     case textMode = "Text Mode"
@@ -506,7 +506,7 @@ private struct ControllerActionEditorSections: View {
                         Text(modifier.label).tag(modifier)
                     }
                 }
-                Text("Press the mapped controller input once to hold this modifier on the remote computer. Other mapped keys can be pressed while it remains held. Press the same sticky-modifier action again to release it. FarRelay also releases it automatically on profile changes, remapping, disconnect, backgrounding, or controller loss.")
+                Text("In Base, this action toggles the modifier on or off. In a physically held Action Layer, it holds the modifier only until you release the layer button. While that layer-scoped modifier is held, ordinary controller inputs use their Base mappings, so Shift plus D-pad uses arrow keys instead of the layer's alternate D-pad commands. Other Hold Modifier actions in the layer remain available for combinations such as Ctrl+Shift. FarRelay also releases held modifiers on profile changes, remapping, disconnect, backgrounding, or controller loss.")
                     .foregroundStyle(.secondary)
             }
         }
