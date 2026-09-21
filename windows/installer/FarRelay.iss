@@ -50,9 +50,31 @@ Type: files; Name: "{commonappdata}\FarRelay\device.credential"
 var
   TesterCodePage: TInputQueryWizardPage;
 
-function PathHasDirectory(Value, Directory: String): Boolean;
+function RemoveDirectoryFromPath(Value, Directory: String): String;
+var
+  Remaining, Segment, NormalizedDirectory: String;
+  SeparatorPos: Integer;
 begin
-  Result := Pos(';' + Uppercase(Directory) + ';', ';' + Uppercase(Value) + ';') > 0;
+  Result := '';
+  Remaining := Value;
+  NormalizedDirectory := Uppercase(Trim(Directory));
+
+  while Length(Remaining) > 0 do begin
+    SeparatorPos := Pos(';', Remaining);
+    if SeparatorPos = 0 then begin
+      Segment := Remaining;
+      Remaining := '';
+    end else begin
+      Segment := Copy(Remaining, 1, SeparatorPos - 1);
+      Delete(Remaining, 1, SeparatorPos);
+    end;
+
+    Segment := Trim(Segment);
+    if (Length(Segment) > 0) and (Uppercase(Segment) <> NormalizedDirectory) then begin
+      if Length(Result) > 0 then Result := Result + ';';
+      Result := Result + Segment;
+    end;
+  end;
 end;
 
 function IsSafeActivationCode(Value: String): Boolean;
@@ -96,13 +118,16 @@ end;
 
 procedure AddFarRelayToSystemPath;
 var
-  CurrentPath, UpdatedPath: String;
+  CurrentPath, CleanedPath, InstallDirectory, UpdatedPath: String;
 begin
+  InstallDirectory := ExpandConstant('{app}');
   if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', CurrentPath) then begin
-    if not PathHasDirectory(CurrentPath, ExpandConstant('{app}')) then begin
-      UpdatedPath := CurrentPath + ';' + ExpandConstant('{app}');
-      RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', UpdatedPath);
-    end;
+    CleanedPath := RemoveDirectoryFromPath(CurrentPath, InstallDirectory);
+    UpdatedPath := InstallDirectory;
+    if Length(CleanedPath) > 0 then UpdatedPath := UpdatedPath + ';' + CleanedPath;
+    RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', UpdatedPath);
+  end else begin
+    RegWriteExpandStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', InstallDirectory);
   end;
 end;
 
