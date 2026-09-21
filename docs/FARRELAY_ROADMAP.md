@@ -88,8 +88,15 @@ Do not create a separate command model.
 - Explicitly exclude destructive/recovery actions from repeat.
 - Reuse the same mapping system so the user can bind Repeat Last anywhere.
 
-### 3. RimSound audio streaming integration
-Build on RimSound rather than creating a parallel audio transport.
+### 3. RemSound audio streaming integration
+Integrate RemSound into FarRelay rather than requiring a separate iOS receiver app. RemSound is MIT-licensed and its iOS companion speaks the same protocol, so prefer protocol-compatible receiver integration inside FarRelay over a second independent audio stack/app.
+
+#### Integration direction
+- FarRelay should own the iOS audio session and receive RemSound-compatible audio itself.
+- Avoid requiring the user to keep a separate RemSound iOS app active alongside FarRelay.
+- Reuse the RemSound wire protocol / codec behavior where practical; preserve required MIT attribution if code is reused directly.
+- Keep RemSound as the Windows-side audio sender initially; FarRelay becomes the integrated iOS receiver/control surface.
+- Later consider whether FarRelay should provision/control the Windows sender service as part of the normal host installer.
 
 #### Audio control panel
 - Master stream On/Off.
