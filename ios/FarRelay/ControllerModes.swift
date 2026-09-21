@@ -197,6 +197,11 @@ enum QuickBarAction: String, CaseIterable, Sendable {
     }
 }
 
+struct QuickNavigationCategoryChange: Equatable, Sendable {
+    let announcement: String
+    let wrapped: Bool
+}
+
 struct QuickNavigationEngine: Sendable {
     private(set) var isActive = false
     private(set) var category = QuickNavigationCategory.quickBar
@@ -217,19 +222,31 @@ struct QuickNavigationEngine: Sendable {
         return "Quick Navigation off."
     }
 
-    mutating func nextCategory() -> String {
+    mutating func nextCategoryChange() -> QuickNavigationCategoryChange {
         let categories = QuickNavigationCategory.allCases
+        let previous = category
         let index = (categories.firstIndex(of: category)! + 1) % categories.count
         category = categories[index]
-        return sectionAnnouncement
+        return .init(
+            announcement: sectionAnnouncement,
+            wrapped: previous == categories.last && category == categories.first
+        )
     }
 
-    mutating func previousCategory() -> String {
+    mutating func previousCategoryChange() -> QuickNavigationCategoryChange {
         let categories = QuickNavigationCategory.allCases
+        let previous = category
         let index = (categories.firstIndex(of: category)! - 1 + categories.count) % categories.count
         category = categories[index]
-        return sectionAnnouncement
+        return .init(
+            announcement: sectionAnnouncement,
+            wrapped: previous == categories.first && category == categories.last
+        )
     }
+
+    mutating func nextCategory() -> String { nextCategoryChange().announcement }
+
+    mutating func previousCategory() -> String { previousCategoryChange().announcement }
 
     mutating func nextQuickBarAction() -> String {
         quickBarIndex = (quickBarIndex + 1) % QuickBarAction.allCases.count

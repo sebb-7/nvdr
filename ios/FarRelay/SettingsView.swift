@@ -43,7 +43,7 @@ struct SettingsView: View {
                 Section("Interaction Feedback") {
                     Toggle("Haptic feedback", isOn: $settings.hapticFeedbackEnabled)
                     Toggle("Sound cues", isOn: $settings.soundCuesEnabled)
-                    Text("Haptics confirm actions such as Send, Copy, and connection changes. Sound cues are brief non-speech earcons and stay off until you enable them.")
+                    Text("Haptics confirm actions such as Send, Copy, connection changes, and supported game-controller rotor feedback. Sound cues are brief non-speech earcons and stay off until you enable them.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

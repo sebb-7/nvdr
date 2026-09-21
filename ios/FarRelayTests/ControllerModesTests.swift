@@ -44,6 +44,23 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(rotor.exit(), "Quick Navigation off.")
     }
 
+    func testQuickNavigationReportsRotorWrapBoundaries() {
+        var rotor = QuickNavigationEngine()
+        _ = rotor.toggle()
+
+        let backwards = rotor.previousCategoryChange()
+        XCTAssertTrue(backwards.wrapped)
+        XCTAssertEqual(rotor.category, .lists)
+
+        let forwards = rotor.nextCategoryChange()
+        XCTAssertTrue(forwards.wrapped)
+        XCTAssertEqual(rotor.category, .quickBar)
+
+        let ordinary = rotor.nextCategoryChange()
+        XCTAssertFalse(ordinary.wrapped)
+        XCTAssertEqual(rotor.category, .headings)
+    }
+
     func testTouchpadRotorGestureRequiresHorizontalThresholdAndConsumesOneStep() {
         var gesture = TouchpadRotorGesture()
         gesture.begin(x: -0.4)
