@@ -12,6 +12,7 @@ interface DashboardInvite {
   max_activations: number;
   activation_count: number;
   access_days: number;
+  requested_device: string | null;
   expires_at: string | null;
   revoked_at: string | null;
   created_at: string;
@@ -259,7 +260,7 @@ async function renderDashboard(
 ): Promise<Response> {
   const [inviteResult, deviceResult, releaseResult, settingsResult, feedbackResult] = await Promise.all([
     env.DB.prepare(
-      "SELECT id, label, channel, max_activations, activation_count, access_days, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
+      "SELECT id, label, channel, max_activations, activation_count, access_days, requested_device, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
     ).all<DashboardInvite>(),
     env.DB.prepare(
       "SELECT id, label, channel, created_at, last_seen_at, access_expires_at, revoked_at FROM devices ORDER BY created_at DESC"
@@ -268,7 +269,7 @@ async function renderDashboard(
       "SELECT channel, version, published_at FROM releases ORDER BY channel"
     ).all<DashboardRelease>(),
     env.DB.prepare(
-      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url')"
+      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url','public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
     ).all<{ key: string; value: string }>(),
     env.DB.prepare(
       "SELECT id, tester_name, category, message, contact, source, created_at FROM beta_feedback ORDER BY created_at DESC LIMIT 100"
@@ -278,6 +279,11 @@ async function renderDashboard(
   const programSettings = new Map(settingsResult.results.map((row) => [row.key, row.value]));
   const testflightUrl = programSettings.get("testflight_url") || "";
   const feedbackUrl = programSettings.get("feedback_url") || "";
+  const publicEnrollmentEnabled = programSettings.get("public_enrollment_enabled") === "true";
+  const publicEnrollmentAccessDays = Number(programSettings.get("public_enrollment_access_days") || "30");
+  const publicEnrollmentInviteHours = Number(programSettings.get("public_enrollment_invite_hours") || "168");
+  const publicEnrollmentMaxSignups = Number(programSettings.get("public_enrollment_max_signups") || "100");
+  const publicEnrollmentUrl = new URL("/join", request.url).origin + "/join";
 
   const url = new URL(request.url);
   const notice = errorMessage || noticeFromUrl(url);
@@ -306,6 +312,7 @@ async function renderDashboard(
     return `<tr>
 <td>${escapeHtml(invite.label)}</td>
 <td>${escapeHtml(invite.channel)}</td>
+<td>${escapeHtml(invite.requested_device || "")}</td>
 <td>${escapeHtml(inviteStatus(invite))}</td>
 <td>${invite.activation_count}/${invite.max_activations}</td>
 <td>${timeValue(invite.expires_at)}</td>
@@ -400,12 +407,29 @@ ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">V
 <label for="feedback-url">External feedback link (optional)</label>
 <input id="feedback-url" name="feedback_url" type="text" inputmode="url" value="${escapeHtml(feedbackUrl)}" placeholder="https://...">
 <p class="sr-note">Leave this blank to use FarRelay's built-in feedback form. If supplied, this HTTPS link overrides the built-in form for testers.</p>
+<h3>Public tester enrollment</h3>
+<p>This creates one shareable forum link. Each person enters their own name and Windows PC/laptop type, then receives a personal one-use invitation and personalized onboarding page.</p>
+<label for="public-enrollment-enabled">Public enrollment</label>
+<select id="public-enrollment-enabled" name="public_enrollment_enabled">
+<option value="false"${publicEnrollmentEnabled ? "" : " selected"}>Disabled</option>
+<option value="true"${publicEnrollmentEnabled ? " selected" : ""}>Enabled</option>
+</select>
+<label for="public-enrollment-access-days">Beta access after activation, days</label>
+<input id="public-enrollment-access-days" name="public_enrollment_access_days" type="number" min="1" max="365" value="${escapeHtml(publicEnrollmentAccessDays)}" required>
+<label for="public-enrollment-invite-hours">Generated invitation expires after hours</label>
+<input id="public-enrollment-invite-hours" name="public_enrollment_invite_hours" type="number" min="1" max="720" value="${escapeHtml(publicEnrollmentInviteHours)}" required>
+<label for="public-enrollment-max-signups">Maximum public signups</label>
+<input id="public-enrollment-max-signups" name="public_enrollment_max_signups" type="number" min="1" max="10000" value="${escapeHtml(publicEnrollmentMaxSignups)}" required>
+<label for="public-enrollment-link">Public tester signup link</label>
+<input id="public-enrollment-link" type="text" readonly value="${escapeHtml(publicEnrollmentUrl)}">
+<p><a href="${escapeHtml(publicEnrollmentUrl)}">Open public tester signup page</a></p>
+<p class="sr-note">FarRelay also limits the same browser/network to three generated invitations per 24 hours. Disable public enrollment at any time to close the signup page immediately.</p>
 <p><button type="submit">Save beta program settings</button></p>
 </form>
 </section>
 <section id="invitations" aria-labelledby="invites-heading">
 <h2 id="invites-heading">Invitations</h2>
-${inviteRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Activations</th><th scope="col">Invitation expires</th><th scope="col">Beta access</th><th scope="col">Action</th></tr></thead><tbody>${inviteRows}</tbody></table>` : "<p>No invitations yet.</p>"}
+${inviteRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Channel</th><th scope="col">Requested PC</th><th scope="col">Status</th><th scope="col">Activations</th><th scope="col">Invitation expires</th><th scope="col">Beta access</th><th scope="col">Action</th></tr></thead><tbody>${inviteRows}</tbody></table>` : "<p>No invitations yet.</p>"}
 </section>
 <section id="devices" aria-labelledby="devices-heading">
 <h2 id="devices-heading">Devices</h2>
@@ -454,6 +478,11 @@ async function createInvite(
 
   const code = "FR-" + channel.toUpperCase() + "-" + randomText(10).toUpperCase();
   const id = crypto.randomUUID();
+  if (!Number.isInteger(publicEnrollmentAccessDays) || publicEnrollmentAccessDays < 1 || publicEnrollmentAccessDays > 365 ||
+      !Number.isInteger(publicEnrollmentInviteHours) || publicEnrollmentInviteHours < 1 || publicEnrollmentInviteHours > 720 ||
+      !Number.isInteger(publicEnrollmentMaxSignups) || publicEnrollmentMaxSignups < 1 || publicEnrollmentMaxSignups > 10000) {
+    return renderDashboard(request, env, session, undefined, "Check the public enrollment access days, invitation hours, and signup limit.");
+  }
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + hoursValue * 3600000).toISOString();
   await env.DB.prepare(
@@ -483,6 +512,10 @@ async function saveProgramSettings(
   }
   const testflight = typeof form.get("testflight_url") === "string" ? String(form.get("testflight_url")).trim() : "";
   const feedback = typeof form.get("feedback_url") === "string" ? String(form.get("feedback_url")).trim() : "";
+  const publicEnrollmentEnabled = form.get("public_enrollment_enabled") === "true";
+  const publicEnrollmentAccessDays = Number(form.get("public_enrollment_access_days"));
+  const publicEnrollmentInviteHours = Number(form.get("public_enrollment_invite_hours"));
+  const publicEnrollmentMaxSignups = Number(form.get("public_enrollment_max_signups"));
   for (const pair of [["TestFlight", testflight], ["feedback", feedback]] as const) {
     const name = pair[0];
     const value = pair[1];
@@ -498,6 +531,18 @@ async function saveProgramSettings(
     env.DB.prepare(
       "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_url', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(feedback, now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_enabled', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(publicEnrollmentEnabled ? "true" : "false", now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_access_days', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(String(publicEnrollmentAccessDays), now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_invite_hours', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(String(publicEnrollmentInviteHours), now),
+    env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_max_signups', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(String(publicEnrollmentMaxSignups), now),
   ]);
   await audit(env, "program_settings_updated", null, null);
   return redirect("/admin?notice=settings-saved");
