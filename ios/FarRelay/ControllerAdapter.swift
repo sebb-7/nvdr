@@ -1636,6 +1636,7 @@ final class DualSenseControllerAdapter {
     }
 
     func moveTouchpadForTesting(x: Float) {
+        guard touchpadContactActive else { return }
         receiveTouchpadContact(.moving, x: x, source: "test")
     }
 
