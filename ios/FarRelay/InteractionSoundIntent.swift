@@ -40,8 +40,29 @@ enum SoundResourceResolver {
     static func bundledURL(for filename: String, in bundle: Bundle = .main) -> URL? {
         guard let safe = remoteWaveFilename(from: filename) else { return nil }
         let stem = String(safe.dropLast(4))
-        if let direct = bundle.url(forResource: stem, withExtension: "wav") { return direct }
-        return bundle.urls(forResourcesWithExtension: "wav", subdirectory: nil)?
-            .first { $0.lastPathComponent.caseInsensitiveCompare(safe) == .orderedSame }
+
+        // XcodeGen preserves ../sounds as a folder resource, so TestFlight
+        // builds may place WAVs under Bundle.main/sounds instead of at the
+        // bundle root. Search both layouts because local/generated projects
+        // have used both over the lifetime of FarRelay.
+        let subdirectories: [String?] = [nil, "sounds"]
+        for subdirectory in subdirectories {
+            if let direct = bundle.url(
+                forResource: stem,
+                withExtension: "wav",
+                subdirectory: subdirectory
+            ) {
+                return direct
+            }
+            if let match = bundle.urls(
+                forResourcesWithExtension: "wav",
+                subdirectory: subdirectory
+            )?.first(where: {
+                $0.lastPathComponent.caseInsensitiveCompare(safe) == .orderedSame
+            }) {
+                return match
+            }
+        }
+        return nil
     }
 }
