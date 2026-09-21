@@ -10,7 +10,7 @@ struct ControllerMappingView: View {
         List {
             Section("How it works") {
                 Text("Base mappings are always active. Extended mappings are used through any button assigned to Layer: hold it for momentary Extended, tap it for one Extended action, or double-tap it to lock Extended until you press the Layer button again.")
-                Text("NVDA Quick Navigation is the rotor-style Browse Mode. In that mode, move the left stick up or down to choose Headings, Links, Form controls, Edit fields, Buttons, Landmarks, Tables, or Lists; left or right moves to the previous or next item.")
+                Text("NVDA Quick Navigation uses the right stick as a rotor. Left or right changes sections: Quick Bar, Headings, Links, Form controls, Edit fields, Buttons, Landmarks, Tables, or Lists. Up or down moves within the selected section. Cross runs the selected Quick Bar action locally without sending Enter, or sends Enter to activate the current remote item in the other sections.")
             }
 
             Section("Recommended layout") {
@@ -200,7 +200,7 @@ struct ControllerBindingEditor: View {
             }
             if editorState.type == .quickNavigation {
                 Section("NVDA Quick Navigation") {
-                    Text("Rotor-style Browse Mode navigation. Left stick up or down changes element type; left or right moves to the previous or next item. Cross activates and Circle or this same Quick Navigation button exits.")
+                    Text("Rotor-style navigation on the right stick. Left or right changes sections; up or down moves within the selected section. Quick Bar is the first section. Cross executes its highlighted Quick Bar action without sending Enter, while Cross sends Enter in Headings, Links, and the other Browse Mode sections. Circle or this same Quick Navigation button exits.")
                         .foregroundStyle(.secondary)
                     Text("This version uses NVDA Browse Mode keyboard shortcuts, so use it while NVDA is in Browse Mode.")
                         .foregroundStyle(.secondary)

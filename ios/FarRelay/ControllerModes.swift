@@ -135,6 +135,7 @@ struct TextModeMirrorSession: Sendable {
 }
 
 enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
+    case quickBar = "Quick Bar"
     case headings = "Headings"
     case links = "Links"
     case formControls = "Form controls"
@@ -144,22 +145,70 @@ enum QuickNavigationCategory: String, CaseIterable, Codable, Sendable {
     case tables = "Tables"
     case lists = "Lists"
 
-    var key: WindowsKeyboardKey {
+    var key: WindowsKeyboardKey? {
         switch self {
-        case .headings: .h; case .links: .k; case .formControls: .f
-        case .editFields: .e; case .buttons: .b; case .landmarks: .d
-        case .tables: .t; case .lists: .l
+        case .quickBar: nil
+        case .headings: .h
+        case .links: .k
+        case .formControls: .f
+        case .editFields: .e
+        case .buttons: .b
+        case .landmarks: .d
+        case .tables: .t
+        case .lists: .l
+        }
+    }
+}
+
+enum QuickBarAction: String, CaseIterable, Sendable {
+    case showDesktop
+    case nvdaMenu
+    case nextApplication
+    case elementsList
+    case readWindowTitle
+    case reportFocus
+
+    var label: String {
+        switch self {
+        case .showDesktop: "Show Desktop"
+        case .nvdaMenu: "NVDA Menu"
+        case .nextApplication: "Next Application"
+        case .elementsList: "Elements List"
+        case .readWindowTitle: "Read Window Title"
+        case .reportFocus: "Report Focus"
+        }
+    }
+
+    var keyboardAction: KeyboardAction {
+        switch self {
+        case .showDesktop:
+            .init(key: .d, modifiers: [.windows])
+        case .nvdaMenu:
+            .init(key: .n, modifiers: [.nvda])
+        case .nextApplication:
+            .init(key: .tab, modifiers: [.alt])
+        case .elementsList:
+            .init(key: .f7, modifiers: [.nvda])
+        case .readWindowTitle:
+            .init(key: .t, modifiers: [.nvda])
+        case .reportFocus:
+            .init(key: .tab, modifiers: [.nvda])
         }
     }
 }
 
 struct QuickNavigationEngine: Sendable {
     private(set) var isActive = false
-    private(set) var category = QuickNavigationCategory.headings
+    private(set) var category = QuickNavigationCategory.quickBar
+    private(set) var quickBarIndex = 0
+
+    var selectedQuickBarAction: QuickBarAction {
+        QuickBarAction.allCases[quickBarIndex]
+    }
 
     mutating func toggle() -> String {
         isActive.toggle()
-        return isActive ? "Quick Navigation. \(category.rawValue)." : "Quick Navigation off."
+        return isActive ? "Quick Navigation. \(sectionAnnouncement)." : "Quick Navigation off."
     }
 
     mutating func exit() -> String? {
@@ -172,14 +221,30 @@ struct QuickNavigationEngine: Sendable {
         let categories = QuickNavigationCategory.allCases
         let index = (categories.firstIndex(of: category)! + 1) % categories.count
         category = categories[index]
-        return category.rawValue
+        return sectionAnnouncement
     }
 
     mutating func previousCategory() -> String {
         let categories = QuickNavigationCategory.allCases
         let index = (categories.firstIndex(of: category)! - 1 + categories.count) % categories.count
         category = categories[index]
-        return category.rawValue
+        return sectionAnnouncement
+    }
+
+    mutating func nextQuickBarAction() -> String {
+        quickBarIndex = (quickBarIndex + 1) % QuickBarAction.allCases.count
+        return selectedQuickBarAction.label
+    }
+
+    mutating func previousQuickBarAction() -> String {
+        quickBarIndex = (quickBarIndex - 1 + QuickBarAction.allCases.count) % QuickBarAction.allCases.count
+        return selectedQuickBarAction.label
+    }
+
+    private var sectionAnnouncement: String {
+        category == .quickBar
+            ? "Quick Bar. \(selectedQuickBarAction.label)"
+            : category.rawValue
     }
 }
 
@@ -187,23 +252,54 @@ enum ControllerTextCharacterMapper {
     static func action(for character: Character) -> KeyboardAction? {
         let value = String(character)
         guard value.unicodeScalars.count == 1, let scalar = value.unicodeScalars.first else { return nil }
+
+        func shifted(_ key: WindowsKeyboardKey) -> KeyboardAction {
+            .init(key: key, modifiers: [.shift])
+        }
+
         switch scalar.value {
         case 65...90:
             let lower = String(UnicodeScalar(scalar.value + 32)!)
-            return .init(key: WindowsKeyboardKey(rawValue: lower)!, modifiers: [.shift])
+            return shifted(WindowsKeyboardKey(rawValue: lower)!)
         case 97...122:
             return .init(key: WindowsKeyboardKey(rawValue: value)!)
         case 48...57:
             return .init(key: WindowsKeyboardKey(rawValue: "digit\(value)")!)
-        case 32: return .init(key: .space)
+        case 9: return .init(key: .tab)
         case 10, 13: return .init(key: .enter)
-        case 45: return .init(key: .minus)
-        case 61: return .init(key: .equal)
+        case 32: return .init(key: .space)
+        case 33: return shifted(.digit1)
+        case 34: return shifted(.quote)
+        case 35: return shifted(.digit3)
+        case 36: return shifted(.digit4)
+        case 37: return shifted(.digit5)
+        case 38: return shifted(.digit7)
+        case 39: return .init(key: .quote)
+        case 40: return shifted(.digit9)
+        case 41: return shifted(.digit0)
+        case 42: return shifted(.digit8)
+        case 43: return shifted(.equal)
         case 44: return .init(key: .comma)
+        case 45: return .init(key: .minus)
         case 46: return .init(key: .period)
         case 47: return .init(key: .slash)
+        case 58: return shifted(.semicolon)
         case 59: return .init(key: .semicolon)
-        case 39: return .init(key: .quote)
+        case 60: return shifted(.comma)
+        case 61: return .init(key: .equal)
+        case 62: return shifted(.period)
+        case 63: return shifted(.slash)
+        case 64: return shifted(.digit2)
+        case 91: return .init(key: .leftBracket)
+        case 92: return .init(key: .backslash)
+        case 93: return .init(key: .rightBracket)
+        case 94: return shifted(.digit6)
+        case 95: return shifted(.minus)
+        case 96: return .init(key: .grave)
+        case 123: return shifted(.leftBracket)
+        case 124: return shifted(.backslash)
+        case 125: return shifted(.rightBracket)
+        case 126: return shifted(.grave)
         default: return nil
         }
     }

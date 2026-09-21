@@ -172,22 +172,34 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.up, true), .init(VK.up, false)])
     }
 
-    func testQuickNavigationRoutesThroughKeyboardIntentsAndExits() async {
+    func testQuickNavigationUsesRightStickAndQuickBarConsumesCrossLocally() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .create, pressed: true, at: 1)
-        adapter.receiveForTesting(input: .leftStickRight, pressed: true, at: 1.1)
-        adapter.receiveForTesting(input: .leftStickRight, pressed: false, at: 1.2)
-        adapter.receiveForTesting(input: .leftStickDown, pressed: true, at: 1.3)
-        adapter.receiveForTesting(input: .leftStickRight, pressed: true, at: 1.4)
-        adapter.receiveForTesting(input: .leftStickRight, pressed: false, at: 1.5)
-        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.6)
-        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.7)
+
+        // Quick Bar starts on Show Desktop. Cross executes Windows+D; it must
+        // not send Enter to the remote computer while this section is active.
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
+
+        // Right selects Headings. Down moves to the next heading, then the
+        // same Cross button becomes remote Enter for the selected element.
+        adapter.receiveForTesting(input: .rightStickRight, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .rightStickRight, pressed: false, at: 1.4)
+        adapter.receiveForTesting(input: .rightStickDown, pressed: true, at: 1.5)
+        adapter.receiveForTesting(input: .rightStickDown, pressed: false, at: 1.6)
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.7)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.8)
         await settle()
-        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.8)
+
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.9)
         XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         XCTAssertEqual(
             sink.transitions,
-            [.init(0x48, true), .init(0x48, false), .init(0x4B, true), .init(0x4B, false), .init(VK.return, true), .init(VK.return, false)]
+            [
+                .init(VK.lwin, true), .init(0x44, true), .init(0x44, false), .init(VK.lwin, false),
+                .init(0x48, true), .init(0x48, false),
+                .init(VK.return, true), .init(VK.return, false)
+            ]
         )
     }
 

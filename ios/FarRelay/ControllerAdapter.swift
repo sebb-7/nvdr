@@ -235,17 +235,38 @@ final class DualSenseControllerAdapter {
             switch input {
             case .create, .circle:
                 announce(quickNavigation.exit() ?? "Quick Navigation off.")
-            case .leftStickUp:
+            case .rightStickLeft:
                 announce(quickNavigation.previousCategory())
-            case .leftStickDown:
+            case .rightStickRight:
                 announce(quickNavigation.nextCategory())
-            case .leftStickRight:
-                start(action: .keyboard(.init(key: quickNavigation.category.key)), input: input, eventID: eventID)
-            case .leftStickLeft:
-                start(action: .keyboard(.init(key: quickNavigation.category.key, modifiers: [.shift])), input: input, eventID: eventID)
+            case .rightStickUp:
+                if quickNavigation.category == .quickBar {
+                    announce(quickNavigation.previousQuickBarAction())
+                } else if let key = quickNavigation.category.key {
+                    start(
+                        action: .keyboard(.init(key: key, modifiers: [.shift])),
+                        input: input,
+                        eventID: eventID
+                    )
+                }
+            case .rightStickDown:
+                if quickNavigation.category == .quickBar {
+                    announce(quickNavigation.nextQuickBarAction())
+                } else if let key = quickNavigation.category.key {
+                    start(action: .keyboard(.init(key: key)), input: input, eventID: eventID)
+                }
             case .cross:
-                start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
-            default: return false
+                if quickNavigation.category == .quickBar {
+                    start(
+                        action: .keyboard(quickNavigation.selectedQuickBarAction.keyboardAction),
+                        input: input,
+                        eventID: eventID
+                    )
+                } else {
+                    start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
+                }
+            default:
+                return false
             }
             return true
         }
