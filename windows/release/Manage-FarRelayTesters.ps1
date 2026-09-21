@@ -10,6 +10,7 @@ param(
     [string]$Channel = 'beta',
     [int]$MaxActivations = 1,
     [int]$ExpiresInHours = 168,
+    [int]$AccessDays = 30,
     [string]$Id
 )
 
@@ -22,13 +23,15 @@ $headers = @{ Authorization = "Bearer $token" }
 switch ($Action) {
     'invite' {
         if ([string]::IsNullOrWhiteSpace($Label)) { throw '-Label is required for invite.' }
-        $body = @{ label = $Label; channel = $Channel; max_activations = $MaxActivations; expires_in_hours = $ExpiresInHours } | ConvertTo-Json
+        $body = @{ label = $Label; channel = $Channel; max_activations = $MaxActivations; expires_in_hours = $ExpiresInHours; access_days = $AccessDays } | ConvertTo-Json
         $result = Invoke-RestMethod -Method Post -Uri "$gateway/admin/invites" -Headers $headers -ContentType 'application/json' -Body $body
         Write-Output "Tester: $($result.label)"
         Write-Output "Channel: $($result.channel)"
         Write-Output "Activation code: $($result.activation_code)"
-        Write-Output "Installer link: $($result.installer_url)"
-        Write-Output "Expires: $($result.expires_at)"
+        Write-Output "Tester onboarding link: $($result.onboarding_url)"
+        Write-Output "Direct installer link: $($result.installer_url)"
+        Write-Output "Invitation expires: $($result.expires_at)"
+        Write-Output "Beta access after activation: $($result.access_days) day(s)"
     }
     'list-devices' { Invoke-RestMethod -Method Get -Uri "$gateway/admin/devices" -Headers $headers | ConvertTo-Json -Depth 5 }
     'list-invites' { Invoke-RestMethod -Method Get -Uri "$gateway/admin/invites" -Headers $headers | ConvertTo-Json -Depth 5 }
