@@ -1,3 +1,5 @@
+import { handleAdminUi } from "./admin-ui";
+
 interface Env {
   DB: D1Database;
   RELEASES: R2Bucket;
@@ -323,6 +325,9 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    const adminUi = await handleAdminUi(request, env);
+    if (adminUi) return adminUi;
 
     if (request.method === "GET" && path === "/health") return json({ ok: true });
 
