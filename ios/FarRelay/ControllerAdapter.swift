@@ -219,8 +219,15 @@ final class DualSenseControllerAdapter {
                     continue
                 }
                 let started = start(action: action, input: input, eventID: eventID)
-                if started, case .keyboard = action, let stateChange = layerEngine.consumeOneShotAfterResolvedAction() {
-                    present(stateChange)
+                if started {
+                    switch action {
+                    case .layer:
+                        break
+                    default:
+                        if let stateChange = layerEngine.consumeOneShotAfterResolvedAction() {
+                            present(stateChange)
+                        }
+                    }
                 }
             case .repeated(let input):
                 guard let active = activeActions[input] else { continue }
