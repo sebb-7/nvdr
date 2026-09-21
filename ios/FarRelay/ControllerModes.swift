@@ -172,7 +172,9 @@ struct QuickNavigationCategoryChange: Equatable, Sendable {
 }
 
 struct QuickNavigationEngine: Sendable {
-    private(set) var isActive = false
+    // Navigation is the controller's primary operating mode. Start active so
+    // a connected controller can use the touchpad rotor immediately.
+    private(set) var isActive = true
     private(set) var category = QuickNavigationCategory.quickBar
     private(set) var quickBarIndex = 0
     private(set) var profileIndex = 0
@@ -180,6 +182,12 @@ struct QuickNavigationEngine: Sendable {
     mutating func toggle() -> String {
         isActive.toggle()
         return isActive ? "Quick Navigation. \(category.rawValue)." : "Quick Navigation off."
+    }
+
+    @discardableResult
+    mutating func activate() -> String {
+        isActive = true
+        return "Quick Navigation. \(category.rawValue)."
     }
 
     mutating func exit() -> String? {
