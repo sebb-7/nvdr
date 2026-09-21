@@ -151,7 +151,12 @@ struct QuickBarEntry: Codable, Hashable, Identifiable, Sendable {
             .init(action: .keyboard(.init(key: .tab, modifiers: [.alt]))),
             .init(action: .keyboard(.init(key: .f7, modifiers: [.nvda]))),
             .init(action: .keyboard(.init(key: .t, modifiers: [.nvda]))),
-            .init(action: .keyboard(.init(key: .tab, modifiers: [.nvda])))
+            .init(action: .keyboard(.init(key: .tab, modifiers: [.nvda]))),
+            .init(action: .keyboard(.init(key: .r, modifiers: [.windows]))),
+            .init(action: .keyboard(.init(key: .l, modifiers: [.control]))),
+            .init(action: .keyboard(.init(key: .s, modifiers: [.windows]))),
+            .init(action: .keyboard(.init(key: .e, modifiers: [.windows]))),
+            .init(action: .keyboard(.init(key: .f4, modifiers: [.alt])))
         ]
     }
 }
@@ -182,7 +187,7 @@ struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
     var schemaVersion: Int = currentSchemaVersion
     var id: UUID = UUID()
     var name: String = "Default Controller Profile"
@@ -192,9 +197,10 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
     /// layers keep their own stable input slots for future custom layers.
     var layers: [ControllerLayerDefinition] = []
     var quickBar: [QuickBarEntry] = QuickBarEntry.recommended
+    var quickNavigationOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, name, controller, bindings, layers, quickBar
+        case schemaVersion, id, name, controller, bindings, layers, quickBar, quickNavigationOrder
     }
 
     init(
@@ -204,7 +210,8 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         controller: ControllerHardware = .dualSense,
         bindings: [ControllerBinding] = ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) },
         layers: [ControllerLayerDefinition] = [],
-        quickBar: [QuickBarEntry] = QuickBarEntry.recommended
+        quickBar: [QuickBarEntry] = QuickBarEntry.recommended,
+        quickNavigationOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -213,6 +220,7 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         self.bindings = bindings
         self.layers = layers
         self.quickBar = quickBar
+        self.quickNavigationOrder = quickNavigationOrder
     }
 
     init(from decoder: Decoder) throws {
@@ -229,6 +237,10 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         // recommended defaults; an explicitly empty v3 Quick Bar stays empty.
         quickBar = try container.decodeIfPresent([QuickBarEntry].self, forKey: .quickBar)
             ?? (schemaVersion < 3 ? QuickBarEntry.recommended : [])
+        quickNavigationOrder = try container.decodeIfPresent(
+            [QuickNavigationCategory].self,
+            forKey: .quickNavigationOrder
+        ) ?? QuickNavigationCategory.defaultOrder
     }
 
     func action(for input: ControllerInput) -> ControllerAction? { bindings.first { $0.sourceInput == input }?.action }
@@ -280,6 +292,7 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         extended.setAction(.farRelay(.previousProfile), for: .home)
         profile.layers = [extended]
         profile.quickBar = QuickBarEntry.recommended
+        profile.quickNavigationOrder = QuickNavigationCategory.defaultOrder
         return profile
     }
 
@@ -295,8 +308,23 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
                 )
             ]
         }
+        guard Set(normalized.quickBar.map(\.id)).count == normalized.quickBar.count,
+              let rotorOrder = Self.normalizedQuickNavigationOrder(normalized.quickNavigationOrder) else {
+            return nil
+        }
+        normalized.quickNavigationOrder = rotorOrder
         normalized.schemaVersion = Self.currentSchemaVersion
-        guard Set(normalized.quickBar.map(\.id)).count == normalized.quickBar.count else { return nil }
+        return normalized
+    }
+
+    private static func normalizedQuickNavigationOrder(
+        _ order: [QuickNavigationCategory]
+    ) -> [QuickNavigationCategory]? {
+        guard Set(order).count == order.count else { return nil }
+        var normalized = order
+        for category in QuickNavigationCategory.defaultOrder where !normalized.contains(category) {
+            normalized.append(category)
+        }
         return normalized
     }
 
@@ -548,6 +576,30 @@ final class ControllerMappingSettings {
 
     func moveQuickBarEntries(from offsets: IndexSet, to destination: Int) {
         moveItems(in: &draftProfile.quickBar, from: offsets, to: destination)
+    }
+
+    func moveQuickBarEntry(id: UUID, direction: Int) {
+        guard let index = draftProfile.quickBar.firstIndex(where: { $0.id == id }),
+              direction != 0 else { return }
+        let destination = index + (direction < 0 ? -1 : 1)
+        guard draftProfile.quickBar.indices.contains(destination) else { return }
+        draftProfile.quickBar.swapAt(index, destination)
+    }
+
+    func moveQuickNavigationCategories(from offsets: IndexSet, to destination: Int) {
+        moveItems(in: &draftProfile.quickNavigationOrder, from: offsets, to: destination)
+    }
+
+    func moveQuickNavigationCategory(_ category: QuickNavigationCategory, direction: Int) {
+        guard let index = draftProfile.quickNavigationOrder.firstIndex(of: category),
+              direction != 0 else { return }
+        let destination = index + (direction < 0 ? -1 : 1)
+        guard draftProfile.quickNavigationOrder.indices.contains(destination) else { return }
+        draftProfile.quickNavigationOrder.swapAt(index, destination)
+    }
+
+    func restoreRecommendedQuickNavigationOrder() {
+        draftProfile.quickNavigationOrder = QuickNavigationCategory.defaultOrder
     }
 
     func restoreRecommendedQuickBar() {
