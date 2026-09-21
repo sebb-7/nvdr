@@ -14,6 +14,7 @@ interface InviteRow {
   channel: Channel;
   max_activations: number;
   activation_count: number;
+  access_days: number;
   expires_at: string | null;
   revoked_at: string | null;
 }
@@ -21,7 +22,10 @@ interface InviteRow {
 interface DeviceRow {
   id: string;
   label: string;
+  tester_name: string;
   channel: Channel;
+  created_at: string;
+  access_expires_at: string | null;
   revoked_at: string | null;
 }
 
@@ -110,7 +114,7 @@ async function audit(env: Env, eventType: string, subjectId: string | null, deta
 async function inviteForCode(env: Env, code: string): Promise<InviteRow | null> {
   const hash = await sha256Hex(normalizeCode(code));
   return env.DB.prepare(
-    "SELECT id, label, channel, max_activations, activation_count, expires_at, revoked_at FROM invites WHERE code_hash = ?"
+    "SELECT id, label, channel, max_activations, activation_count, access_days, expires_at, revoked_at FROM invites WHERE code_hash = ?"
   ).bind(hash).first<InviteRow>();
 }
 
@@ -132,12 +136,30 @@ async function deviceFromRequest(request: Request, env: Env): Promise<DeviceRow 
   if (!token || token.length < 32) return null;
   const hash = await sha256Hex(token);
   const device = await env.DB.prepare(
-    "SELECT id, label, channel, revoked_at FROM devices WHERE token_hash = ?"
+    "SELECT d.id, d.label, i.label AS tester_name, d.channel, d.created_at, d.access_expires_at, d.revoked_at FROM devices d JOIN invites i ON i.id = d.invite_id WHERE d.token_hash = ?"
   ).bind(hash).first<DeviceRow>();
   if (!device || device.revoked_at) return null;
+  if (device.access_expires_at && Date.parse(device.access_expires_at) <= Date.now()) return null;
   await env.DB.prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?")
     .bind(new Date().toISOString(), device.id).run();
   return device;
+}
+
+
+async function programSetting(env: Env, key: string): Promise<string> {
+  const row = await env.DB.prepare(
+    "SELECT value FROM program_settings WHERE key = ?"
+  ).bind(key).first<{ value: string }>();
+  return row?.value || "";
+}
+
+function htmlEscape(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function streamObject(object: R2ObjectBody, filename: string): Response {
@@ -159,6 +181,10 @@ async function createInvite(request: Request, env: Env): Promise<Response> {
   if (!Number.isInteger(maxActivations) || maxActivations < 1 || maxActivations > 10) {
     return error("max_activations must be between 1 and 10", 400);
   }
+  const accessDays = Number(body.access_days ?? 30);
+  if (!Number.isInteger(accessDays) || accessDays < 1 || accessDays > 365) {
+    return error("access_days must be between 1 and 365", 400);
+  }
   let expiresAt: string | null = null;
   if (body.expires_in_hours !== undefined) {
     const hours = Number(body.expires_in_hours);
@@ -171,8 +197,8 @@ async function createInvite(request: Request, env: Env): Promise<Response> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await env.DB.prepare(
-    "INSERT INTO invites(id, code_hash, label, channel, max_activations, activation_count, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
-  ).bind(id, await sha256Hex(code), body.label.trim(), body.channel, maxActivations, expiresAt, now).run();
+    "INSERT INTO invites(id, code_hash, label, channel, max_activations, activation_count, access_days, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)"
+  ).bind(id, await sha256Hex(code), body.label.trim(), body.channel, maxActivations, accessDays, expiresAt, now).run();
   await audit(env, "invite_created", id, body.label.trim());
   const origin = new URL(request.url).origin;
   return json({
@@ -180,8 +206,10 @@ async function createInvite(request: Request, env: Env): Promise<Response> {
     label: body.label.trim(),
     channel: body.channel,
     activation_code: code,
+    onboarding_url: origin + "/invite/" + encodeURIComponent(code),
     installer_url: origin + "/invite/" + encodeURIComponent(code) + "/installer",
     expires_at: expiresAt,
+    access_days: accessDays,
     max_activations: maxActivations,
   }, 201);
 }
@@ -198,11 +226,12 @@ async function activate(request: Request, env: Env): Promise<Response> {
   const tokenHash = await sha256Hex(token);
   const deviceId = crypto.randomUUID();
   const now = new Date().toISOString();
+  const accessExpiresAt = new Date(Date.now() + invite.access_days * 86400000).toISOString();
 
   const results = await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO devices(id, invite_id, label, token_hash, channel, created_at) SELECT ?, id, ?, ?, channel, ? FROM invites WHERE id = ? AND revoked_at IS NULL AND activation_count < max_activations AND (expires_at IS NULL OR expires_at > ?)"
-    ).bind(deviceId, body.device_name.trim().slice(0, 120) || "Windows device", tokenHash, now, invite.id, now),
+      "INSERT INTO devices(id, invite_id, label, token_hash, channel, created_at, access_expires_at) SELECT ?, id, ?, ?, channel, ?, ? FROM invites WHERE id = ? AND revoked_at IS NULL AND activation_count < max_activations AND (expires_at IS NULL OR expires_at > ?)"
+    ).bind(deviceId, body.device_name.trim().slice(0, 120) || "Windows device", tokenHash, now, accessExpiresAt, invite.id, now),
     env.DB.prepare(
       "UPDATE invites SET activation_count = activation_count + 1 WHERE id = ? AND EXISTS (SELECT 1 FROM devices WHERE id = ?)"
     ).bind(invite.id, deviceId),
@@ -211,7 +240,79 @@ async function activate(request: Request, env: Env): Promise<Response> {
     return error("tester invitation could not be activated", 409);
   }
   await audit(env, "device_activated", deviceId, invite.id);
-  return json({ device_id: deviceId, device_token: token, channel: invite.channel }, 201);
+  const [testflightUrl, feedbackUrl] = await Promise.all([
+    programSetting(env, "testflight_url"),
+    programSetting(env, "feedback_url"),
+  ]);
+  return json({
+    device_id: deviceId,
+    device_token: token,
+    channel: invite.channel,
+    tester_name: invite.label,
+    activated_at: now,
+    access_expires_at: accessExpiresAt,
+    testflight_url: testflightUrl,
+    feedback_url: feedbackUrl,
+  }, 201);
+}
+
+
+async function deviceProfile(request: Request, env: Env): Promise<Response> {
+  const device = await deviceFromRequest(request, env);
+  if (!device) return error("device is not authorized or beta access has expired", 401);
+  const [testflightUrl, feedbackUrl, release] = await Promise.all([
+    programSetting(env, "testflight_url"),
+    programSetting(env, "feedback_url"),
+    currentRelease(env, device.channel),
+  ]);
+  return json({
+    tester_name: device.tester_name,
+    computer_name: device.label,
+    channel: device.channel,
+    activated_at: device.created_at,
+    access_expires_at: device.access_expires_at,
+    testflight_url: testflightUrl,
+    feedback_url: feedbackUrl,
+    current_release: release?.version || null,
+  });
+}
+
+async function inviteLanding(request: Request, env: Env, code: string): Promise<Response> {
+  const invite = await inviteForCode(env, code);
+  if (!inviteIsUsable(invite)) {
+    return new Response("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>FarRelay invitation unavailable</title></head><body><main><h1>FarRelay invitation unavailable</h1><p>This tester invitation is expired, used, revoked, or invalid.</p></main></body></html>", {
+      status: 403,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  const [testflightUrl, feedbackUrl] = await Promise.all([
+    programSetting(env, "testflight_url"),
+    programSetting(env, "feedback_url"),
+  ]);
+  const origin = new URL(request.url).origin;
+  const installer = origin + "/invite/" + encodeURIComponent(code) + "/installer";
+  const testflight = testflightUrl
+    ? '<p><a href="' + htmlEscape(testflightUrl) + '">Join the FarRelay iPhone beta in TestFlight</a></p>'
+    : '<p>The TestFlight join link has not been published yet. Ask the FarRelay developer for access before testing from iPhone.</p>';
+  const feedback = feedbackUrl
+    ? '<p><a href="' + htmlEscape(feedbackUrl) + '">Send beta feedback</a></p>'
+    : '<p>Please send the FarRelay developer anything that failed, felt unclear, or required help during onboarding.</p>';
+  const body = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta onboarding</title></head><body><main style="font-family:system-ui;max-width:50rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Hello ' +
+    htmlEscape(invite.label) + '! Welcome to the FarRelay beta.</h1><p>Please complete this onboarding on your own as much as possible. I specifically want feedback on anything that does not work, feels confusing, or makes you unsure what to do next.</p><h2>1. Join the iPhone beta</h2><p>You need the FarRelay app on your iPhone to test remote control. Install Apple TestFlight first if you do not already have it, then use the beta link below.</p>' +
+    testflight + '<h2>2. Install FarRelay on this Windows PC</h2><p><a href="' + htmlEscape(installer) + '">Download the FarRelay Windows installer</a></p><p>Your installer invitation expires ' +
+    htmlEscape(invite.expires_at || "when revoked") + '. After activation, this device receives ' + invite.access_days +
+    ' day(s) of beta access.</p><h2>3. Open FarRelay Control Center</h2><p>After setup, use the FarRelay Control Center shortcut. It will guide you through OpenSSH, Tailscale, travel readiness, connection instructions, updates, and beta status.</p><h2>4. Give onboarding feedback</h2>' +
+    feedback + '</main></body></html>';
+  return new Response(body, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    },
+  });
 }
 
 async function manifest(request: Request, env: Env): Promise<Response> {
@@ -291,7 +392,7 @@ async function publishRelease(request: Request, env: Env): Promise<Response> {
 
 async function listDevices(env: Env): Promise<Response> {
   const result = await env.DB.prepare(
-    "SELECT id, label, channel, created_at, last_seen_at, revoked_at FROM devices ORDER BY created_at DESC"
+    "SELECT id, label, channel, created_at, last_seen_at, access_expires_at, revoked_at FROM devices ORDER BY created_at DESC"
   ).all();
   return json({ devices: result.results });
 }
@@ -307,7 +408,7 @@ async function revokeDevice(env: Env, id: string): Promise<Response> {
 
 async function listInvites(env: Env): Promise<Response> {
   const result = await env.DB.prepare(
-    "SELECT id, label, channel, max_activations, activation_count, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
+    "SELECT id, label, channel, max_activations, activation_count, access_days, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
   ).all();
   return json({ invites: result.results });
 }
@@ -334,6 +435,9 @@ export default {
     const installerMatch = path.match(/^\/invite\/([^/]+)\/installer$/);
     if (request.method === "GET" && installerMatch) return downloadInstaller(env, decodeURIComponent(installerMatch[1]));
 
+    const invitePageMatch = path.match(/^\/invite\/([^/]+)$/);
+    if (request.method === "GET" && invitePageMatch) return inviteLanding(request, env, decodeURIComponent(invitePageMatch[1]));
+
     if (request.method === "GET" && path === "/v1/invite/validate") {
       const invite = await inviteForCode(env, url.searchParams.get("code") || "");
       return inviteIsUsable(invite) ? new Response(null, { status: 204 }) : error("tester invitation is invalid", 403);
@@ -341,6 +445,7 @@ export default {
 
     if (request.method === "POST" && path === "/v1/activate") return activate(request, env);
     if (request.method === "GET" && path === "/v1/manifest") return manifest(request, env);
+    if (request.method === "GET" && path === "/v1/profile") return deviceProfile(request, env);
 
     const updateMatch = path.match(/^\/v1\/download\/([^/]+)\/windows_x86_64$/);
     if (request.method === "GET" && updateMatch) return downloadUpdate(request, env, decodeURIComponent(updateMatch[1]));
