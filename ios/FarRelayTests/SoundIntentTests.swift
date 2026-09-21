@@ -9,6 +9,25 @@ final class SoundIntentTests: XCTestCase {
         XCTAssertEqual(InteractionSoundIntent.copied.filename, "copied.wav")
     }
 
+    func testCanonicalSoundResourcesResolveFromBuiltAppBundle() {
+        let filenames = [
+            "connected.wav", "disconnected.wav",
+            "keyboard-remote.wav", "keyboard-local.wav",
+            "terminal-open.wav", "push_clipboard.wav",
+            "receive_clipboard.wav", "nvda-started.wav",
+            "nvda-stopped.wav", "action.wav", "success.wav",
+            "warning.wav", "error.wav", "copied.wav",
+            "browseMode.wav", "focusMode.wav"
+        ]
+
+        for filename in filenames {
+            XCTAssertNotNil(
+                SoundResourceResolver.bundledURL(for: filename, in: .main),
+                "Missing bundled sound resource: \(filename)"
+            )
+        }
+    }
+
     func testRemoteWaveLookupIsGenericAndSafe() {
         XCTAssertEqual(SoundResourceResolver.remoteWaveFilename(from: "C:\\Program Files\\NVDA\\waves\\browseMode.wav"), "browseMode.wav")
         XCTAssertEqual(SoundResourceResolver.remoteWaveFilename(from: "/usr/share/nvda/waves/focusMode.wav"), "focusMode.wav")
