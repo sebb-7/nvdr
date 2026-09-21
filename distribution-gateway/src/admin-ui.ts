@@ -33,6 +33,16 @@ interface DashboardRelease {
   published_at: string;
 }
 
+interface DashboardFeedback {
+  id: string;
+  tester_name: string;
+  category: string;
+  message: string;
+  contact: string | null;
+  source: string;
+  created_at: string;
+}
+
 interface AdminSession {
   payload: string;
   csrf: string;
@@ -247,7 +257,7 @@ async function renderDashboard(
   created?: CreatedInvite,
   errorMessage?: string
 ): Promise<Response> {
-  const [inviteResult, deviceResult, releaseResult, settingsResult] = await Promise.all([
+  const [inviteResult, deviceResult, releaseResult, settingsResult, feedbackResult] = await Promise.all([
     env.DB.prepare(
       "SELECT id, label, channel, max_activations, activation_count, access_days, expires_at, revoked_at, created_at FROM invites ORDER BY created_at DESC"
     ).all<DashboardInvite>(),
@@ -260,6 +270,9 @@ async function renderDashboard(
     env.DB.prepare(
       "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url')"
     ).all<{ key: string; value: string }>(),
+    env.DB.prepare(
+      "SELECT id, tester_name, category, message, contact, source, created_at FROM beta_feedback ORDER BY created_at DESC LIMIT 100"
+    ).all<DashboardFeedback>(),
   ]);
 
   const programSettings = new Map(settingsResult.results.map((row) => [row.key, row.value]));
@@ -324,6 +337,15 @@ async function renderDashboard(
 <td>${timeValue(release.published_at)}</td>
 </tr>`).join("");
 
+  const feedbackRows = feedbackResult.results.map((item) => `<tr>
+<td>${escapeHtml(item.tester_name)}</td>
+<td>${escapeHtml(item.category)}</td>
+<td>${escapeHtml(item.message)}</td>
+<td>${escapeHtml(item.contact || "")}</td>
+<td>${escapeHtml(item.source)}</td>
+<td>${timeValue(item.created_at)}</td>
+</tr>`).join("");
+
   return htmlResponse(shell("FarRelay Tester Manager", `
 <header>
 <nav aria-label="Dashboard">
@@ -332,6 +354,7 @@ async function renderDashboard(
 <a href="#invitations">Invitations</a>
 <a href="#devices">Devices</a>
 <a href="#program-settings">Program settings</a>
+<a href="#feedback">Feedback</a>
 <form class="inline" method="post" action="/admin/logout">
 <input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">
 <button type="submit">Sign out</button>
@@ -374,9 +397,9 @@ ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">V
 <input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">
 <label for="testflight-url">TestFlight join link</label>
 <input id="testflight-url" name="testflight_url" type="text" inputmode="url" value="${escapeHtml(testflightUrl)}" placeholder="https://testflight.apple.com/join/...">
-<label for="feedback-url">Feedback link</label>
+<label for="feedback-url">External feedback link (optional)</label>
 <input id="feedback-url" name="feedback_url" type="text" inputmode="url" value="${escapeHtml(feedbackUrl)}" placeholder="https://...">
-<p class="sr-note">These links are shown to activated beta testers in the local FarRelay Control Center.</p>
+<p class="sr-note">Leave this blank to use FarRelay's built-in feedback form. If supplied, this HTTPS link overrides the built-in form for testers.</p>
 <p><button type="submit">Save beta program settings</button></p>
 </form>
 </section>
@@ -387,6 +410,10 @@ ${inviteRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Cha
 <section id="devices" aria-labelledby="devices-heading">
 <h2 id="devices-heading">Devices</h2>
 ${deviceRows ? `<table><thead><tr><th scope="col">Device</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Activated</th><th scope="col">Beta access expires</th><th scope="col">Action</th></tr></thead><tbody>${deviceRows}</tbody></table>` : "<p>No devices yet.</p>"}
+</section>
+<section id="feedback" aria-labelledby="feedback-heading">
+<h2 id="feedback-heading">Beta feedback</h2>
+${feedbackRows ? `<table><thead><tr><th scope="col">Tester</th><th scope="col">Type</th><th scope="col">Message</th><th scope="col">Contact</th><th scope="col">Source</th><th scope="col">Received</th></tr></thead><tbody>${feedbackRows}</tbody></table>` : "<p>No beta feedback yet.</p>"}
 </section>
 </main>`));
 }
