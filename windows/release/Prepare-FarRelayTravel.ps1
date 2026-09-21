@@ -246,9 +246,9 @@ if ($tailscaleIp) {
     $connection.Add("FarRelay host test: ssh $env:USERNAME@$tailscaleIp farrelay-host")
     $connection.Add('')
     $connection.Add('From iPhone/iPad:')
-    $connection.Add('1. Install Tailscale and sign in to the same tailnet.')
-    $connection.Add("2. In FarRelay, create/select this Windows computer using host $tailscaleIp and Windows user $env:USERNAME.")
-    $connection.Add('3. Keep OpenSSH and Tailscale enabled; FarRelay host components start on demand over SSH.')
+    $connection.Add("1. In FarRelay, add a Windows computer: address $tailscaleIp, port 22, username $env:USERNAME.")
+    $connection.Add('2. Authentication: Private Key. Paste the private key matching the public key authorized for this Windows account; enter its passphrase if used.')
+    $connection.Add('3. Under Accessibility, enable Configure NVDA Remote and Enable NVDA Remote. Use nvdaremote.com, port 6837, and the channel key for the NVDA Remote session you want to join. Leave fingerprint blank and Insecure off unless required by your relay.')
 } else {
     $connection.Add('Tailscale IPv4: pending sign-in')
     $connection.Add('Next step: sign in to Tailscale on this PC, then rerun FarRelay Prepare for Travel.')
