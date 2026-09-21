@@ -163,12 +163,12 @@ final class ControllerAdapterTests: XCTestCase {
 
     func testControllerStopClearsAllTransientModesAndReleasesHeldKey() async {
         let (_, adapter, sink, _, _) = makeAdapter()
-        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1.1)
         XCTAssertTrue(adapter.isTextModeActive)
         XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         adapter.exitTextMode()
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1.2)
         await settle()
         adapter.stop()
@@ -391,7 +391,7 @@ final class ControllerAdapterTests: XCTestCase {
 
     func testQuickNavigationUsesTouchpadRotorAndRightStickMovement() async {
         let (_, adapter, sink, _, _) = makeAdapter()
-        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
 
         // Quick Bar starts on Show Desktop. Cross executes Windows+D; it must
         // not send Enter to the remote computer while this section is active.
@@ -428,7 +428,7 @@ final class ControllerAdapterTests: XCTestCase {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         let secondID = mappings.createProfile(name: "Hearthstone")
 
-        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
@@ -440,7 +440,7 @@ final class ControllerAdapterTests: XCTestCase {
 
         XCTAssertEqual(mappings.activeProfileID, secondID)
         XCTAssertTrue(sink.transitions.isEmpty)
-        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
@@ -448,7 +448,7 @@ final class ControllerAdapterTests: XCTestCase {
         mappings.setAction(.farRelay(.repeatLastQuickBar), for: .triangle)
         mappings.saveDraft()
 
-        adapter.receiveForTesting(input: .create, pressed: true, at: 1)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
         adapter.receiveForTesting(input: .circle, pressed: true, at: 1.3)
