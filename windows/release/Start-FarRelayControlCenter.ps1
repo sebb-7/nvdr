@@ -311,8 +311,9 @@ textarea{width:100%;min-height:8rem;font:inherit;box-sizing:border-box}
 </section>
 
 <section class="panel" aria-labelledby="connection-heading">
-<h2 id="connection-heading">Connection instructions</h2>
-<textarea id="connection" readonly aria-label="FarRelay connection instructions">Waiting for Tailscale address...</textarea>
+<h2 id="connection-heading">Connect from iPhone</h2>
+<p>Use the short setup below. FarRelay stores SSH credentials in the iPhone Keychain.</p>
+<textarea id="connection" readonly aria-label="FarRelay iPhone connection instructions">Waiting for Tailscale address...</textarea>
 <p><button id="copy">Copy connection instructions</button></p>
 </section>
 
@@ -398,7 +399,7 @@ function render(s){
   set("setup-message",s.setup.message||"");
   set("setup-updated",s.setup.updated_at||"Not yet");
   get("connection").value=s.connection.ssh
-    ? "Computer: "+s.computer+"\nWindows user: "+s.windows_user+"\nTailscale IPv4: "+s.tailscale.ip+"\n\nSSH:\n"+s.connection.ssh+"\n\nFarRelay host test:\n"+s.connection.host_test+"\n\nOn iPhone/iPad, connect Tailscale to the same tailnet, then add this computer in FarRelay using the address and Windows user above."
+    ? "1. In FarRelay on iPhone, add a Windows computer: address "+s.tailscale.ip+", port 22, username "+s.windows_user+".\n\n2. Authentication: Private Key. Paste the private key that matches the public key authorized for this Windows account; enter its passphrase if it has one.\n\n3. Under Accessibility, turn on Configure NVDA Remote and Enable NVDA Remote. Use relay host nvdaremote.com, port 6837, and the channel key for the NVDA Remote session you want to join. Leave fingerprint blank and Insecure off unless your relay specifically requires otherwise.\n\nSSH check: "+s.connection.ssh+"\nFarRelay host check: "+s.connection.host_test
     : "Tailscale does not have an IPv4 address yet. Use Sign in to Tailscale, complete authentication, then refresh.";
 }
 async function refresh(){
