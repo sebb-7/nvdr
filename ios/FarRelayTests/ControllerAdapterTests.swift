@@ -508,7 +508,11 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
 
         adapter.receiveForTesting(input: .options, pressed: false, at: 1.1)
-        adapter.receiveTouchpadContactForTesting(.up, x: 0.0)
+
+        // Releasing the layer does not revive the same finger contact.
+        adapter.receiveTouchpadContactForTesting(.moving, x: 0.8)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
+        adapter.receiveTouchpadContactForTesting(.up, x: 0.8)
 
         adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
         adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
