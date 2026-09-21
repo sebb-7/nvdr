@@ -725,7 +725,7 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
 
         let secret = "SECRET_SENTINEL_42"
-        adapter.updateQuickCommandBuffer("ctrl+(secret)")
+        adapter.updateQuickCommandBuffer("ctrl+" + secret)
         XCTAssertFalse(adapter.sendQuickCommand())
         await settle()
 
@@ -812,6 +812,83 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(secondSink.transitions.isEmpty)
     }
 
+    func testQuickCommandMacCommandVUsesRawHIDAndReturnsToQuickNavigation() async {
+        let (adapter, macController, _) = makeMacQuickCommandAdapter()
+        adapter.updateQuickCommandBuffer("cmd+v")
+
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            macController.transitions,
+            [
+                .init(0xE3, true), .init(0x19, true),
+                .init(0x19, false), .init(0xE3, false)
+            ]
+        )
+        XCTAssertFalse(adapter.isQuickCommandModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testQuickCommandMacLiteralTextUsesShiftedHIDAndRedactsPayload() async {
+        let (adapter, macController, diagnostics) = makeMacQuickCommandAdapter()
+        let payload = "Hi!"
+        adapter.updateQuickCommandBuffer(payload)
+
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            macController.transitions,
+            [
+                .init(0xE1, true), .init(0x0B, true), .init(0x0B, false), .init(0xE1, false),
+                .init(0x0C, true), .init(0x0C, false),
+                .init(0xE1, true), .init(0x1E, true), .init(0x1E, false), .init(0xE1, false)
+            ]
+        )
+        XCTAssertFalse(
+            diagnostics.entries.contains {
+                $0.result.contains(payload) || $0.reportLine.contains(payload)
+            }
+        )
+    }
+
+    func testQuickCommandMacRejectsWindowsAndNvdaModifiersBeforeInput() {
+        for command in ["win+r", "nvda+n"] {
+            let (adapter, macController, _) = makeMacQuickCommandAdapter()
+            adapter.updateQuickCommandBuffer(command)
+
+            XCTAssertFalse(adapter.sendQuickCommand(), command)
+            XCTAssertTrue(macController.transitions.isEmpty, command)
+            XCTAssertTrue(adapter.isQuickCommandModeActive, command)
+        }
+    }
+
+    func testQuickCommandMacAltAliasMapsToOption() async {
+        let (adapter, macController, _) = makeMacQuickCommandAdapter()
+        adapter.updateQuickCommandBuffer("alt+left")
+
+        XCTAssertTrue(adapter.sendQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            macController.transitions,
+            [
+                .init(0xE2, true), .init(0x50, true),
+                .init(0x50, false), .init(0xE2, false)
+            ]
+        )
+    }
+
+    func testQuickCommandMacRejectsUnsupportedF13BeforeAnyInput() {
+        let (adapter, macController, _) = makeMacQuickCommandAdapter()
+        adapter.updateQuickCommandBuffer("cmd+f13")
+
+        XCTAssertFalse(adapter.sendQuickCommand())
+        XCTAssertTrue(macController.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+    }
+
     func testNativeBSIDeleteEmptyHookFiresWithoutLocalTextMutation() {
         let textView = RemoteTextModeTextView()
         var emptyDeleteCount = 0
@@ -845,6 +922,34 @@ final class ControllerAdapterTests: XCTestCase {
         return (mappings, DualSenseControllerAdapter(mappings: mappings, settings: settings, router: router, diagnostics: diagnostics, feedback: feedback), sink, feedback, diagnostics)
     }
 
+    private func makeMacQuickCommandAdapter() -> (
+        DualSenseControllerAdapter,
+        ControllerTestMacRemoteController,
+        InputDiagnosticStore
+    ) {
+        let defaults = makeDefaults()
+        let mappings = ControllerMappingSettings(defaults: defaults)
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        let controller = ControllerTestMacRemoteController()
+        let router = RemoteIntentRouter()
+        router.register(MacRemoteIntentTarget(controller: controller))
+        XCTAssertTrue(router.setActiveTarget(id: MacRemoteIntentTarget.defaultID))
+        let settings = AppSettings()
+        let adapter = DualSenseControllerAdapter(
+            mappings: mappings,
+            settings: settings,
+            router: router,
+            diagnostics: diagnostics,
+            feedback: InteractionFeedback(settings: settings)
+        )
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        return (adapter, controller, diagnostics)
+    }
+
     private func settle() async {
         await Task.yield()
         await Task.yield()
@@ -873,5 +978,40 @@ private final class ControllerTestKeySink: RemoteWindowsKeySink {
 
     func sendKey(vk: UInt16, pressed: Bool) {
         transitions.append(.init(vk, pressed))
+    }
+}
+
+
+private struct ControllerMacTransition: Equatable {
+    let usage: UInt16
+    let pressed: Bool
+
+    init(_ usage: UInt16, _ pressed: Bool) {
+        self.usage = usage
+        self.pressed = pressed
+    }
+}
+
+@MainActor
+private final class ControllerTestMacRemoteController: MacRemoteIntentControlling {
+    let activeProfile: HostProfile? = HostProfile(
+        displayName: "Mac mini",
+        platform: .macOS,
+        macRemote: .init(isEnabled: true)
+    )
+    let remoteIntentConnectionState: HostTarget.ConnectionState = .ready
+    var remoteIntentGeneration: UInt64? = 1
+    private(set) var transitions: [ControllerMacTransition] = []
+
+    func performMacRemoteAction(_ action: MacRemoteAction) async -> RemoteIntentResult {
+        .performed
+    }
+
+    func performMacRemoteKeyTransition(
+        _ key: MacRemoteKey,
+        pressed: Bool
+    ) async -> RemoteIntentResult {
+        transitions.append(.init(key.usage, pressed))
+        return .performed
     }
 }

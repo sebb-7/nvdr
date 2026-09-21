@@ -342,14 +342,19 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
 }
 
 /// Keeps Mac Remote's controller lease and key-injection ownership in
-/// `MacRemoteSession` while exposing only semantic actions to the router.
+/// `MacRemoteSession` while exposing semantic and validated raw-key input to
+/// the same RemoteIntent router used by every other input source.
 @MainActor
 protocol MacRemoteIntentControlling: AnyObject {
     var activeProfile: HostProfile? { get }
     var remoteIntentConnectionState: HostTarget.ConnectionState { get }
+    var remoteIntentGeneration: UInt64? { get }
 
-    /// Lease-owning implementation detail; input sources never call this.
     func performMacRemoteAction(_ action: MacRemoteAction) async -> RemoteIntentResult
+    func performMacRemoteKeyTransition(
+        _ key: MacRemoteKey,
+        pressed: Bool
+    ) async -> RemoteIntentResult
 }
 
 @MainActor
@@ -357,6 +362,8 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
     static let defaultID = RemoteTargetID("mac-remote")
 
     private let controller: any MacRemoteIntentControlling
+    private var heldKeys: [MacRemoteKey: Int] = [:]
+    private var heldGeneration: UInt64?
 
     init(
         controller: any MacRemoteIntentControlling,
@@ -367,7 +374,13 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
     }
 
     private let id: RemoteTargetID
-    private let capabilities: Set<RemoteCapability> = [.accessibilityNavigation, .applicationSwitching, .macRemoteControl]
+    private let capabilities: Set<RemoteCapability> = [
+        .accessibilityNavigation,
+        .applicationSwitching,
+        .rawKeyInput,
+        .rawChordInput,
+        .macRemoteControl
+    ]
 
     var target: HostTarget {
         let profile = controller.activeProfile
@@ -385,16 +398,181 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
 
     func perform(_ intent: RemoteIntent) async -> RemoteIntentResult {
         guard capabilities.contains(intent.requiredCapability) else { return .unsupported }
-        let action: MacRemoteAction
+        synchronizeHeldGeneration()
+
         switch intent {
-        case .accessibilityNext: action = .nextItem
-        case .accessibilityPrevious: action = .previousItem
-        case .accessibilityActivate: action = .activate
-        case .nextApplication: action = .nextApplication
-        case .macRemote(let legacyAction): action = legacyAction
-        default: return .unsupported
+        case .accessibilityNext:
+            return await controller.performMacRemoteAction(.nextItem)
+        case .accessibilityPrevious:
+            return await controller.performMacRemoteAction(.previousItem)
+        case .accessibilityActivate:
+            return await controller.performMacRemoteAction(.activate)
+        case .nextApplication:
+            return await controller.performMacRemoteAction(.nextApplication)
+        case .macRemote(let legacyAction):
+            return await controller.performMacRemoteAction(legacyAction)
+
+        case .sendKey(let key):
+            guard let key = macKey(for: key) else { return .unsupported }
+            return await tap([key])
+
+        case .sendChord(let chord):
+            guard let keys = macKeys(for: chord) else { return .unsupported }
+            return await tap(keys)
+
+        case .sendKeyTransition(let key, let pressed):
+            guard let key = macKey(for: key) else { return .unsupported }
+            return await transition([key], pressed: pressed)
+
+        case .sendChordTransition(let chord, let pressed):
+            guard let keys = macKeys(for: chord) else { return .unsupported }
+            return await transition(keys, pressed: pressed)
+
+        case .repeatKey(let key):
+            guard let key = macKey(for: key), heldKeys[key, default: 0] > 0 else {
+                return .unsupported
+            }
+            return await controller.performMacRemoteKeyTransition(key, pressed: true)
+
+        case .repeatChord(let chord):
+            guard let keys = macKeys(for: chord),
+                  let key = keys.last,
+                  heldKeys[key, default: 0] > 0 else {
+                return .unsupported
+            }
+            return await controller.performMacRemoteKeyTransition(key, pressed: true)
+
+        default:
+            return .unsupported
         }
-        return await controller.performMacRemoteAction(action)
+    }
+
+    private func synchronizeHeldGeneration() {
+        let current = controller.remoteIntentGeneration
+        guard current != heldGeneration else { return }
+        heldKeys.removeAll()
+        heldGeneration = current
+    }
+
+    private func tap(_ keys: [MacRemoteKey]) async -> RemoteIntentResult {
+        let down = await transition(keys, pressed: true)
+        guard down == .performed else { return down }
+        return await transition(keys, pressed: false)
+    }
+
+    private func transition(
+        _ keys: [MacRemoteKey],
+        pressed: Bool
+    ) async -> RemoteIntentResult {
+        if pressed {
+            var retained: [MacRemoteKey] = []
+            for key in keys {
+                let result = await retain(key)
+                guard result == .performed else {
+                    for retainedKey in retained.reversed() {
+                        _ = await release(retainedKey)
+                    }
+                    return result
+                }
+                retained.append(key)
+            }
+            return .performed
+        }
+
+        for key in keys.reversed() {
+            let result = await release(key)
+            guard result == .performed else { return result }
+        }
+        return .performed
+    }
+
+    private func retain(_ key: MacRemoteKey) async -> RemoteIntentResult {
+        let count = heldKeys[key, default: 0]
+        if count > 0 {
+            heldKeys[key] = count + 1
+            return .performed
+        }
+
+        let result = await controller.performMacRemoteKeyTransition(key, pressed: true)
+        if result == .performed {
+            heldKeys[key] = 1
+        } else {
+            heldKeys.removeAll()
+            heldGeneration = controller.remoteIntentGeneration
+        }
+        return result
+    }
+
+    private func release(_ key: MacRemoteKey) async -> RemoteIntentResult {
+        guard let count = heldKeys[key], count > 0 else {
+            return .performed
+        }
+        if count > 1 {
+            heldKeys[key] = count - 1
+            return .performed
+        }
+
+        let result = await controller.performMacRemoteKeyTransition(key, pressed: false)
+        if result == .performed {
+            heldKeys[key] = nil
+        } else {
+            heldKeys.removeAll()
+            heldGeneration = controller.remoteIntentGeneration
+        }
+        return result
+    }
+
+    private func macKeys(for chord: RemoteChord) -> [MacRemoteKey]? {
+        let modifierOrder: [RemoteModifier] = [.control, .alt, .shift, .commandOrWindows]
+        var keys: [MacRemoteKey] = []
+        for modifier in modifierOrder where chord.modifiers.contains(modifier) {
+            guard let key = macKey(for: modifier) else { return nil }
+            keys.append(key)
+        }
+        if chord.modifiers.contains(.capsLock) { return nil }
+        guard let primary = macKey(for: chord.key) else { return nil }
+        keys.append(primary)
+        return keys
+    }
+
+    private func macKey(for modifier: RemoteModifier) -> MacRemoteKey? {
+        switch modifier {
+        case .control: .leftControl
+        case .shift: .leftShift
+        case .alt: .leftOption
+        case .commandOrWindows: .leftCommand
+        case .capsLock: nil
+        }
+    }
+
+    private func macKey(for key: RemoteKey) -> MacRemoteKey? {
+        if let usage = key.usbHIDUsage {
+            return MacRemoteKey.supportedKeyboardUsage(usage)
+        }
+        if let named = key.namedKey {
+            let usage: UInt16 = switch named {
+            case .tab: 0x2B
+            case .returnKey: 0x28
+            case .escape: 0x29
+            case .backspace: 0x2A
+            case .leftArrow: 0x50
+            case .rightArrow: 0x4F
+            case .upArrow: 0x52
+            case .downArrow: 0x51
+            }
+            return MacRemoteKey.supportedKeyboardUsage(usage)
+        }
+        if let number = key.functionNumber {
+            guard (1...12).contains(number) else { return nil }
+            return MacRemoteKey.supportedKeyboardUsage(0x3A + UInt16(number - 1))
+        }
+        if let character = key.letterCharacter {
+            let scalars = String(character).lowercased().unicodeScalars
+            guard scalars.count == 1, let scalar = scalars.first,
+                  (97...122).contains(scalar.value) else { return nil }
+            return MacRemoteKey.supportedKeyboardUsage(0x04 + UInt16(scalar.value - 97))
+        }
+        return nil
     }
 }
 

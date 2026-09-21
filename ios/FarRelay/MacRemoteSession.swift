@@ -143,6 +143,8 @@ final class MacRemoteSession {
         }
     }
 
+    var remoteIntentGeneration: UInt64? { generation }
+
     var remoteIntentConnectionState: HostTarget.ConnectionState {
         if keyboardForwardingActive { return .ready }
         return switch state {
@@ -151,6 +153,32 @@ final class MacRemoteSession {
         case .connected, .controlBusy: .unavailable("Mac Remote control has not been granted.")
         case .controlGranted: .unavailable("Mac Remote keyboard forwarding is unavailable.")
         case .failed(let message): .unavailable(message)
+        }
+    }
+
+    func performMacRemoteKeyTransition(
+        _ key: MacRemoteKey,
+        pressed: Bool
+    ) async -> RemoteIntentResult {
+        guard let client, let generation, keyboardForwardingActive else {
+            return .unavailable("Mac Remote control has not been granted.")
+        }
+        do {
+            let result = try await client.sendMacRemoteKey(
+                controllerID: controllerID,
+                generation: generation,
+                key: key,
+                pressed: pressed
+            )
+            guard result.accepted else {
+                await emergencyStopAfterInputFailure(using: client)
+                return .failed("The Mac rejected remote input.")
+            }
+            return .performed
+        } catch {
+            await emergencyStopAfterInputFailure(using: client)
+            didFail(error)
+            return .failed(error.localizedDescription)
         }
     }
 
