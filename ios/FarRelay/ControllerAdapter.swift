@@ -272,7 +272,15 @@ final class DualSenseControllerAdapter {
                     present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
                     continue
                 }
-                if handleModeInput(input, pressed: true, eventID: eventID) { continue }
+                // An armed Action Layer has priority over Quick Navigation.
+                // Navigation is the default controller mode, but it must never
+                // steal Cross/Circle/right-stick controls from a held or
+                // one-shot layer. Once the layer returns to Base, Navigation
+                // resumes without needing to be toggled back on.
+                if layerEngine.layerForAction() == nil,
+                   handleModeInput(input, pressed: true, eventID: eventID) {
+                    continue
+                }
                 guard let action = resolvedAction(for: input) else {
                     diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: no saved mapping")
                     continue
