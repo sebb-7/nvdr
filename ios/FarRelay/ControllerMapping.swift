@@ -623,6 +623,17 @@ final class ControllerMappingSettings {
         return profile.id
     }
 
+    /// Profile creation from the editor must never leave the new row disabled
+    /// behind an older unsaved draft. Commit that draft first, then attach the
+    /// editor to the newly created profile.
+    @discardableResult
+    func createProfileForEditing(name: String? = nil) -> UUID {
+        if hasUnsavedChanges { saveDraft() }
+        let id = createProfile(name: name)
+        _ = beginEditing(profileID: id)
+        return id
+    }
+
     @discardableResult
     func deleteProfile(id: UUID) -> Bool {
         guard profiles.count > 1,
