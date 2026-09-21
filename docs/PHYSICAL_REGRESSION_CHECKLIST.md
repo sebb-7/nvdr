@@ -44,6 +44,9 @@ hardware before calling a build physically validated.
 - [ ] Map Repeat Last Quick Bar Action, execute a repeatable Quick Bar keyboard action, and confirm repeat replays it exactly once with balanced key transitions.
 - [ ] With Haptic Feedback enabled, feel a light DualSense pulse for ordinary rotor section changes and a stronger double pulse when wrapping Lists ↔ Quick Bar.
 - [ ] Disable Haptic Feedback and confirm rotor/controller behavior is unchanged except for vibration.
+- [ ] Map Hold / Sticky Modifier to Alt. Activate it once, tap ordinary Tab repeatedly, and confirm the Windows app switcher remains open until Sticky Alt is activated again.
+- [ ] With Sticky Alt held, switch controller profiles, background FarRelay, disconnect, and disconnect the controller in separate tests; confirm Alt is released every time.
+- [ ] On the NVDA Remote screen, confirm the connected DualSense status is readable next to the connection control and reports the battery percentage/state when iOS provides it. If iOS exposes no battery object, confirm FarRelay says Battery unavailable rather than inventing a value.
 
 ## Mac Remote foundation
 

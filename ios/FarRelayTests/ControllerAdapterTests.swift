@@ -189,6 +189,59 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.up, true), .init(VK.up, false)])
     }
 
+    func testStickyAltStaysHeldAcrossTabAndTogglesOff() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: 1.3)
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1.4)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.5)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.menu, true),
+                .init(VK.tab, true), .init(VK.tab, false),
+                .init(VK.menu, false)
+            ]
+        )
+    }
+
+    func testStickyModifierReleasesBeforeProfileSwitch() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
+        mappings.saveDraft()
+        _ = mappings.createProfile(name: "Hearthstone")
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.receiveForTesting(input: .home, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .home, pressed: false, at: 1.3)
+        await settle()
+
+        XCTAssertEqual(sink.transitions, [.init(VK.menu, true), .init(VK.menu, false)])
+        XCTAssertEqual(mappings.activeProfile.name, "Hearthstone")
+    }
+
+    func testStickyModifierReleasesOnInactiveContext() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.stickyModifier(.init(modifier: .alt)), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.suspendInputForInactiveContext()
+        await settle()
+
+        XCTAssertEqual(sink.transitions, [.init(VK.menu, true), .init(VK.menu, false)])
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
+
     func testQuickNavigationUsesTouchpadRotorAndRightStickMovement() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .create, pressed: true, at: 1)

@@ -47,6 +47,7 @@ regression test unless the exception and the physical-only reason are recorded.
 | INPUT-008 | Enforced in automated controller scope | An active controller-profile change releases every held remote key/chord before the new profile becomes authoritative. A later physical release from the old mapping is inert and cannot release or trigger a key in the new profile. |
 | INPUT-009 | Enforced in automated controller scope | Quick Bar and Profiles are local Quick Navigation sections. Cross never synthesizes remote Enter in either section; Enter is emitted only in remote element-navigation sections such as Headings or Links. |
 | INPUT-010 | Enforced in automated controller scope | Repeat Last Quick Bar Action remembers only actions explicitly classified repeatable. The initial implementation records keyboard actions only; an empty history emits no remote input and non-repeatable local/recovery actions cannot become the remembered command. |
+| INPUT-011 | Enforced in automated controller scope | A sticky modifier is explicit state, never an accidental unbalanced chord. It remains held across unrelated mapped key taps until toggled off, and profile changes, remapping, inactivity/backgrounding, controller loss, or adapter teardown release it through the original route before local ownership is cleared. |
 
 ## App, host, diagnostics, and security
 
@@ -55,6 +56,7 @@ regression test unless the exception and the physical-only reason are recorded.
 | LIFECYCLE-001 | Partially enforced | Backgrounding suspends forwarding and releases held remote input; suspended sockets are not claimed alive without a later real transport event. |
 | ACCESSIBILITY-001 | Enforced | Connection status has a truthful text label and transitions can produce concise VoiceOver announcements without focus theft. |
 | ACCESSIBILITY-002 | Enforced in automated/UI-model scope | Controller profile and rotor state are exposed with stable text names. Profile changes announce the newly active profile; Quick Bar and Profiles remain distinguishable from remote Browse Mode navigation. |
+| ACCESSIBILITY-003 | Enforced in automated presentation-model scope; physical controller validation required | When a connected controller reports battery/capability information, Remote Control exposes it as ordinary accessible text. Missing battery data is reported as unavailable rather than guessed, and controller capability status never gates remote input. |
 | DIAGNOSTICS-001 | Partially enforced | User-facing diagnostics use sanitized endpoint/status metadata and never include passwords, private keys, passphrases, channels, ordinary typing, or speech content. |
 | MAC-REMOTE-001 | Not yet enforced | Mac Remote readiness is component-specific; no physical remote-control claim is made until hardware and permission validation passes. |
 | RECOVERY-001 | Enforced | Windows accessibility recovery is independent of the NVDA relay. Status comes only from an authenticated SSH + `farrelay-host` response; relay state is never used as recovery health. |

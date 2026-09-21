@@ -72,6 +72,29 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(rotor.category, .profiles)
     }
 
+    func testControllerDeviceStatusIsAccessibleAndTruthful() {
+        XCTAssertEqual(
+            ControllerDeviceStatus(
+                name: "DualSense",
+                batteryPercent: 67,
+                batteryStateLabel: "Charging",
+                supportsHaptics: true,
+                supportsTouchpad: true
+            ).compactLabel,
+            "DualSense · Battery 67 percent · Charging · Haptics · Touchpad"
+        )
+        XCTAssertEqual(
+            ControllerDeviceStatus(
+                name: "Controller",
+                batteryPercent: nil,
+                batteryStateLabel: nil,
+                supportsHaptics: false,
+                supportsTouchpad: false
+            ).compactLabel,
+            "Controller · Battery unavailable"
+        )
+    }
+
     func testTouchpadRotorGestureRequiresHorizontalThresholdAndConsumesOneStep() {
         var gesture = TouchpadRotorGesture()
         gesture.begin(x: -0.4)

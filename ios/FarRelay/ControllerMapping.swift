@@ -67,12 +67,17 @@ struct KeyboardAction: Codable, Hashable, Sendable {
     var modifiers: Set<ControllerKeyboardModifier> = []
 }
 
+struct ControllerStickyModifierAction: Codable, Hashable, Sendable {
+    var modifier: ControllerKeyboardModifier
+}
+
 /// A profile action remains platform-independent until the adapter resolves it
 /// to a RemoteIntent. The non-keyboard cases are intentionally local modes,
 /// so a future semantic NVDA protocol can replace keyboard shims without
 /// changing controller UX or profile data.
 enum ControllerAction: Codable, Hashable, Sendable {
     case keyboard(KeyboardAction)
+    case stickyModifier(ControllerStickyModifierAction)
     case layer(ControllerLayerAction)
     case quickNavigation(QuickNavigationAction)
     case farRelay(FarRelayControllerAction)
@@ -101,7 +106,7 @@ extension ControllerAction {
         switch self {
         case .keyboard, .farRelay:
             return true
-        case .layer, .quickNavigation:
+        case .stickyModifier, .layer, .quickNavigation:
             return false
         }
     }
@@ -111,6 +116,8 @@ extension ControllerAction {
         case .keyboard(let keyboard):
             let modifiers = keyboard.modifiers.map(\.label).sorted()
             return (modifiers + [keyboard.key.label]).joined(separator: "+")
+        case .stickyModifier(let sticky):
+            return "Sticky \(sticky.modifier.label)"
         case .layer(let layer):
             return "\(layer.layerID.capitalized) layer"
         case .quickNavigation:

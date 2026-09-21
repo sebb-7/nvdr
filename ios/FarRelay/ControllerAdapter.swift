@@ -36,7 +36,14 @@ final class DualSenseControllerAdapter {
         let route: RemoteIntentRoute
     }
 
+    private struct StickyModifierLease {
+        let modifier: ControllerKeyboardModifier
+        let virtualKeys: [UInt16]
+        let route: RemoteIntentRoute
+    }
+
     private var activeActions: [ControllerInput: ActiveAction] = [:]
+    private var stickyModifierLeases: [ControllerKeyboardModifier: StickyModifierLease] = [:]
     private var repeatTask: Task<Void, Never>?
     private var textOperationTail: Task<Void, Never>?
     private var textOperationGeneration = 0
@@ -50,6 +57,7 @@ final class DualSenseControllerAdapter {
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
 
     private(set) var connectedControllerName: String?
+    private(set) var controllerStatus: ControllerDeviceStatus?
     /// This is the real surface of the currently attached controller. An
     /// unpaired controller leaves the profile editable but marks every input
     /// as runtime-unavailable rather than pretending it can be pressed.
@@ -100,6 +108,7 @@ final class DualSenseControllerAdapter {
         controllerHaptics.detach()
         controller = nil
         connectedControllerName = nil
+        controllerStatus = nil
         availableInputs = []
         controllerHasRemappedElements = false
     }
@@ -108,6 +117,7 @@ final class DualSenseControllerAdapter {
         guard controller == nil, let gamepad = candidate.extendedGamepad else { return }
         controller = candidate
         connectedControllerName = candidate.vendorName ?? "Controller"
+        refreshControllerStatus(from: candidate)
         availableInputs = inputsExposed(by: gamepad)
         controllerHasRemappedElements = gamepad.hasRemappedElements
         gamepad.valueChangedHandler = { [weak self] gamepad, element in
@@ -115,6 +125,37 @@ final class DualSenseControllerAdapter {
         }
         configureTouchpad(for: candidate)
         controllerHaptics.attach(to: candidate)
+    }
+
+    func refreshControllerStatus() {
+        guard let controller else {
+            controllerStatus = nil
+            return
+        }
+        refreshControllerStatus(from: controller)
+    }
+
+    private func refreshControllerStatus(from candidate: GCController) {
+        let battery = candidate.battery
+        let batteryPercent = battery.map {
+            Int((max(0, min(1, $0.batteryLevel)) * 100).rounded())
+        }
+        let batteryStateLabel: String?
+        switch battery?.batteryState {
+        case .charging?: batteryStateLabel = "Charging"
+        case .discharging?: batteryStateLabel = "Discharging"
+        case .full?: batteryStateLabel = "Full"
+        case .unknown?, nil: batteryStateLabel = nil
+        @unknown default: batteryStateLabel = nil
+        }
+
+        controllerStatus = ControllerDeviceStatus(
+            name: candidate.vendorName ?? "Controller",
+            batteryPercent: batteryPercent,
+            batteryStateLabel: batteryStateLabel,
+            supportsHaptics: candidate.haptics != nil,
+            supportsTouchpad: !candidate.physicalInputProfile.touchpads.isEmpty
+        )
     }
 
     private func configureTouchpad(for candidate: GCController) {
@@ -166,12 +207,14 @@ final class DualSenseControllerAdapter {
         clearTouchpadHandlers()
         controller = nil
         connectedControllerName = nil
+        controllerStatus = nil
         availableInputs = []
         controllerHasRemappedElements = false
     }
 
     private func process(element: GCControllerElement, gamepad: GCExtendedGamepad) {
         let now = ProcessInfo.processInfo.systemUptime
+        refreshControllerStatus()
         controllerHasRemappedElements = gamepad.hasRemappedElements
         if let input = buttonInput(for: element, gamepad: gamepad), let button = element as? GCControllerButtonInput {
             handle(inputLifecycle.receive(input, pressed: button.isPressed, at: now))
@@ -264,6 +307,8 @@ final class DualSenseControllerAdapter {
             route(active, transition: .pressed)
             startRepeatLoopIfNeeded()
             return true
+        case .stickyModifier(let sticky):
+            return toggleStickyModifier(sticky.modifier, input: input, eventID: eventID)
         case .layer(let layer):
             present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
             return true
@@ -274,10 +319,11 @@ final class DualSenseControllerAdapter {
                     profiles: mappings.profiles,
                     activeProfileID: mappings.activeProfileID
                 )
-                announce("Quick Navigation. \(quickNavigation.currentSectionAnnouncement(
+                let section = quickNavigation.currentSectionAnnouncement(
                     quickBar: mappings.activeProfile.quickBar,
                     profiles: mappings.profiles
-                )).")
+                )
+                announce("Quick Navigation. \(section).")
             } else {
                 announce(state)
             }
@@ -421,6 +467,97 @@ final class DualSenseControllerAdapter {
             }
             return true
         }
+    }
+
+    @discardableResult
+    private func toggleStickyModifier(
+        _ modifier: ControllerKeyboardModifier,
+        input: ControllerInput,
+        eventID: Int
+    ) -> Bool {
+        if let lease = stickyModifierLeases.removeValue(forKey: modifier) {
+            routeStickyModifier(lease, pressed: false, eventID: eventID, input: input)
+            announce("\(modifier.label) released")
+            if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
+            return true
+        }
+
+        guard let targetID = router.activeTargetID,
+              let route = router.routeLease(for: targetID),
+              let target = router.target(for: route),
+              target.capabilities.contains(.rawKeyInput) else {
+            diagnostics.observeController(
+                eventID: eventID,
+                input: input,
+                pressed: true,
+                stage: "Sticky modifier: raw key target unavailable; no fallback"
+            )
+            announce("Sticky modifier unavailable")
+            return false
+        }
+
+        let virtualKeys = stickyModifierVirtualKeys(for: modifier)
+        guard !virtualKeys.isEmpty else { return false }
+        let lease = StickyModifierLease(modifier: modifier, virtualKeys: virtualKeys, route: route)
+        stickyModifierLeases[modifier] = lease
+        routeStickyModifier(lease, pressed: true, eventID: eventID, input: input)
+        announce("\(modifier.label) held")
+        if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
+        return true
+    }
+
+    private func routeStickyModifier(
+        _ lease: StickyModifierLease,
+        pressed: Bool,
+        eventID: Int,
+        input: ControllerInput
+    ) {
+        let virtualKeys = pressed ? lease.virtualKeys : Array(lease.virtualKeys.reversed())
+        diagnostics.observeController(
+            eventID: eventID,
+            input: input,
+            pressed: pressed,
+            stage: "Sticky modifier: \(lease.modifier.label) \(pressed ? "held" : "released")"
+        )
+        Task { @MainActor [router, route = lease.route] in
+            for virtualKey in virtualKeys {
+                _ = await router.route(
+                    .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: pressed),
+                    via: route
+                )
+            }
+        }
+    }
+
+    private func stickyModifierVirtualKeys(for modifier: ControllerKeyboardModifier) -> [UInt16] {
+        switch modifier {
+        case .shift: [VK.shift]
+        case .control: [VK.control]
+        case .alt: [VK.menu]
+        case .windows: [VK.lwin]
+        case .nvda:
+            switch settings.nvdaModifier {
+            case .capsLock: [VK.capital]
+            case .voKeys: [VK.control, VK.menu]
+            }
+        }
+    }
+
+    private func releaseStickyModifiers() {
+        let leases = ControllerKeyboardModifier.allCases.compactMap { stickyModifierLeases[$0] }
+        stickyModifierLeases.removeAll()
+        for lease in leases.reversed() {
+            routeStickyModifier(
+                lease,
+                pressed: false,
+                eventID: diagnosticEventID(),
+                input: .home
+            )
+        }
+    }
+
+    func suspendInputForInactiveContext() {
+        releaseActiveActions()
     }
 
     private func layerControlAction(for input: ControllerInput) -> ControllerLayerAction? {
@@ -681,6 +818,7 @@ final class DualSenseControllerAdapter {
     }
 
     private func releaseActiveActions() {
+        releaseStickyModifiers()
         let actions = ControllerInput.allCases.compactMap { input in
             activeActions[input].map { (input, $0) }
         }

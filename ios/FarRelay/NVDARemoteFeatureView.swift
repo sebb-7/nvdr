@@ -6,6 +6,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(InteractionFeedback.self) private var interactionFeedback
     @Environment(InputDiagnosticStore.self) private var inputDiagnostics
     @Environment(RemoteIntentRouter.self) private var router
+    @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
@@ -16,16 +17,28 @@ struct NVDARemoteFeatureView: View {
         Form {
             Section("Computer") {
                 Text(profile.displayName)
-                Button(connectionAction.title, systemImage: "network") {
-                    switch connectionAction {
-                    case .connect:
-                        activateNVDAControlTarget()
-                        bridge.start(settings: settings, profile: profile)
-                    case .cancel, .disconnect:
-                        bridge.stop()
+                HStack(alignment: .firstTextBaseline) {
+                    Button(connectionAction.title, systemImage: "network") {
+                        switch connectionAction {
+                        case .connect:
+                            activateNVDAControlTarget()
+                            bridge.start(settings: settings, profile: profile)
+                        case .cancel, .disconnect:
+                            bridge.stop()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Spacer()
+
+                    if let controllerStatus = controllerAdapter.controllerStatus {
+                        Text(controllerStatus.compactLabel)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Controller. \(controllerStatus.compactLabel)")
                     }
                 }
-                .buttonStyle(.borderedProminent)
             }
             Section("Status") { Text(statusLabel) }
             Section("Keyboard forwarding") {
@@ -75,12 +88,17 @@ struct NVDARemoteFeatureView: View {
         }
         .onAppear {
             activateNVDAControlTarget()
+            controllerAdapter.refreshControllerStatus()
         }
         .onChange(of: bridge.status) { old, new in
+            if old == .ready, new != .ready {
+                controllerAdapter.suspendInputForInactiveContext()
+            }
             handleStatusChange(from: old, to: new)
         }
         .onChange(of: scenePhase) { _, phase in
             if NVDARemoteSceneLifecyclePolicy.shouldSuspendInput(for: phase) {
+                controllerAdapter.suspendInputForInactiveContext()
                 bridge.suspendInputForInactiveContext()
             }
         }
@@ -90,6 +108,7 @@ struct NVDARemoteFeatureView: View {
             bridge.start(settings: settings, profile: profile)
         }
         .onDisappear {
+            controllerAdapter.suspendInputForInactiveContext()
             bridge.suspendInputForInactiveContext()
             deactivateNVDAControlTargetIfOwned()
         }

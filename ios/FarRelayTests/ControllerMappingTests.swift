@@ -23,6 +23,22 @@ final class ControllerMappingTests: XCTestCase {
         )
     }
 
+    func testStickyModifierEditorAndCodableRoundTrip() throws {
+        let action = ControllerAction.stickyModifier(.init(modifier: .alt))
+        let state = ControllerBindingEditorState(action: action)
+        XCTAssertEqual(state.type, .stickyModifier)
+        XCTAssertEqual(state.stickyModifier, .alt)
+        XCTAssertEqual(state.action, action)
+
+        let binding = ControllerBinding(sourceInput: .triangle, action: action)
+        XCTAssertEqual(
+            try JSONDecoder().decode(ControllerBinding.self, from: JSONEncoder().encode(binding)),
+            binding
+        )
+        XCTAssertFalse(action.isAllowedInQuickBar)
+        XCTAssertFalse(action.isRepeatableQuickBarAction)
+    }
+
     func testEveryDualSenseInputHasAnIndependentBindingSlot() {
         var profile = ControllerProfile()
         XCTAssertEqual(Set(profile.bindings.map(\.sourceInput)), Set(ControllerInput.allCases))

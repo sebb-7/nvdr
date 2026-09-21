@@ -282,6 +282,27 @@ struct QuickNavigationEngine: Sendable {
     }
 }
 
+struct ControllerDeviceStatus: Equatable, Sendable {
+    var name: String
+    var batteryPercent: Int?
+    var batteryStateLabel: String?
+    var supportsHaptics: Bool
+    var supportsTouchpad: Bool
+
+    var compactLabel: String {
+        var parts = [name]
+        if let batteryPercent {
+            parts.append("Battery \(batteryPercent) percent")
+        } else {
+            parts.append("Battery unavailable")
+        }
+        if let batteryStateLabel { parts.append(batteryStateLabel) }
+        if supportsHaptics { parts.append("Haptics") }
+        if supportsTouchpad { parts.append("Touchpad") }
+        return parts.joined(separator: " · ")
+    }
+}
+
 struct TouchpadRotorGesture: Sendable {
     private(set) var startX: Float?
     private(set) var consumed = false
