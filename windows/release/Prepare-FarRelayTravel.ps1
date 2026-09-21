@@ -2,21 +2,44 @@
 param(
     [switch]$Repair,
     [switch]$RequireLidClosedReady,
-    [string]$OutputPath = "$env:ProgramData\FarRelay\travel-connection.txt"
+    [string]$OutputPath = "$env:ProgramData\FarRelay\travel-connection.txt",
+    [string]$ProgressPath = "$env:ProgramData\FarRelay\travel-progress.json"
 )
 
 $ErrorActionPreference = 'Stop'
 $results = [System.Collections.Generic.List[string]]::new()
 $actions = [System.Collections.Generic.List[string]]::new()
+$script:currentStep = 'Starting'
+
+function Write-ProgressState([string]$State,[string]$Step,[string]$Message) {
+    try {
+        $directory = Split-Path -Parent $ProgressPath
+        if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+        [ordered]@{
+            state = $State
+            step = $Step
+            message = $Message
+            updated_at = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ProgressPath -Encoding UTF8
+    } catch {
+    }
+}
+
+function Set-Step([string]$Step,[string]$Message) {
+    $script:currentStep = $Step
+    Write-ProgressState 'running' $Step $Message
+}
 
 function Add-Result([string]$Message) {
     $results.Add($Message)
     Write-Output $Message
+    Write-ProgressState 'running' $script:currentStep $Message
 }
 
 function Add-Action([string]$Message) {
     $actions.Add($Message)
     Write-Output "ACTION: $Message"
+    Write-ProgressState 'running' $script:currentStep $Message
 }
 
 function Test-IsAdministrator {
@@ -203,9 +226,13 @@ Write-Output "Windows user: $env:USERNAME"
 Write-Output "Mode: $(if ($Repair) { 'Repair and verify' } else { 'Audit only' })"
 Write-Output ''
 
+Set-Step 'OpenSSH' 'Checking and configuring OpenSSH Server.'
 Ensure-OpenSsh
+Set-Step 'Tailscale' 'Checking and configuring Tailscale.'
 $tailscaleIp = Ensure-Tailscale
+Set-Step 'FarRelay' 'Checking FarRelay Host, NVDA recovery, and updater.'
 Test-FarRelay
+Set-Step 'Power' 'Checking unattended power settings.'
 Ensure-PowerReadiness
 
 $connection = [System.Collections.Generic.List[string]]::new()
@@ -244,5 +271,9 @@ $connection
 Write-Output ''
 Write-Output "Saved connection card: $OutputPath"
 
-if ($actions.Count -gt 0) { exit 2 }
+if ($actions.Count -gt 0) {
+    Write-ProgressState 'action_required' 'Complete' "$($actions.Count) action(s) still require attention."
+    exit 2
+}
+Write-ProgressState 'ready' 'Complete' 'This PC is ready for remote travel.'
 exit 0
