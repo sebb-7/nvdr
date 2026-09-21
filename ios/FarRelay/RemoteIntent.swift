@@ -112,6 +112,7 @@ struct RemoteKey: Hashable, Sendable {
         case function(Int)
         case letter(Character)
         case windowsVirtualKey(UInt16)
+        case usbHIDUsage(UInt16)
     }
 
     static let tab = RemoteKey(storage: .named(.tab))
@@ -123,6 +124,11 @@ struct RemoteKey: Hashable, Sendable {
     static let upArrow = RemoteKey(storage: .named(.upArrow))
     static let downArrow = RemoteKey(storage: .named(.downArrow))
     static func windowsVirtualKey(_ value: UInt16) -> RemoteKey { RemoteKey(storage: .windowsVirtualKey(value)) }
+
+    static func hidUsage(_ value: UInt16) -> RemoteKey? {
+        guard (0x04...0xE7).contains(value) else { return nil }
+        return RemoteKey(storage: .usbHIDUsage(value))
+    }
 
     private let storage: Storage
 
@@ -163,6 +169,11 @@ struct RemoteKey: Hashable, Sendable {
 
     var windowsVirtualKey: UInt16? {
         guard case .windowsVirtualKey(let value) = storage else { return nil }
+        return value
+    }
+
+    var usbHIDUsage: UInt16? {
+        guard case .usbHIDUsage(let value) = storage else { return nil }
         return value
     }
 

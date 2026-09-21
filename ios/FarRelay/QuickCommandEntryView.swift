@@ -35,7 +35,7 @@ struct QuickCommandEntryView: View {
                         _ = controller.sendQuickCommand()
                     }
                     .disabled(controller.quickCommandBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityHint("Parses and sends this one-shot command to the active NVDA Remote target.")
+                    .accessibilityHint("Parses and sends this one-shot command to the active Windows/NVDA or Mac Remote keyboard target.")
                 }
             }
         }

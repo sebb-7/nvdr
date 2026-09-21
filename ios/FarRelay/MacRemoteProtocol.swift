@@ -5,6 +5,18 @@ import Foundation
 struct MacRemoteKey: Codable, Hashable, Sendable {
     let usage: UInt16
 
+    /// Mirrors the HID usages the current Mac host can actually translate to
+    /// CGKeyCode. Rejecting unsupported usages locally prevents partial
+    /// one-shot commands that the host would otherwise accept but not post.
+    static func supportedKeyboardUsage(_ usage: UInt16) -> Self? {
+        let supported =
+            (0x04...0x31).contains(usage) ||
+            (0x33...0x45).contains(usage) ||
+            (0x49...0x52).contains(usage) ||
+            (0xE0...0xE7).contains(usage)
+        return supported ? Self(usage: usage) : nil
+    }
+
     static let rightArrow = Self(usage: 0x4F)
     static let leftArrow = Self(usage: 0x50)
     static let downArrow = Self(usage: 0x51)
