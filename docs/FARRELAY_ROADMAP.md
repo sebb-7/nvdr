@@ -1,7 +1,7 @@
 # FarRelay Roadmap
 
 Updated: 2026-09-21
-Active branch: `feat/remote-intent-v2-recovery`
+Active branch: `feat/controller-profiles-remote-control`
 
 ## Implemented / validated
 
@@ -82,13 +82,6 @@ Implementation is in progress and covered by deterministic rotor-boundary tests.
 - No-op safely on controllers without haptics.
 - Physically validate the feel on DualSense and tune intensity if needed.
 
-### Layer-scoped held modifiers
-- The existing Hold Modifier action remains part of the normal mapping editor.
-- When used from Base it preserves sticky-toggle behavior for compatibility.
-- When invoked from a physically held Action Layer, the modifier is owned by that layer hold and automatically releases when the Action-layer button is released.
-- While a layer-scoped modifier is active, ordinary inputs use Base mappings; other Hold Modifier actions in the layer remain available for multi-modifier combinations.
-- Invariants cover layer release, profile changes, inactive/background context, and preservation of Base sticky behavior.
-
 ### 2. Configurable Quick Bar using the existing mapping/action system
 Implementation is in progress using ControllerAction and the existing mapping editor infrastructure.
 Do not create a separate command model.
@@ -108,31 +101,12 @@ Implementation is in progress as a first-class mappable FarRelay controller acti
 - Explicitly exclude destructive/recovery actions from repeat.
 - Reuse the same mapping system so the user can bind Repeat Last anywhere.
 
-### 4. RemSound audio streaming integration
-Integrate RemSound into FarRelay rather than requiring a separate iOS receiver app. RemSound is MIT-licensed and its iOS companion speaks the same protocol, so prefer protocol-compatible receiver integration inside FarRelay over a second independent audio stack/app.
-
-#### Integration direction
-- FarRelay should own the iOS audio session and receive RemSound-compatible audio itself.
-- Avoid requiring the user to keep a separate RemSound iOS app active alongside FarRelay.
-- Reuse the RemSound wire protocol / codec behavior where practical; preserve required MIT attribution if code is reused directly.
-- Keep RemSound as the Windows-side audio sender initially; FarRelay becomes the integrated iOS receiver/control surface.
-- Later consider whether FarRelay should provision/control the Windows sender service as part of the normal host installer.
-
-#### Audio control panel
-- Master stream On/Off.
-- List active Windows audio applications/sessions.
-- Per-app Enable/Disable streaming.
-- Per-app volume/mute where supported.
-- Persist safe per-app preferences.
-- Screen-reader-first labels/state announcements.
-- Connection, latency, and reconnect status.
-- Optional Quick Bar actions for Stream Audio On/Off and opening the audio panel.
-
-#### Desired use cases
-- Stream music from a selected Windows music app while controlling the G14 from iPhone.
-- Include selected apps without forwarding every Windows system sound.
-- If technically possible, independently include/exclude NVDA speech.
-- Audio failure must never break keyboard/NVDA/SSH control.
+### 4. Layer-scoped held modifiers
+- The existing Hold Modifier action remains part of the normal mapping editor.
+- When used from Base it preserves sticky-toggle behavior for compatibility.
+- When invoked from a physically held Action Layer, the modifier is owned by that layer hold and automatically releases when the Action-layer button is released.
+- While a layer-scoped modifier is active, ordinary inputs use Base mappings; other Hold Modifier actions in the layer remain available for multi-modifier combinations.
+- Invariants cover layer release, profile changes, inactive/background context, and preservation of Base sticky behavior.
 
 ### 5. Usage profiles / app-specific profiles
 Implementation is in progress by evolving ControllerProfile into a saved profile library instead of adding a parallel mapping subsystem.
@@ -165,7 +139,46 @@ Examples:
 - Remember the last selected usage profile per host where appropriate.
 - Later consider app-aware suggestions/automatic switching, but never silently remap controls without an explicit user setting.
 
-### 6. Microphone uplink / remote headset mode
+### 6. Physical validation
+- Validate touchpad rotor on a real DualSense.
+- Validate Quick Bar Cross never sends Enter.
+- Validate Cross sends Enter after moving to Headings/Links/etc.
+- Validate BSI punctuation on the remote Windows target.
+- Build a fresh TestFlight after the exact-head iOS CI is green.
+
+### 7. Travel hardening
+- Configure NVDA Remote auto-connect.
+- Copy the appropriate NVDA settings for sign-in/secure screens and test carefully.
+- Test lock/sign-in, reboot, lid-closed, and cellular/off-home-network scenarios.
+- Finish private updater publication so tester machines no longer require local Cargo builds.
+
+### 8. RemSound audio streaming integration
+Integrate RemSound into FarRelay rather than requiring a separate iOS receiver app. RemSound is MIT-licensed and its iOS companion speaks the same protocol, so prefer protocol-compatible receiver integration inside FarRelay over a second independent audio stack/app.
+
+#### Integration direction
+- FarRelay should own the iOS audio session and receive RemSound-compatible audio itself.
+- Avoid requiring the user to keep a separate RemSound iOS app active alongside FarRelay.
+- Reuse the RemSound wire protocol / codec behavior where practical; preserve required MIT attribution if code is reused directly.
+- Keep RemSound as the Windows-side audio sender initially; FarRelay becomes the integrated iOS receiver/control surface.
+- Later consider whether FarRelay should provision/control the Windows sender service as part of the normal host installer.
+
+#### Audio control panel
+- Master stream On/Off.
+- List active Windows audio applications/sessions.
+- Per-app Enable/Disable streaming.
+- Per-app volume/mute where supported.
+- Persist safe per-app preferences.
+- Screen-reader-first labels/state announcements.
+- Connection, latency, and reconnect status.
+- Optional Quick Bar actions for Stream Audio On/Off and opening the audio panel.
+
+#### Desired use cases
+- Stream music from a selected Windows music app while controlling the G14 from iPhone.
+- Include selected apps without forwarding every Windows system sound.
+- If technically possible, independently include/exclude NVDA speech.
+- Audio failure must never break keyboard/NVDA/SSH control.
+
+### 9. Microphone uplink / remote headset mode
 Goal: capture the iPhone microphone in FarRelay and make it usable by Windows applications such as Discord on the G14.
 
 #### iOS
@@ -193,15 +206,3 @@ Discord/Zoom/games require a Windows recording endpoint. Phase the implementatio
 - Quick Bar actions: Mic Mute/Unmute, Push-to-Talk, Audio Stream On/Off, Open Audio Panel.
 - Per-profile mic state should default safe/muted unless the user explicitly chooses otherwise.
 
-### 7. Physical validation
-- Validate touchpad rotor on a real DualSense.
-- Validate Quick Bar Cross never sends Enter.
-- Validate Cross sends Enter after moving to Headings/Links/etc.
-- Validate BSI punctuation on the remote Windows target.
-- Build a fresh TestFlight after the exact-head iOS CI is green.
-
-### 8. Travel hardening
-- Configure NVDA Remote auto-connect.
-- Copy the appropriate NVDA settings for sign-in/secure screens and test carefully.
-- Test lock/sign-in, reboot, lid-closed, and cellular/off-home-network scenarios.
-- Finish private updater publication so tester machines no longer require local Cargo builds.

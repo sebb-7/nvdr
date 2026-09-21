@@ -156,7 +156,7 @@ final class DualSenseControllerAdapter {
             name: candidate.vendorName ?? "Controller",
             batteryPercent: batteryPercent,
             batteryStateLabel: batteryStateLabel,
-            supportsHaptics: candidate.haptics != nil,
+            supportsHaptics: candidate.haptics?.supportedLocalities.contains(.default) == true,
             supportsTouchpad: !candidate.physicalInputProfile.touchpads.isEmpty
         )
     }
