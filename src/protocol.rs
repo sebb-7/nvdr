@@ -59,12 +59,16 @@ pub enum Inbound {
         #[serde(default)]
         client: Option<Value>,
         #[serde(default)]
+        user_id: Option<u64>,
+        #[serde(default)]
         origin: Option<u64>,
     },
     #[serde(rename = "client_left")]
     ClientLeft {
         #[serde(default)]
         client: Option<Value>,
+        #[serde(default)]
+        user_id: Option<u64>,
         #[serde(default)]
         origin: Option<u64>,
     },

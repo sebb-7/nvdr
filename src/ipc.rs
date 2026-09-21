@@ -101,9 +101,12 @@ impl ChannelMembership {
         }
     }
 
-    fn left(&mut self, peer: Option<Value>) {
+    fn left(&mut self, peer: Option<Value>, legacy_user_id: Option<u64>) {
         if let Some(peer) = peer {
             self.remove_matching(&peer);
+        }
+        if let Some(user_id) = legacy_user_id {
+            self.remove_identity(&user_id.to_string());
         }
     }
 
@@ -137,20 +140,32 @@ impl ChannelMembership {
                 _ => candidate != peer,
             });
     }
+
+    fn remove_identity(&mut self, identity: &str) {
+        self.peers
+            .retain(|candidate| peer_identity(candidate).as_deref() != Some(identity));
+    }
 }
 
 fn peer_connection_type(peer: &Value) -> Option<&str> {
     peer.get("connection_type").and_then(Value::as_str)
 }
 
-/// Relay implementations have used both `id` and `client_id`; retain the
-/// full object fallback for older implementations. This never leaves the
-/// process or enters user-facing diagnostics.
+/// Relay implementations have used object IDs, numeric `client` values, and
+/// a separate legacy `user_id`. Normalize all of them so a disconnect can
+/// always retire the matching peer instead of leaving a ghost slave behind.
 fn peer_identity(peer: &Value) -> Option<String> {
-    ["id", "client_id", "clientId"]
+    let value = ["id", "client_id", "clientId"]
         .iter()
         .find_map(|key| peer.get(*key))
-        .map(Value::to_string)
+        .unwrap_or(peer);
+    if let Some(id) = value.as_u64() {
+        return Some(id.to_string());
+    }
+    if let Some(id) = value.as_i64() {
+        return Some(id.to_string());
+    }
+    value.as_str().map(str::to_owned)
 }
 
 fn channel_fingerprint(channel: &str) -> String {
@@ -294,8 +309,8 @@ async fn session(
                             emit_membership_state(&membership, channel, host, port);
                         }
                     }
-                    Inbound::ClientLeft { client, .. } => {
-                        membership.left(client.clone());
+                    Inbound::ClientLeft { client, user_id, .. } => {
+                        membership.left(client.clone(), *user_id);
                         if membership.joined {
                             emit_membership_state(&membership, channel, host, port);
                         }
@@ -626,9 +641,9 @@ mod tests {
         membership.replace(vec![slave(1)]);
         assert!(membership.is_forwarding_ready());
         membership.joined(Some(slave(2)));
-        membership.left(Some(slave(1)));
+        membership.left(Some(slave(1)), None);
         assert!(membership.is_forwarding_ready());
-        membership.left(Some(slave(2)));
+        membership.left(Some(slave(2)), None);
         assert!(!membership.is_forwarding_ready());
     }
 
@@ -640,6 +655,24 @@ mod tests {
         assert!(!membership.is_forwarding_ready());
         membership.joined(Some(slave(3)));
         assert!(membership.is_forwarding_ready());
+    }
+
+    #[test]
+    fn legacy_numeric_client_left_removes_slave_by_identity() {
+        let mut membership = ChannelMembership::default();
+        membership.replace(vec![slave(41)]);
+        assert!(membership.is_forwarding_ready());
+        membership.left(Some(json!(41)), None);
+        assert!(!membership.is_forwarding_ready());
+    }
+
+    #[test]
+    fn legacy_user_id_client_left_removes_slave_when_client_is_missing() {
+        let mut membership = ChannelMembership::default();
+        membership.replace(vec![slave(42)]);
+        assert!(membership.is_forwarding_ready());
+        membership.left(None, Some(42));
+        assert!(!membership.is_forwarding_ready());
     }
 
     #[test]
