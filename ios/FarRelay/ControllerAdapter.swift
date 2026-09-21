@@ -235,9 +235,9 @@ final class DualSenseControllerAdapter {
             switch input {
             case .create, .circle:
                 announce(quickNavigation.exit() ?? "Quick Navigation off.")
-            case .rightStickLeft:
+            case .dpadLeft:
                 announce(quickNavigation.previousCategory())
-            case .rightStickRight:
+            case .dpadRight:
                 announce(quickNavigation.nextCategory())
             case .rightStickUp:
                 if quickNavigation.category == .quickBar {

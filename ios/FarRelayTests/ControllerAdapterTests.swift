@@ -172,7 +172,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.up, true), .init(VK.up, false)])
     }
 
-    func testQuickNavigationUsesRightStickAndQuickBarConsumesCrossLocally() async {
+    func testQuickNavigationUsesDpadRotorAndRightStickMovement() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .create, pressed: true, at: 1)
 
@@ -181,10 +181,10 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
 
-        // Right selects Headings. Down moves to the next heading, then the
-        // same Cross button becomes remote Enter for the selected element.
-        adapter.receiveForTesting(input: .rightStickRight, pressed: true, at: 1.3)
-        adapter.receiveForTesting(input: .rightStickRight, pressed: false, at: 1.4)
+        // D-pad Right rotates to Headings. Right-stick Down moves to the next
+        // heading, then the same Cross button becomes remote Enter.
+        adapter.receiveForTesting(input: .dpadRight, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .dpadRight, pressed: false, at: 1.4)
         adapter.receiveForTesting(input: .rightStickDown, pressed: true, at: 1.5)
         adapter.receiveForTesting(input: .rightStickDown, pressed: false, at: 1.6)
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.7)
