@@ -45,6 +45,23 @@ final class HostRecoverySession: HostRecoveryIntentControlling {
         }
     }
 
+    static func hostCommand(for profile: HostProfile) throws -> String {
+        let command = profile.farRelayHostCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else {
+            throw HostClientError.hostError(
+                code: "invalid_host_command",
+                message: "The FarRelay Host command is empty."
+            )
+        }
+        guard command.rangeOfCharacter(from: .newlines) == nil, !command.contains("\0") else {
+            throw HostClientError.hostError(
+                code: "invalid_host_command",
+                message: "The FarRelay Host command contains invalid control characters."
+            )
+        }
+        return command
+    }
+
     private func withClient<Result: Sendable>(
         for profile: HostProfile,
         operation: @escaping @Sendable (FarRelayHostClient) async throws -> Result
@@ -52,10 +69,15 @@ final class HostRecoverySession: HostRecoveryIntentControlling {
         guard let credentials else {
             throw HostClientError.hostError(code: "credentials_unavailable", message: "Credentials for this host are unavailable.")
         }
+        let command = try Self.hostCommand(for: profile)
         let session = SSHSession(configuration: profile.sshSessionConfiguration(credentials: credentials))
         do {
             try await session.connect()
-            let result = try await FarRelayHostConnection.withClient(session: session, operation: operation)
+            let result = try await FarRelayHostConnection.withClient(
+                session: session,
+                command: command,
+                operation: operation
+            )
             try await session.close()
             return result
         } catch {
