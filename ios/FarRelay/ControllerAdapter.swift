@@ -81,11 +81,14 @@ final class DualSenseControllerAdapter {
         self.router = router
         self.diagnostics = diagnostics
         self.feedback = feedback
-        mappings.willChangeActiveProfile = { [weak self] in self?.releaseActiveActions() }
+        mappings.willChangeActiveProfile = { [weak self] in
+            self?.releaseActiveActions(exitQuickNavigation: false)
+        }
     }
 
     func start() {
         guard connectObservation == nil, disconnectObservation == nil else { return }
+        if !isTextModeActive { _ = quickNavigation.activate() }
         connectObservation = NotificationCenter.default.addObserver(
             of: GCController.self, for: .didConnect
         ) { [weak self] message in
@@ -163,6 +166,15 @@ final class DualSenseControllerAdapter {
 
     private func configureTouchpad(for candidate: GCController) {
         guard let touchpad = candidate.physicalInputProfile.touchpads.values.first else { return }
+
+        // DualSense touch coordinates are normalized absolute values. Ask the
+        // system to deliver the touch surface even when iOS has associated the
+        // element with a system gesture, otherwise horizontal rotor swipes can
+        // be delayed or swallowed before these handlers run.
+        touchpad.reportsAbsoluteTouchSurfaceValues = true
+        touchpad.preferredSystemGestureState = .alwaysReceive
+        touchpad.touchSurface.preferredSystemGestureState = .alwaysReceive
+
         self.touchpad = touchpad
         touchpad.touchDown = { [weak self] _, x, _, _, _ in
             Task { @MainActor in self?.touchpadRotor.begin(x: x) }
@@ -629,8 +641,12 @@ final class DualSenseControllerAdapter {
         textMirrorSession.reset()
         textModeBuffer = ""
         cancelTextOperations()
-        if active { _ = quickNavigation.exit() }
-        if !active { releaseActiveActions() }
+        if active {
+            _ = quickNavigation.exit()
+        } else {
+            releaseActiveActions()
+            _ = quickNavigation.activate()
+        }
         announce(active ? "Text Mode" : "Text Mode off")
     }
 
@@ -869,7 +885,7 @@ final class DualSenseControllerAdapter {
         repeatTask = nil
     }
 
-    private func releaseActiveActions() {
+    private func releaseActiveActions(exitQuickNavigation: Bool = true) {
         releaseStickyModifiers()
         let actions = ControllerInput.allCases.compactMap { input in
             activeActions[input].map { (input, $0) }
@@ -880,7 +896,7 @@ final class DualSenseControllerAdapter {
         rightStick.reset()
         touchpadRotor.end()
         layerEngine.reset()
-        _ = quickNavigation.exit()
+        if exitQuickNavigation { _ = quickNavigation.exit() }
         isTextModeActive = false
         textMirrorSession.reset()
         textModeBuffer = ""
