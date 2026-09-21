@@ -315,6 +315,27 @@ final class ControllerMappingTests: XCTestCase {
         )
     }
 
+    func testCreateProfileForEditingSavesCurrentDraftAndSelectsNewDraft() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+        let originalID = settings.activeProfileID
+
+        settings.renameDraftProfile("Desktop")
+        XCTAssertTrue(settings.hasUnsavedChanges)
+
+        let newID = settings.createProfileForEditing(name: "Gaming")
+
+        XCTAssertEqual(settings.editingProfileID, newID)
+        XCTAssertEqual(settings.draftProfile.id, newID)
+        XCTAssertEqual(settings.draftProfile.name, "Gaming")
+        XCTAssertFalse(settings.hasUnsavedChanges)
+        XCTAssertEqual(settings.profiles.first(where: { $0.id == originalID })?.name, "Desktop")
+
+        let reloaded = ControllerMappingSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.profiles.first(where: { $0.id == originalID })?.name, "Desktop")
+        XCTAssertEqual(reloaded.profiles.first(where: { $0.id == newID })?.name, "Gaming")
+    }
+
     func testProfileCycleUsesSavedOrderAndWraps() {
         let defaults = makeDefaults()
         let settings = ControllerMappingSettings(defaults: defaults)
