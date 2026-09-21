@@ -300,27 +300,36 @@ async function feedbackUrlForDevice(request: Request, env: Env, deviceId: string
   return new URL(request.url).origin + "/feedback/device/" + encodeURIComponent(deviceId) + "/" + signature;
 }
 
-function feedbackPageHtml(name: string, action: string, submitted = false, returnPath = ""): string {
+function feedbackPageHtml(
+  name: string,
+  action: string,
+  submitted = false,
+  returnPath = "",
+  source: "" | "control-center" = ""
+): string {
   const safeReturn = returnPath.startsWith("/invite/") && !returnPath.startsWith("//") ? returnPath : "";
-  const returnLink = safeReturn
-    ? '<p><a href="' + htmlEscape(safeReturn) + '">Back to FarRelay onboarding</a></p>'
-    : '<p>You can close this tab or window to return to FarRelay.</p>';
+  const returnSection = safeReturn
+    ? '<section aria-labelledby="return-heading"><h2 id="return-heading">Return to FarRelay</h2><p><a href="' + htmlEscape(safeReturn) + '">Back to FarRelay onboarding</a></p></section>'
+    : source === "control-center"
+      ? '<section aria-labelledby="return-heading"><h2 id="return-heading">Return to FarRelay Control Center</h2><p>The Control Center should still be open in the previous tab.</p><p><button type="button" onclick="window.close()">Close feedback tab</button></p><p>If your browser does not close this tab, close it manually to return to the Control Center.</p></section>'
+      : '<section aria-labelledby="return-heading"><h2 id="return-heading">Return to FarRelay</h2><p>You can close this tab or window to return to FarRelay.</p></section>';
+
   if (submitted) {
-    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay feedback received</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Thanks, ' +
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay feedback received</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Feedback received</h1><p>Thanks, ' +
       htmlEscape(name) +
-      '.</h1><p>Your FarRelay beta feedback was received.</p>' +
-      returnLink +
+      '. Your FarRelay beta feedback was received.</p>' +
+      returnSection +
       '</main></body></html>';
   }
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta feedback</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>FarRelay beta feedback</h1><p>This feedback form opened in a separate tab or window so you can return to your FarRelay onboarding page without losing your place.</p><p>Hello ' +
+
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta feedback</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>FarRelay beta feedback</h1><p>Hello ' +
     htmlEscape(name) +
-    '. Please report anything that broke, felt confusing, was inaccessible, or could make onboarding clearer.</p><form method="post" action="' +
+    '. Report anything that broke, felt confusing, was inaccessible, or could make onboarding clearer.</p><section aria-labelledby="details-heading"><h2 id="details-heading">Feedback details</h2><form method="post" action="' +
     htmlEscape(action) +
-    '"><label for="category">Feedback type</label><br><select id="category" name="category" required><option value="onboarding">Onboarding</option><option value="confusing">Confusing or unclear</option><option value="bug">Bug</option><option value="accessibility">Accessibility</option><option value="suggestion">Suggestion</option><option value="other">Other</option></select><br><br><label for="message">What happened?</label><br><textarea id="message" name="message" rows="10" maxlength="5000" required style="width:100%;box-sizing:border-box"></textarea><br><br><label for="contact">Email or contact information (optional)</label><br><input id="contact" name="contact" type="text" maxlength="200" style="width:100%;box-sizing:border-box"><p>Please include what you expected, what happened instead, and anything you found confusing.</p><button type="submit">Send beta feedback</button></form>' +
-    returnLink +
+    '"><label for="category">Feedback type</label><br><select id="category" name="category" required><option value="onboarding">Onboarding</option><option value="confusing">Confusing or unclear</option><option value="bug">Bug</option><option value="accessibility">Accessibility</option><option value="suggestion">Suggestion</option><option value="other">Other</option></select><br><br><label for="message">What happened?</label><br><textarea id="message" name="message" rows="10" maxlength="5000" required style="width:100%;box-sizing:border-box"></textarea><br><br><label for="contact">Email or contact information (optional)</label><br><input id="contact" name="contact" type="text" maxlength="200" style="width:100%;box-sizing:border-box"><p>Please include what you expected, what happened instead, and anything you found confusing.</p><button type="submit">Send beta feedback</button></form></section>' +
+    returnSection +
     '</main></body></html>';
 }
-
 async function feedbackSubject(
   env: Env,
   kind: "invite" | "device",
@@ -358,17 +367,21 @@ async function handleFeedback(
   const feedbackRequestUrl = new URL(request.url);
   const rawReturnPath = feedbackRequestUrl.searchParams.get("return") || "";
   const returnPath = rawReturnPath.startsWith("/invite/") && !rawReturnPath.startsWith("//") ? rawReturnPath : "";
-  const formAction = feedbackRequestUrl.pathname + (returnPath ? "?return=" + encodeURIComponent(returnPath) : "");
+  const source = feedbackRequestUrl.searchParams.get("source") === "control-center" ? "control-center" : "";
+  const formParams = new URLSearchParams();
+  if (returnPath) formParams.set("return", returnPath);
+  if (source) formParams.set("source", source);
+  const formAction = feedbackRequestUrl.pathname + (formParams.size ? "?" + formParams.toString() : "");
 
   if (request.method === "GET") {
-    return new Response(feedbackPageHtml(subject.testerName, formAction, false, returnPath), {
+    return new Response(feedbackPageHtml(subject.testerName, formAction, false, returnPath, source), {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
-        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
       },
     });
   }
@@ -406,14 +419,14 @@ async function handleFeedback(
     now
   ).run();
   await audit(env, "beta_feedback_submitted", feedbackId, category);
-  return new Response(feedbackPageHtml(subject.testerName, formAction, true, returnPath), {
+  return new Response(feedbackPageHtml(subject.testerName, formAction, true, returnPath, source), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
       "x-frame-options": "DENY",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
     },
   });
 }
