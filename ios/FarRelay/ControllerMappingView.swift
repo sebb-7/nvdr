@@ -310,6 +310,7 @@ struct ControllerQuickBarView: View {
 enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     case unassigned = "Unassigned"
     case keyboard = "Keyboard"
+    case stickyModifier = "Hold / Sticky Modifier"
     case layer = "Layer"
     case quickNavigation = "NVDA Quick Navigation"
     case textMode = "Text Mode"
@@ -340,6 +341,7 @@ struct ControllerBindingEditorState: Equatable {
     }
 
     var modifiers: Set<ControllerKeyboardModifier>
+    var stickyModifier: ControllerKeyboardModifier = .alt
 
     init(action: ControllerAction?) {
         switch action {
@@ -347,6 +349,11 @@ struct ControllerBindingEditorState: Equatable {
             type = .keyboard
             key = keyboard.key
             modifiers = keyboard.modifiers
+        case .stickyModifier(let sticky):
+            type = .stickyModifier
+            key = nil
+            modifiers = []
+            stickyModifier = sticky.modifier
         case .layer:
             type = .layer
             key = nil
@@ -385,6 +392,8 @@ struct ControllerBindingEditorState: Equatable {
         case .keyboard:
             guard let key else { return nil }
             return .keyboard(.init(key: key, modifiers: modifiers))
+        case .stickyModifier:
+            return .stickyModifier(.init(modifier: stickyModifier))
         case .layer:
             return .layer(.init())
         case .quickNavigation:
@@ -490,6 +499,18 @@ private struct ControllerActionEditorSections: View {
             }
         }
 
+        if editorState.type == .stickyModifier {
+            Section("Hold / Sticky Modifier") {
+                Picker("Modifier", selection: $editorState.stickyModifier) {
+                    ForEach(ControllerKeyboardModifier.allCases) { modifier in
+                        Text(modifier.label).tag(modifier)
+                    }
+                }
+                Text("Press the mapped controller input once to hold this modifier on the remote computer. Other mapped keys can be pressed while it remains held. Press the same sticky-modifier action again to release it. FarRelay also releases it automatically on profile changes, remapping, disconnect, backgrounding, or controller loss.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+
         switch editorState.type {
         case .layer:
             Section("Layer") {
@@ -517,7 +538,7 @@ private struct ControllerActionEditorSections: View {
                 Text("Changes the active saved controller profile using the order shown in Profiles. Switching profiles releases held remote input before the new mappings become active.")
                     .foregroundStyle(.secondary)
             }
-        case .unassigned, .keyboard:
+        case .unassigned, .keyboard, .stickyModifier:
             EmptyView()
         }
     }
