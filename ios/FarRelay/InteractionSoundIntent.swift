@@ -5,7 +5,7 @@ import Foundation
 enum InteractionSoundIntent: Equatable, Hashable, Sendable {
     case remoteConnected, disconnected, keyboardRemote, keyboardLocal, terminalOpen
     case pushClipboard, receiveClipboard, nvdaStarted, nvdaStopped
-    case action, success, warning, error, copied
+    case action, success, warning, error, copied, layerExit
 
     var filename: String {
         switch self {
@@ -16,6 +16,7 @@ enum InteractionSoundIntent: Equatable, Hashable, Sendable {
         case .nvdaStopped: "nvda-stopped.wav"; case .action: "action.wav"
         case .success: "success.wav"; case .warning: "warning.wav"
         case .error: "error.wav"; case .copied: "copied.wav"
+        case .layerExit: "exit.wav"
         }
     }
 }
