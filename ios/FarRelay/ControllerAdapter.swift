@@ -22,6 +22,7 @@ final class DualSenseControllerAdapter {
     private var touchpad: GCControllerTouchpad?
     private var dualSenseTouchpadPrimary: GCControllerDirectionPad?
     private var touchpadContactActive = false
+    private var touchpadContactSuppressed = false
     private var touchpadFallbackEndTask: Task<Void, Never>?
     private var didObserveDualSensePrimaryMovement = false
     private let controllerHaptics = ControllerHapticFeedback()
@@ -291,17 +292,23 @@ final class DualSenseControllerAdapter {
         case .down:
             touchpadFallbackEndTask?.cancel()
             touchpadFallbackEndTask = nil
-            if touchpadContactActive {
-                handleTouchpadMove(x: x, source: source)
-            } else {
+            if !touchpadContactActive {
                 touchpadContactActive = true
+                touchpadContactSuppressed = isActionLayerActiveForTouchpad
                 touchpadRotor.begin(x: x)
+                return
             }
+            if isActionLayerActiveForTouchpad {
+                touchpadContactSuppressed = true
+            }
+            guard !touchpadContactSuppressed else { return }
+            handleTouchpadMove(x: x, source: source)
 
         case .moving:
             if !touchpadContactActive {
                 // Recover if Apple delivered movement before the down callback.
                 touchpadContactActive = true
+                touchpadContactSuppressed = isActionLayerActiveForTouchpad
                 touchpadRotor.begin(x: x)
                 diagnostics.observe(
                     source: .controller,
@@ -309,6 +316,12 @@ final class DualSenseControllerAdapter {
                 )
                 return
             }
+            if isActionLayerActiveForTouchpad {
+                // Once a layer owns any part of this finger contact, keep the
+                // remainder inert even if the layer is released before lift.
+                touchpadContactSuppressed = true
+            }
+            guard !touchpadContactSuppressed else { return }
             handleTouchpadMove(x: x, source: source)
 
         case .up:
@@ -325,17 +338,23 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    private var isActionLayerActiveForTouchpad: Bool {
+        if layerEngine.physicallyHeldLayerID != nil { return true }
+        return layerEngine.state != .base
+    }
+
     private func resetTouchpadGesture() {
         touchpadFallbackEndTask?.cancel()
         touchpadFallbackEndTask = nil
         touchpadContactActive = false
+        touchpadContactSuppressed = false
         touchpadRotor.end()
     }
 
     private func handleTouchpadMove(x: Float, source: String) {
         guard quickNavigation.isActive,
-              layerEngine.physicallyHeldLayerID == nil,
-              layerEngine.state == .base,
+              !isActionLayerActiveForTouchpad,
+              !touchpadContactSuppressed,
               let direction = touchpadRotor.move(x: x) else { return }
         let rotorOrder = mappings.activeProfile.quickNavigationOrder
         let change = direction > 0
