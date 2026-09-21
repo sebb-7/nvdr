@@ -763,7 +763,9 @@ final class ControllerAdapterTests: XCTestCase {
         await settle()
         XCTAssertTrue(sink.transitions.isEmpty)
 
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertEqual(adapter.prepareQuickCommandForConfirmation(), "Control plus V")
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertEqual(
@@ -785,7 +787,8 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
 
         adapter.updateQuickCommandBuffer("win+r,powershell,enter")
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         let expectedPrefix: [ControllerTransition] = [
@@ -808,7 +811,8 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
 
         adapter.updateQuickCommandBuffer("ctrl+shift+delete+escape")
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertEqual(
@@ -834,7 +838,7 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
 
         adapter.updateQuickCommandBuffer("cmd+v")
-        XCTAssertFalse(adapter.sendQuickCommand())
+        XCTAssertNil(adapter.prepareQuickCommandForConfirmation())
         await settle()
 
         XCTAssertTrue(sink.transitions.isEmpty)
@@ -851,7 +855,7 @@ final class ControllerAdapterTests: XCTestCase {
 
         let secret = "SECRET_SENTINEL_42"
         adapter.updateQuickCommandBuffer("ctrl+" + secret)
-        XCTAssertFalse(adapter.sendQuickCommand())
+        XCTAssertNil(adapter.prepareQuickCommandForConfirmation())
         await settle()
 
         XCTAssertTrue(sink.transitions.isEmpty)
@@ -870,12 +874,51 @@ final class ControllerAdapterTests: XCTestCase {
 
         adapter.updateQuickCommandBuffer("ctrl+v")
         adapter.exitQuickCommandMode()
-        XCTAssertFalse(adapter.sendQuickCommand())
+        XCTAssertNil(adapter.prepareQuickCommandForConfirmation())
         await settle()
 
         XCTAssertTrue(sink.transitions.isEmpty)
         XCTAssertEqual(adapter.quickCommandBuffer, "")
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testQuickCommandConfirmationPreviewSendsNothingUntilAlertSend() async {
+        let (mappings, adapter, sink, _, diagnostics) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("win+r,powershell,enter")
+        XCTAssertEqual(
+            adapter.prepareQuickCommandForConfirmation(),
+            "Windows plus R. Then Type powershell. Then Enter"
+        )
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertEqual(adapter.quickCommandStatus, "Ready to confirm.")
+        XCTAssertTrue(
+            diagnostics.entries.contains {
+                $0.result == "Quick Command: confirmation prepared; payload redacted"
+            }
+        )
+    }
+
+    func testQuickCommandAlertCancelKeepsModeAndBufferWithoutSending() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        XCTAssertEqual(adapter.prepareQuickCommandForConfirmation(), "Control plus V")
+        adapter.cancelQuickCommandConfirmation()
+
+        XCTAssertFalse(adapter.confirmQuickCommand())
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertEqual(adapter.quickCommandBuffer, "ctrl+v")
     }
 
     func testQuickCommandTransportFailureReleasesAlreadyPressedKeys() async {
@@ -887,7 +930,8 @@ final class ControllerAdapterTests: XCTestCase {
 
         sink.lastInputForwardingResult = .rejected("test rejection")
         adapter.updateQuickCommandBuffer("ctrl+v")
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         // Control-down is rejected after it is emitted by the existing NVDA
@@ -927,10 +971,12 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
         adapter.updateQuickCommandBuffer("ctrl+v")
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertEqual(adapter.prepareQuickCommandForConfirmation(), "Control plus V")
 
-        // A later selection change must not redirect this already-confirmed command.
+        // Opening confirmation captures the validated route. A later target
+        // selection change must not redirect the exact command the alert showed.
         XCTAssertTrue(router.setActiveTarget(id: secondID))
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertFalse(firstSink.transitions.isEmpty)
@@ -941,7 +987,8 @@ final class ControllerAdapterTests: XCTestCase {
         let (adapter, macController, _) = makeMacQuickCommandAdapter()
         adapter.updateQuickCommandBuffer("cmd+v")
 
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertEqual(
@@ -960,7 +1007,8 @@ final class ControllerAdapterTests: XCTestCase {
         let payload = "Hi!"
         adapter.updateQuickCommandBuffer(payload)
 
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertEqual(
@@ -983,7 +1031,7 @@ final class ControllerAdapterTests: XCTestCase {
             let (adapter, macController, _) = makeMacQuickCommandAdapter()
             adapter.updateQuickCommandBuffer(command)
 
-            XCTAssertFalse(adapter.sendQuickCommand(), command)
+            XCTAssertNil(adapter.prepareQuickCommandForConfirmation(), command)
             XCTAssertTrue(macController.transitions.isEmpty, command)
             XCTAssertTrue(adapter.isQuickCommandModeActive, command)
         }
@@ -993,7 +1041,8 @@ final class ControllerAdapterTests: XCTestCase {
         let (adapter, macController, _) = makeMacQuickCommandAdapter()
         adapter.updateQuickCommandBuffer("alt+left")
 
-        XCTAssertTrue(adapter.sendQuickCommand())
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
         XCTAssertEqual(
@@ -1009,7 +1058,7 @@ final class ControllerAdapterTests: XCTestCase {
         let (adapter, macController, _) = makeMacQuickCommandAdapter()
         adapter.updateQuickCommandBuffer("cmd+f13")
 
-        XCTAssertFalse(adapter.sendQuickCommand())
+        XCTAssertNil(adapter.prepareQuickCommandForConfirmation())
         XCTAssertTrue(macController.transitions.isEmpty)
         XCTAssertTrue(adapter.isQuickCommandModeActive)
     }
