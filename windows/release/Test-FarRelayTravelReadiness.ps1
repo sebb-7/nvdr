@@ -13,8 +13,22 @@ function Pass([string]$Message) { Write-Output "PASS: $Message" }
 function Fail([string]$Message) { $script:failures.Add($Message); Write-Output "FAIL: $Message" }
 function Warn([string]$Message) { $script:warnings.Add($Message); Write-Output "WARN: $Message" }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$expectedVersion = (Get-Content (Join-Path $repoRoot 'VERSION') -Raw).Trim()
+$repoVersionPath = Join-Path (Join-Path $PSScriptRoot '..\..') 'VERSION'
+$installedConfigPath = Join-Path $env:ProgramData 'FarRelay\install.json'
+if (Test-Path -LiteralPath $repoVersionPath -PathType Leaf) {
+    $expectedVersion = (Get-Content $repoVersionPath -Raw).Trim()
+} elseif (Test-Path -LiteralPath $installedConfigPath -PathType Leaf) {
+    try {
+        $expectedVersion = (Get-Content $installedConfigPath -Raw | ConvertFrom-Json).installed_version
+    } catch {
+        throw "Could not read installed FarRelay version from $installedConfigPath. $($_.Exception.Message)"
+    }
+} else {
+    throw "Could not determine the expected FarRelay version from the repository or installed configuration."
+}
+if ([string]::IsNullOrWhiteSpace($expectedVersion)) {
+    throw "Expected FarRelay version is empty."
+}
 
 function Test-CommandInvariant {
     param(
