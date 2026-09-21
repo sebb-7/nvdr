@@ -13,9 +13,22 @@ on:
         description: HTTPS base URL of the authenticated FarRelay tester gateway, without trailing slash
         required: true
         type: string
+      expected_version:
+        description: Optional version guard. Release fails unless VERSION matches exactly.
+        required: false
+        type: string
+      publish:
+        description: Upload to private R2 and publish the channel manifest after the build succeeds
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
+
+concurrency:
+  group: windows-distribution-release-${{ inputs.channel }}
+  cancel-in-progress: false
 
 jobs:
   package:
@@ -24,6 +37,7 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       GATEWAY_URL: ${{ inputs.gateway_url }}
       DIST: windows/dist
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -44,6 +58,9 @@ jobs:
             if ($manifestVersion -ne $version) {
               throw "$manifest version $manifestVersion does not match VERSION $version"
             }
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:EXPECTED_VERSION) -and $version -ne $env:EXPECTED_VERSION) {
+            throw "VERSION $version does not match requested release $env:EXPECTED_VERSION"
           }
           "VERSION=$version" >> $env:GITHUB_ENV
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -155,3 +172,35 @@ jobs:
           name: FarRelay-Windows-${{ steps.version.outputs.version }}
           path: windows/dist/*
           if-no-files-found: error
+
+      - name: Install private-release tooling
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        run: |
+          Push-Location distribution-gateway
+          try {
+            npm ci
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Publish private FarRelay release
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        env:
+          FARRELAY_ADMIN_TOKEN: ${{ secrets.FARRELAY_ADMIN_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          foreach ($name in @('FARRELAY_ADMIN_TOKEN','CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID')) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) {
+              throw "Required GitHub Actions secret $name is not configured."
+            }
+          }
+          & .\windows\release\Publish-FarRelayPrivateRelease.ps1 `
+            -Channel $env:CHANNEL `
+            -DistributionDirectory $env:DIST `
+            -GatewayUrl $env:GATEWAY_URL `
+            -GatewayProjectDirectory .\distribution-gateway
