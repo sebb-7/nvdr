@@ -1,6 +1,7 @@
 interface AdminEnv {
   DB: D1Database;
   ADMIN_TOKEN: string;
+  GITHUB_RELEASE_TOKEN?: string;
 }
 
 type Channel = "beta" | "stable";
@@ -247,6 +248,7 @@ function noticeFromUrl(url: URL): string | null {
     case "invite-revoked": return "Invitation revoked.";
     case "device-revoked": return "Device revoked.";
     case "settings-saved": return "Beta program settings saved.";
+    case "beta-release-started": return "Beta release workflow started. The currently published beta remains active unless the workflow completes successfully.";
     default: return null;
   }
 }
@@ -269,7 +271,7 @@ async function renderDashboard(
       "SELECT channel, version, published_at FROM releases ORDER BY channel"
     ).all<DashboardRelease>(),
     env.DB.prepare(
-      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url','feedback_notification_email','feedback_from_email','public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
+      "SELECT key, value FROM program_settings WHERE key IN ('testflight_url','feedback_url','feedback_notification_email','feedback_from_email','github_release_ref','public_enrollment_enabled','public_enrollment_access_days','public_enrollment_invite_hours','public_enrollment_max_signups')"
     ).all<{ key: string; value: string }>(),
     env.DB.prepare(
       "SELECT id, tester_name, category, message, contact, source, created_at FROM beta_feedback ORDER BY created_at DESC LIMIT 100"
@@ -281,6 +283,7 @@ async function renderDashboard(
   const feedbackUrl = programSettings.get("feedback_url") || "";
   const feedbackNotificationEmail = programSettings.get("feedback_notification_email") || "";
   const feedbackFromEmail = programSettings.get("feedback_from_email") || "farrelay@originmeshsystems.com";
+  const githubReleaseRef = programSettings.get("github_release_ref") || "feat/remote-intent-v2-recovery";
   const publicEnrollmentEnabled = programSettings.get("public_enrollment_enabled") === "true";
   const publicEnrollmentAccessDays = Number(programSettings.get("public_enrollment_access_days") || "30");
   const publicEnrollmentInviteHours = Number(programSettings.get("public_enrollment_invite_hours") || "168");
@@ -400,6 +403,19 @@ ${createdHtml}
 <h2 id="releases-heading">Published releases</h2>
 ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">Version</th><th scope="col">Published</th></tr></thead><tbody>${releaseRows}</tbody></table>` : "<p>No releases published.</p>"}
 </section>
+<section id="release-beta" aria-labelledby="release-beta-heading">
+<h2 id="release-beta-heading">Release beta</h2>
+<p>This starts the GitHub Windows release workflow. It runs tests, builds the installer and updater package, uploads them to private R2, and only then publishes the new beta manifest.</p>
+<p>Source branch: <code>${escapeHtml(githubReleaseRef)}</code></p>
+<form method="post" action="/admin/ui/releases/beta">
+<input type="hidden" name="csrf" value="${escapeHtml(session.csrf)}">
+<label for="release-version">Expected version</label>
+<input id="release-version" name="version" type="text" required placeholder="0.2.0-beta.8">
+<p class="sr-note">The workflow stops without publishing if the repository VERSION does not exactly match this value.</p>
+<p><button type="submit"${env.GITHUB_RELEASE_TOKEN ? "" : " disabled"}>Release beta</button></p>
+</form>
+${env.GITHUB_RELEASE_TOKEN ? "" : '<p class="notice">Release automation is not configured yet. Add the Worker secret GITHUB_RELEASE_TOKEN first.</p>'}
+</section>
 <section id="program-settings" aria-labelledby="program-settings-heading">
 <h2 id="program-settings-heading">Beta program settings</h2>
 <form method="post" action="/admin/ui/settings">
@@ -416,6 +432,10 @@ ${releaseRows ? `<table><thead><tr><th scope="col">Channel</th><th scope="col">V
 <label for="feedback-from-email">Notification sender address</label>
 <input id="feedback-from-email" name="feedback_from_email" type="text" inputmode="email" value="${escapeHtml(feedbackFromEmail)}" placeholder="feedback@yourdomain.com">
 <p class="sr-note">The destination must be verified in Cloudflare Email Service. The sender must belong to a domain onboarded to Cloudflare Email Service.</p>
+<h3>Release automation</h3>
+<label for="github-release-ref">Release source branch</label>
+<input id="github-release-ref" name="github_release_ref" type="text" value="${escapeHtml(githubReleaseRef)}" required>
+<p class="sr-note">The Release beta button dispatches the Windows release workflow from this branch.</p>
 <h3>Public tester enrollment</h3>
 <p>This creates one shareable forum link. Each person enters their own name and Windows PC/laptop type, then receives a personal one-use invitation and personalized onboarding page.</p>
 <label for="public-enrollment-enabled">Public enrollment</label>
@@ -518,6 +538,7 @@ async function saveProgramSettings(
   const feedback = typeof form.get("feedback_url") === "string" ? String(form.get("feedback_url")).trim() : "";
   const feedbackNotificationEmail = typeof form.get("feedback_notification_email") === "string" ? String(form.get("feedback_notification_email")).trim() : "";
   const feedbackFromEmail = typeof form.get("feedback_from_email") === "string" ? String(form.get("feedback_from_email")).trim() : "";
+  const githubReleaseRef = typeof form.get("github_release_ref") === "string" ? String(form.get("github_release_ref")).trim() : "";
   const publicEnrollmentEnabled = form.get("public_enrollment_enabled") === "true";
   const publicEnrollmentAccessDays = Number(form.get("public_enrollment_access_days"));
   const publicEnrollmentInviteHours = Number(form.get("public_enrollment_invite_hours"));
@@ -535,6 +556,9 @@ async function saveProgramSettings(
   }
   if (feedbackFromEmail && !emailPattern.test(feedbackFromEmail)) {
     return renderDashboard(request, env, session, undefined, "Feedback sender email is not valid.");
+  }
+  if (!githubReleaseRef || githubReleaseRef.length > 200 || !/^[A-Za-z0-9._\/-]+$/.test(githubReleaseRef) || githubReleaseRef.includes("..")) {
+    return renderDashboard(request, env, session, undefined, "Release source branch is not valid.");
   }
   if (!Number.isInteger(publicEnrollmentAccessDays) || publicEnrollmentAccessDays < 1 || publicEnrollmentAccessDays > 365 ||
       !Number.isInteger(publicEnrollmentInviteHours) || publicEnrollmentInviteHours < 1 || publicEnrollmentInviteHours > 720 ||
@@ -556,6 +580,9 @@ async function saveProgramSettings(
       "INSERT INTO program_settings(key, value, updated_at) VALUES ('feedback_from_email', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(feedbackFromEmail, now),
     env.DB.prepare(
+      "INSERT INTO program_settings(key, value, updated_at) VALUES ('github_release_ref', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+    ).bind(githubReleaseRef, now),
+    env.DB.prepare(
       "INSERT INTO program_settings(key, value, updated_at) VALUES ('public_enrollment_enabled', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
     ).bind(publicEnrollmentEnabled ? "true" : "false", now),
     env.DB.prepare(
@@ -570,6 +597,70 @@ async function saveProgramSettings(
   ]);
   await audit(env, "program_settings_updated", null, null);
   return redirect("/admin?notice=settings-saved");
+}
+
+async function triggerBetaRelease(
+  request: Request,
+  env: AdminEnv,
+  session: AdminSession
+): Promise<Response> {
+  const form = await request.formData().catch(() => null);
+  if (!form || !(await validCsrf(form, session))) {
+    return htmlResponse(shell("Forbidden", "<main><h1>Forbidden</h1><p>The form session is invalid or expired.</p></main>"), 403);
+  }
+  if (!env.GITHUB_RELEASE_TOKEN) {
+    return renderDashboard(request, env, session, undefined, "Release automation is not configured. Add the GITHUB_RELEASE_TOKEN Worker secret.");
+  }
+
+  const versionValue = form.get("version");
+  const version = typeof versionValue === "string" ? versionValue.trim() : "";
+  if (!/^\d+(?:\.\d+)+(?:-[A-Za-z0-9.-]+)?$/.test(version)) {
+    return renderDashboard(request, env, session, undefined, "Enter a valid expected release version.");
+  }
+
+  const refRow = await env.DB.prepare(
+    "SELECT value FROM program_settings WHERE key = 'github_release_ref'"
+  ).first<{ value: string }>();
+  const ref = refRow?.value || "feat/remote-intent-v2-recovery";
+  const gatewayUrl = new URL(request.url).origin;
+
+  const response = await fetch(
+    "https://api.github.com/repos/sebb-7/nvdr/actions/workflows/windows-release.yml/dispatches",
+    {
+      method: "POST",
+      headers: {
+        "accept": "application/vnd.github+json",
+        "authorization": "Bearer " + env.GITHUB_RELEASE_TOKEN,
+        "content-type": "application/json",
+        "user-agent": "FarRelay-Tester-Gateway",
+        "x-github-api-version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        ref,
+        inputs: {
+          channel: "beta",
+          gateway_url: gatewayUrl,
+          expected_version: version,
+          publish: "true",
+        },
+      }),
+    }
+  );
+
+  if (response.status !== 204) {
+    const detail = (await response.text().catch(() => "")).slice(0, 500);
+    await audit(env, "beta_release_dispatch_failed", version, String(response.status));
+    return renderDashboard(
+      request,
+      env,
+      session,
+      undefined,
+      "GitHub did not start the beta release workflow. HTTP " + response.status + (detail ? ": " + detail : ".")
+    );
+  }
+
+  await audit(env, "beta_release_dispatched", version, ref);
+  return redirect("/admin?notice=beta-release-started");
 }
 
 async function revoke(
@@ -608,6 +699,7 @@ export async function handleAdminUi(request: Request, env: AdminEnv): Promise<Re
     path === "/admin/logout" ||
     path === "/admin/ui/invites" ||
     path === "/admin/ui/settings" ||
+    path === "/admin/ui/releases/beta" ||
     /^\/admin\/ui\/invites\/[^/]+\/revoke$/.test(path) ||
     /^\/admin\/ui\/devices\/[^/]+\/revoke$/.test(path);
 
@@ -635,6 +727,10 @@ export async function handleAdminUi(request: Request, env: AdminEnv): Promise<Re
 
   if (request.method === "POST" && path === "/admin/ui/settings") {
     return saveProgramSettings(request, env, session);
+  }
+
+  if (request.method === "POST" && path === "/admin/ui/releases/beta") {
+    return triggerBetaRelease(request, env, session);
   }
 
   const inviteMatch = path.match(/^\/admin\/ui\/invites\/([^/]+)\/revoke$/);
