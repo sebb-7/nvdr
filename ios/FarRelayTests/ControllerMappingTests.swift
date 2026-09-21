@@ -336,6 +336,46 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(reloaded.profiles.first(where: { $0.id == newID })?.name, "Gaming")
     }
 
+    func testQuickBarAndRotorOrderMoveDeterministicallyAndPersist() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        let firstQuickBarID = settings.draftProfile.quickBar[0].id
+        settings.moveQuickBarEntry(id: firstQuickBarID, direction: 1)
+        XCTAssertEqual(settings.draftProfile.quickBar[1].id, firstQuickBarID)
+
+        settings.moveQuickNavigationCategory(.editing, direction: -1)
+        XCTAssertEqual(
+            Array(settings.draftProfile.quickNavigationOrder.prefix(3)),
+            [.quickBar, .editing, .profiles]
+        )
+
+        settings.saveDraft()
+        let reloaded = ControllerMappingSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.activeProfile.quickBar[1].id, firstQuickBarID)
+        XCTAssertEqual(
+            Array(reloaded.activeProfile.quickNavigationOrder.prefix(3)),
+            [.quickBar, .editing, .profiles]
+        )
+    }
+
+    func testV3ProfileMigratesWithRecommendedRotorOrder() throws {
+        let defaults = makeDefaults()
+        let store = ControllerProfileStore(defaults: defaults, key: "profile")
+        let id = UUID()
+        let fixture = """
+        {"schemaVersion":3,"id":"\(id.uuidString)","name":"V3","controller":"dualSense","bindings":[],"layers":[],"quickBar":[]}
+        """
+        defaults.set(Data(fixture.utf8), forKey: "profile")
+
+        guard case .profile(let migrated) = store.load() else {
+            return XCTFail("Expected v3 profile migration")
+        }
+        XCTAssertEqual(migrated.schemaVersion, ControllerProfile.currentSchemaVersion)
+        XCTAssertEqual(migrated.quickNavigationOrder, QuickNavigationCategory.defaultOrder)
+        XCTAssertTrue(migrated.quickBar.isEmpty)
+    }
+
     func testProfileCycleUsesSavedOrderAndWraps() {
         let defaults = makeDefaults()
         let settings = ControllerMappingSettings(defaults: defaults)
