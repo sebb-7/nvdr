@@ -280,7 +280,7 @@ async function renderDashboard(
   const testflightUrl = programSettings.get("testflight_url") || "";
   const feedbackUrl = programSettings.get("feedback_url") || "";
   const feedbackNotificationEmail = programSettings.get("feedback_notification_email") || "";
-  const feedbackFromEmail = programSettings.get("feedback_from_email") || "";
+  const feedbackFromEmail = programSettings.get("feedback_from_email") || "farrelay@originmeshsystems.com";
   const publicEnrollmentEnabled = programSettings.get("public_enrollment_enabled") === "true";
   const publicEnrollmentAccessDays = Number(programSettings.get("public_enrollment_access_days") || "30");
   const publicEnrollmentInviteHours = Number(programSettings.get("public_enrollment_invite_hours") || "168");
