@@ -90,6 +90,18 @@ async function secureEqual(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
+async function hmacHex(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(signature), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function bearer(request: Request): string | null {
   const value = request.headers.get("authorization");
   if (!value || !value.startsWith("Bearer ")) return null;
@@ -160,6 +172,122 @@ function htmlEscape(value: unknown): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+
+async function feedbackUrlForInvite(request: Request, env: Env, inviteId: string): Promise<string> {
+  const signature = await hmacHex(env.ADMIN_TOKEN, "feedback:invite:" + inviteId);
+  return new URL(request.url).origin + "/feedback/invite/" + encodeURIComponent(inviteId) + "/" + signature;
+}
+
+async function feedbackUrlForDevice(request: Request, env: Env, deviceId: string): Promise<string> {
+  const signature = await hmacHex(env.ADMIN_TOKEN, "feedback:device:" + deviceId);
+  return new URL(request.url).origin + "/feedback/device/" + encodeURIComponent(deviceId) + "/" + signature;
+}
+
+function feedbackPageHtml(name: string, action: string, submitted = false): string {
+  if (submitted) {
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay feedback received</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>Thanks, ' +
+      htmlEscape(name) +
+      '.</h1><p>Your FarRelay beta feedback was received.</p><p>You can close this page and continue testing.</p></main></body></html>';
+  }
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FarRelay beta feedback</title></head><body><main style="font-family:system-ui;max-width:48rem;margin:0 auto;padding:1.25rem;line-height:1.5"><h1>FarRelay beta feedback</h1><p>Hello ' +
+    htmlEscape(name) +
+    '. Please report anything that broke, felt confusing, was inaccessible, or could make onboarding clearer.</p><form method="post" action="' +
+    htmlEscape(action) +
+    '"><label for="category">Feedback type</label><br><select id="category" name="category" required><option value="onboarding">Onboarding</option><option value="confusing">Confusing or unclear</option><option value="bug">Bug</option><option value="accessibility">Accessibility</option><option value="suggestion">Suggestion</option><option value="other">Other</option></select><br><br><label for="message">What happened?</label><br><textarea id="message" name="message" rows="10" maxlength="5000" required style="width:100%;box-sizing:border-box"></textarea><br><br><label for="contact">Email or contact information (optional)</label><br><input id="contact" name="contact" type="text" maxlength="200" style="width:100%;box-sizing:border-box"><p>Please include what you expected, what happened instead, and anything you found confusing.</p><button type="submit">Send beta feedback</button></form></main></body></html>';
+}
+
+async function feedbackSubject(
+  env: Env,
+  kind: "invite" | "device",
+  id: string,
+  signature: string
+): Promise<{ testerName: string; inviteId: string | null; deviceId: string | null } | null> {
+  const expected = await hmacHex(env.ADMIN_TOKEN, "feedback:" + kind + ":" + id);
+  if (!(await secureEqual(signature, expected))) return null;
+
+  if (kind === "invite") {
+    const row = await env.DB.prepare(
+      "SELECT id, label, revoked_at FROM invites WHERE id = ?"
+    ).bind(id).first<{ id: string; label: string; revoked_at: string | null }>();
+    if (!row || row.revoked_at) return null;
+    return { testerName: row.label, inviteId: row.id, deviceId: null };
+  }
+
+  const row = await env.DB.prepare(
+    "SELECT d.id, d.invite_id, i.label AS tester_name, d.revoked_at FROM devices d JOIN invites i ON i.id = d.invite_id WHERE d.id = ?"
+  ).bind(id).first<{ id: string; invite_id: string; tester_name: string; revoked_at: string | null }>();
+  if (!row || row.revoked_at) return null;
+  return { testerName: row.tester_name, inviteId: row.invite_id, deviceId: row.id };
+}
+
+async function handleFeedback(
+  request: Request,
+  env: Env,
+  kind: "invite" | "device",
+  id: string,
+  signature: string
+): Promise<Response> {
+  const subject = await feedbackSubject(env, kind, id, signature);
+  if (!subject) return error("feedback link is invalid or no longer active", 403);
+
+  if (request.method === "GET") {
+    return new Response(feedbackPageHtml(subject.testerName, new URL(request.url).pathname), {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      },
+    });
+  }
+
+  if (request.method !== "POST") return error("method not allowed", 405);
+  const form = await request.formData().catch(() => null);
+  const category = typeof form?.get("category") === "string" ? String(form?.get("category")).trim() : "";
+  const message = typeof form?.get("message") === "string" ? String(form?.get("message")).trim() : "";
+  const contact = typeof form?.get("contact") === "string" ? String(form?.get("contact")).trim() : "";
+  const allowed = new Set(["onboarding", "confusing", "bug", "accessibility", "suggestion", "other"]);
+  if (!allowed.has(category) || !message || message.length > 5000 || contact.length > 200) {
+    return error("check the feedback type, message, and optional contact information", 400);
+  }
+
+  const recent = await env.DB.prepare(
+    "SELECT created_at FROM beta_feedback WHERE ((device_id = ? AND ? IS NOT NULL) OR (invite_id = ? AND ? IS NOT NULL)) ORDER BY created_at DESC LIMIT 1"
+  ).bind(subject.deviceId, subject.deviceId, subject.inviteId, subject.inviteId).first<{ created_at: string }>();
+  if (recent && Date.now() - Date.parse(recent.created_at) < 15000) {
+    return error("please wait a few seconds before sending more feedback", 429);
+  }
+
+  const feedbackId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO beta_feedback(id, invite_id, device_id, tester_name, category, message, contact, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    feedbackId,
+    subject.inviteId,
+    subject.deviceId,
+    subject.testerName,
+    category,
+    message,
+    contact || null,
+    kind,
+    now
+  ).run();
+  await audit(env, "beta_feedback_submitted", feedbackId, category);
+  return new Response(feedbackPageHtml(subject.testerName, new URL(request.url).pathname, true), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    },
+  });
 }
 
 function streamObject(object: R2ObjectBody, filename: string): Response {
@@ -240,9 +368,10 @@ async function activate(request: Request, env: Env): Promise<Response> {
     return error("tester invitation could not be activated", 409);
   }
   await audit(env, "device_activated", deviceId, invite.id);
-  const [testflightUrl, feedbackUrl] = await Promise.all([
+  const [testflightUrl, externalFeedbackUrl, nativeFeedbackUrl] = await Promise.all([
     programSetting(env, "testflight_url"),
     programSetting(env, "feedback_url"),
+    feedbackUrlForDevice(request, env, deviceId),
   ]);
   return json({
     device_id: deviceId,
@@ -252,7 +381,7 @@ async function activate(request: Request, env: Env): Promise<Response> {
     activated_at: now,
     access_expires_at: accessExpiresAt,
     testflight_url: testflightUrl,
-    feedback_url: feedbackUrl,
+    feedback_url: externalFeedbackUrl || nativeFeedbackUrl,
   }, 201);
 }
 
@@ -260,9 +389,10 @@ async function activate(request: Request, env: Env): Promise<Response> {
 async function deviceProfile(request: Request, env: Env): Promise<Response> {
   const device = await deviceFromRequest(request, env);
   if (!device) return error("device is not authorized or beta access has expired", 401);
-  const [testflightUrl, feedbackUrl, release] = await Promise.all([
+  const [testflightUrl, externalFeedbackUrl, nativeFeedbackUrl, release] = await Promise.all([
     programSetting(env, "testflight_url"),
     programSetting(env, "feedback_url"),
+    feedbackUrlForDevice(request, env, device.id),
     currentRelease(env, device.channel),
   ]);
   return json({
@@ -272,7 +402,7 @@ async function deviceProfile(request: Request, env: Env): Promise<Response> {
     activated_at: device.created_at,
     access_expires_at: device.access_expires_at,
     testflight_url: testflightUrl,
-    feedback_url: feedbackUrl,
+    feedback_url: externalFeedbackUrl || nativeFeedbackUrl,
     current_release: release?.version || null,
   });
 }
@@ -285,10 +415,12 @@ async function inviteLanding(request: Request, env: Env, code: string): Promise<
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
     });
   }
-  const [testflightUrl, feedbackUrl] = await Promise.all([
+  const [testflightUrl, externalFeedbackUrl, nativeFeedbackUrl] = await Promise.all([
     programSetting(env, "testflight_url"),
     programSetting(env, "feedback_url"),
+    feedbackUrlForInvite(request, env, invite.id),
   ]);
+  const feedbackUrl = externalFeedbackUrl || nativeFeedbackUrl;
   const origin = new URL(request.url).origin;
   const installer = origin + "/invite/" + encodeURIComponent(code) + "/installer";
   const testflight = testflightUrl
@@ -431,6 +563,18 @@ export default {
     if (adminUi) return adminUi;
 
     if (request.method === "GET" && path === "/health") return json({ ok: true });
+
+
+    const feedbackMatch = path.match(/^\/feedback\/(invite|device)\/([^/]+)\/([a-f0-9]{64})$/);
+    if (feedbackMatch && (request.method === "GET" || request.method === "POST")) {
+      return handleFeedback(
+        request,
+        env,
+        feedbackMatch[1] as "invite" | "device",
+        decodeURIComponent(feedbackMatch[2]),
+        feedbackMatch[3]
+      );
+    }
 
     const installerMatch = path.match(/^\/invite\/([^/]+)\/installer$/);
     if (request.method === "GET" && installerMatch) return downloadInstaller(env, decodeURIComponent(installerMatch[1]));
