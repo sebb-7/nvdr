@@ -24,7 +24,11 @@ struct RecoveryFeatureView: View {
                     .disabled(isWorking)
                     .accessibilityHint("Checks host health without restarting accessibility.")
                 Button("Restart Accessibility", systemImage: "arrow.counterclockwise") { restart() }
-                    .disabled(isWorking || !session.supportsAccessibilityRecovery)
+                    .disabled(!RecoveryActionPolicy.canRestart(
+                        platform: profile.platform,
+                        status: status,
+                        isWorking: isWorking
+                    ))
                     .accessibilityHint("Requests a restart. Refresh status afterward to confirm whether accessibility is running.")
             }
         }
@@ -82,5 +86,16 @@ struct RecoveryFeatureView: View {
     private func announce(_ message: String) {
         if voiceOverEnabled { AccessibilityNotification.Announcement(message).post() }
         statusMessage = message
+    }
+}
+
+
+enum RecoveryActionPolicy {
+    static func canRestart(
+        platform: HostPlatform,
+        status: NvdaRecoveryStatus?,
+        isWorking: Bool
+    ) -> Bool {
+        platform == .windows && status?.recoveryTaskReady == true && !isWorking
     }
 }
