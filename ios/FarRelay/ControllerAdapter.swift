@@ -197,9 +197,10 @@ final class DualSenseControllerAdapter {
 
     private func handleTouchpadMove(x: Float) {
         guard quickNavigation.isActive, let direction = touchpadRotor.move(x: x) else { return }
+        let rotorOrder = mappings.activeProfile.quickNavigationOrder
         let change = direction > 0
-            ? quickNavigation.nextCategoryChange()
-            : quickNavigation.previousCategoryChange()
+            ? quickNavigation.nextCategoryChange(in: rotorOrder)
+            : quickNavigation.previousCategoryChange(in: rotorOrder)
         if quickNavigation.category == .profiles {
             quickNavigation.synchronizeProfileSelection(
                 profiles: mappings.profiles,
@@ -385,6 +386,8 @@ final class DualSenseControllerAdapter {
                     announce(quickNavigation.previousQuickBarAction(in: mappings.activeProfile.quickBar))
                 case .profiles:
                     announce(quickNavigation.previousProfile(in: mappings.profiles))
+                case .editing:
+                    announce(quickNavigation.previousEditingAction())
                 default:
                     if let key = quickNavigation.category.key {
                         start(
@@ -400,6 +403,8 @@ final class DualSenseControllerAdapter {
                     announce(quickNavigation.nextQuickBarAction(in: mappings.activeProfile.quickBar))
                 case .profiles:
                     announce(quickNavigation.nextProfile(in: mappings.profiles))
+                case .editing:
+                    announce(quickNavigation.nextEditingAction())
                 default:
                     if let key = quickNavigation.category.key {
                         start(action: .keyboard(.init(key: key)), input: input, eventID: eventID)
@@ -424,6 +429,12 @@ final class DualSenseControllerAdapter {
                         if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
                         announce("Profile: \(name)")
                     }
+                case .editing:
+                    start(
+                        action: .keyboard(quickNavigation.selectedEditingAction().keyboardAction),
+                        input: input,
+                        eventID: eventID
+                    )
                 default:
                     start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
                 }
@@ -746,12 +757,14 @@ final class DualSenseControllerAdapter {
     }
 
     private func present(_ stateChange: LayerFeedback) {
-        let kind: InteractionFeedbackKind = switch stateChange {
-        case .activated, .oneShot: .selectionAccepted
-        case .locked: .success
-        case .base: .warning
+        switch stateChange {
+        case .activated, .oneShot:
+            feedback.play(.selectionAccepted)
+        case .locked:
+            feedback.play(.success)
+        case .base:
+            feedback.play(.layerExit, haptic: .selectionAccepted)
         }
-        feedback.play(kind)
         announce(stateChange.announcement)
     }
 
