@@ -43,6 +43,7 @@ final class DualSenseControllerAdapter {
 
     private struct StickyModifierLease {
         let modifier: ControllerKeyboardModifier
+        let ownerInput: ControllerInput
         let virtualKeys: [UInt16]
         let route: RemoteIntentRoute
         /// Non-nil when this hold was armed from a physically held Action
@@ -59,7 +60,7 @@ final class DualSenseControllerAdapter {
     private struct PreparedQuickCommand {
         let command: QuickCommand
         let preview: String
-        let plan: [[RemoteKey]]
+        let plan: [[[RemoteKey]]]
         let route: RemoteIntentRoute
     }
 
@@ -518,7 +519,7 @@ final class DualSenseControllerAdapter {
             startRepeatLoopIfNeeded()
             return true
         case .stickyModifier(let sticky):
-            return toggleStickyModifier(sticky.modifier, input: input, eventID: eventID)
+            return toggleStickyModifier(sticky, input: input, eventID: eventID)
         case .layer(let layer):
             present(layerEngine.press(layerID: layer.layerID, at: ProcessInfo.processInfo.systemUptime))
             return true
@@ -705,15 +706,40 @@ final class DualSenseControllerAdapter {
 
     @discardableResult
     private func toggleStickyModifier(
-        _ modifier: ControllerKeyboardModifier,
+        _ action: ControllerStickyModifierAction,
         input: ControllerInput,
         eventID: Int
     ) -> Bool {
-        if let lease = stickyModifierLeases.removeValue(forKey: modifier) {
-            routeStickyModifier(lease, pressed: false, eventID: eventID, input: input)
-            announce("\(modifier.label) released")
+        guard action.isValid else {
+            announce("Hold Modifier needs one to three modifiers")
+            return false
+        }
+
+        let orderedModifiers = ControllerKeyboardModifier.allCases.filter {
+            action.modifiers.contains($0)
+        }
+
+        let ownedByThisInput = orderedModifiers.allSatisfy {
+            stickyModifierLeases[$0]?.ownerInput == input
+        }
+        if ownedByThisInput {
+            let leases = orderedModifiers.compactMap {
+                stickyModifierLeases.removeValue(forKey: $0)
+            }
+            routeStickyModifierLeases(
+                leases,
+                pressed: false,
+                eventID: eventID,
+                input: input
+            )
+            announce("\(heldModifierDescription(action.modifiers)) released")
             if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
             return true
+        }
+
+        guard orderedModifiers.allSatisfy({ stickyModifierLeases[$0] == nil }) else {
+            announce("One of those modifiers is already held by another action")
+            return false
         }
 
         guard let targetID = router.activeTargetID,
@@ -730,45 +756,119 @@ final class DualSenseControllerAdapter {
             return false
         }
 
-        let virtualKeys = stickyModifierVirtualKeys(for: modifier)
-        guard !virtualKeys.isEmpty else { return false }
+        let resolved = orderedModifiers.map {
+            ($0, stickyModifierVirtualKeys(for: $0))
+        }
+        let physicalKeys = resolved.flatMap(\.1)
+        guard !physicalKeys.isEmpty,
+              Set(physicalKeys).count == physicalKeys.count else {
+            announce("Those held modifiers overlap on this NVDA modifier configuration")
+            return false
+        }
+
+        if let tapKey = action.tapKey,
+           physicalKeys.contains(tapKey.virtualKey) {
+            announce("Tap key cannot also be one of the held modifier keys")
+            return false
+        }
+
         let ownerLayerID = layerEngine.physicallyHeldLayerID
-        let lease = StickyModifierLease(
-            modifier: modifier,
-            virtualKeys: virtualKeys,
-            route: route,
-            ownerLayerID: ownerLayerID
+        let leases = resolved.map { modifier, virtualKeys in
+            StickyModifierLease(
+                modifier: modifier,
+                ownerInput: input,
+                virtualKeys: virtualKeys,
+                route: route,
+                ownerLayerID: ownerLayerID
+            )
+        }
+        for lease in leases {
+            stickyModifierLeases[lease.modifier] = lease
+        }
+
+        routeStickyModifierActivation(
+            leases,
+            tapKey: action.tapKey,
+            eventID: eventID,
+            input: input
         )
-        stickyModifierLeases[modifier] = lease
-        routeStickyModifier(lease, pressed: true, eventID: eventID, input: input)
+
+        let held = heldModifierDescription(action.modifiers)
         if let ownerLayerID {
-            announce("\(modifier.label) held until \(ownerLayerID.capitalized) layer is released")
+            announce("\(held) held until \(ownerLayerID.capitalized) layer is released")
+        } else if let tapKey = action.tapKey {
+            announce("\(held) held. \(tapKey.label) tapped")
         } else {
-            announce("\(modifier.label) held")
+            announce("\(held) held")
         }
         if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
         return true
     }
 
-    private func routeStickyModifier(
-        _ lease: StickyModifierLease,
+    private func heldModifierDescription(
+        _ modifiers: Set<ControllerKeyboardModifier>
+    ) -> String {
+        ControllerKeyboardModifier.allCases
+            .filter { modifiers.contains($0) }
+            .map(\.label)
+            .joined(separator: " plus ")
+    }
+
+    private func routeStickyModifierActivation(
+        _ leases: [StickyModifierLease],
+        tapKey: WindowsKeyboardKey?,
+        eventID: Int,
+        input: ControllerInput
+    ) {
+        guard let route = leases.first?.route else { return }
+        diagnostics.observeController(
+            eventID: eventID,
+            input: input,
+            pressed: true,
+            stage: "Sticky modifier: \(leases.count) held modifier(s) activated"
+        )
+        Task { @MainActor [router] in
+            for lease in leases {
+                for virtualKey in lease.virtualKeys {
+                    _ = await router.route(
+                        .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: true),
+                        via: route
+                    )
+                }
+            }
+            if let tapKey {
+                let key = RemoteKey.windowsVirtualKey(tapKey.virtualKey)
+                _ = await router.route(.sendKeyTransition(key, pressed: true), via: route)
+                _ = await router.route(.sendKeyTransition(key, pressed: false), via: route)
+            }
+        }
+    }
+
+    private func routeStickyModifierLeases(
+        _ leases: [StickyModifierLease],
         pressed: Bool,
         eventID: Int,
         input: ControllerInput
     ) {
-        let virtualKeys = pressed ? lease.virtualKeys : Array(lease.virtualKeys.reversed())
+        guard !leases.isEmpty else { return }
         diagnostics.observeController(
             eventID: eventID,
             input: input,
             pressed: pressed,
-            stage: "Sticky modifier: \(lease.modifier.label) \(pressed ? "held" : "released")"
+            stage: "Sticky modifier: \(leases.count) held modifier(s) \(pressed ? "held" : "released")"
         )
-        Task { @MainActor [router, route = lease.route] in
-            for virtualKey in virtualKeys {
-                _ = await router.route(
-                    .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: pressed),
-                    via: route
-                )
+        let orderedLeases = pressed ? leases : Array(leases.reversed())
+        Task { @MainActor [router] in
+            for lease in orderedLeases {
+                let virtualKeys = pressed
+                    ? lease.virtualKeys
+                    : Array(lease.virtualKeys.reversed())
+                for virtualKey in virtualKeys {
+                    _ = await router.route(
+                        .sendKeyTransition(.windowsVirtualKey(virtualKey), pressed: pressed),
+                        via: lease.route
+                    )
+                }
             }
         }
     }
@@ -795,30 +895,27 @@ final class DualSenseControllerAdapter {
         let modifiers = ControllerKeyboardModifier.allCases.filter {
             stickyModifierLeases[$0]?.ownerLayerID == layerID
         }
-        let leases = modifiers.compactMap { modifier -> StickyModifierLease? in
-            stickyModifierLeases.removeValue(forKey: modifier)
+        let leases = modifiers.compactMap {
+            stickyModifierLeases.removeValue(forKey: $0)
         }
-        for lease in leases.reversed() {
-            routeStickyModifier(
-                lease,
-                pressed: false,
-                eventID: diagnosticEventID(),
-                input: .home
-            )
-        }
+        routeStickyModifierLeases(
+            leases,
+            pressed: false,
+            eventID: diagnosticEventID(),
+            input: .home
+        )
     }
 
     private func releaseStickyModifiers() {
-        let leases = ControllerKeyboardModifier.allCases.compactMap { stickyModifierLeases[$0] }
-        stickyModifierLeases.removeAll()
-        for lease in leases.reversed() {
-            routeStickyModifier(
-                lease,
-                pressed: false,
-                eventID: diagnosticEventID(),
-                input: .home
-            )
+        let leases = ControllerKeyboardModifier.allCases.compactMap {
+            stickyModifierLeases.removeValue(forKey: $0)
         }
+        routeStickyModifierLeases(
+            leases,
+            pressed: false,
+            eventID: diagnosticEventID(),
+            input: .home
+        )
     }
 
     func suspendInputForInactiveContext() {
@@ -843,6 +940,7 @@ final class DualSenseControllerAdapter {
 
     private func setTextMode(_ active: Bool) {
         resetTouchpadGesture()
+        if !active, !isTextModeActive { return }
         if active, isQuickCommandModeActive {
             setQuickCommandMode(false, restoreQuickNavigation: false, announceChange: false)
         }
@@ -860,6 +958,30 @@ final class DualSenseControllerAdapter {
     }
 
     func exitTextMode() { setTextMode(false) }
+
+    func submitTextModeAndExit() {
+        guard isTextModeActive else { return }
+        let previous = textOperationTail
+        let generation = textOperationGeneration
+        textOperationTail = Task { @MainActor [weak self, previous] in
+            _ = await previous?.value
+            guard let self,
+                  generation == self.textOperationGeneration,
+                  !Task.isCancelled,
+                  self.isTextModeActive else { return }
+
+            await self.routeTextTap(
+                .init(key: .enter),
+                diagnostic: "Text Mode: submit Enter transmitted"
+            )
+            guard generation == self.textOperationGeneration,
+                  !Task.isCancelled,
+                  self.isTextModeActive else { return }
+
+            self.feedback.play(.success)
+            self.setTextMode(false)
+        }
+    }
 
     private func setQuickCommandMode(
         _ active: Bool,
@@ -930,7 +1052,7 @@ final class DualSenseControllerAdapter {
             return nil
         }
 
-        let plan: [[RemoteKey]]
+        let plan: [[[RemoteKey]]]
         do {
             switch target.kind {
             case .nvdaRemote:
@@ -1065,8 +1187,10 @@ final class DualSenseControllerAdapter {
         }
     }
 
-    private func resolveWindowsQuickCommandPlan(_ command: QuickCommand) throws -> [[RemoteKey]] {
-        var plan: [[RemoteKey]] = []
+    private func resolveWindowsQuickCommandPlan(
+        _ command: QuickCommand
+    ) throws -> [[[RemoteKey]]] {
+        var plan: [[[RemoteKey]]] = []
         for step in command.steps {
             switch step {
             case .chord(let chord):
@@ -1074,19 +1198,25 @@ final class DualSenseControllerAdapter {
                 guard virtualKeys.count <= QuickCommandParser.maximumChordKeys else {
                     throw QuickCommandExecutionError.resolvedChordTooLarge
                 }
-                plan.append(virtualKeys.map(RemoteKey.windowsVirtualKey))
+                plan.append([virtualKeys.map(RemoteKey.windowsVirtualKey)])
+
             case .text(let text):
+                var textStep: [[RemoteKey]] = []
+                textStep.reserveCapacity(text.count)
                 for character in text {
                     guard let action = ControllerTextCharacterMapper.action(for: character) else {
-                        throw QuickCommandExecutionError.unsupportedTextCharacter(target: "Windows/NVDA")
+                        throw QuickCommandExecutionError.unsupportedTextCharacter(
+                            target: "Windows/NVDA"
+                        )
                     }
                     let modifiers = windowsVirtualKeys(for: action.modifiers)
                     let virtualKeys = modifiers + [action.key.virtualKey]
                     guard virtualKeys.count <= QuickCommandParser.maximumChordKeys else {
                         throw QuickCommandExecutionError.resolvedChordTooLarge
                     }
-                    plan.append(virtualKeys.map(RemoteKey.windowsVirtualKey))
+                    textStep.append(virtualKeys.map(RemoteKey.windowsVirtualKey))
                 }
+                plan.append(textStep)
             }
         }
         return plan
@@ -1206,8 +1336,10 @@ final class DualSenseControllerAdapter {
         }
     }
 
-    private func resolveMacQuickCommandPlan(_ command: QuickCommand) throws -> [[RemoteKey]] {
-        var plan: [[RemoteKey]] = []
+    private func resolveMacQuickCommandPlan(
+        _ command: QuickCommand
+    ) throws -> [[[RemoteKey]]] {
+        var plan: [[[RemoteKey]]] = []
         for step in command.steps {
             switch step {
             case .chord(let chord):
@@ -1218,16 +1350,23 @@ final class DualSenseControllerAdapter {
                 let keys = try usages.map { usage -> RemoteKey in
                     guard MacRemoteKey.supportedKeyboardUsage(usage) != nil,
                           let key = RemoteKey.hidUsage(usage) else {
-                        throw QuickCommandExecutionError.unsupportedKey("Key", target: "Mac")
+                        throw QuickCommandExecutionError.unsupportedKey(
+                            "Key",
+                            target: "Mac"
+                        )
                     }
                     return key
                 }
-                plan.append(keys)
+                plan.append([keys])
 
             case .text(let text):
+                var textStep: [[RemoteKey]] = []
+                textStep.reserveCapacity(text.count)
                 for character in text {
                     guard let usages = macHIDChord(for: character) else {
-                        throw QuickCommandExecutionError.unsupportedTextCharacter(target: "Mac")
+                        throw QuickCommandExecutionError.unsupportedTextCharacter(
+                            target: "Mac"
+                        )
                     }
                     guard usages.count <= QuickCommandParser.maximumChordKeys else {
                         throw QuickCommandExecutionError.resolvedChordTooLarge
@@ -1235,12 +1374,16 @@ final class DualSenseControllerAdapter {
                     let keys = try usages.map { usage -> RemoteKey in
                         guard MacRemoteKey.supportedKeyboardUsage(usage) != nil,
                               let key = RemoteKey.hidUsage(usage) else {
-                            throw QuickCommandExecutionError.unsupportedKey("Key", target: "Mac")
+                            throw QuickCommandExecutionError.unsupportedKey(
+                                "Key",
+                                target: "Mac"
+                            )
                         }
                         return key
                     }
-                    plan.append(keys)
+                    textStep.append(keys)
                 }
+                plan.append(textStep)
             }
         }
         return plan
@@ -1400,47 +1543,56 @@ final class DualSenseControllerAdapter {
     }
 
     private func executeQuickCommandPlan(
-        _ plan: [[RemoteKey]],
+        _ plan: [[[RemoteKey]]],
         via route: RemoteIntentRoute,
         generation: Int
     ) async -> RemoteIntentResult {
-        for chord in plan {
-            guard generation == quickCommandGeneration,
-                  !Task.isCancelled,
-                  isQuickCommandModeActive else {
-                return .unavailable("Quick Command was cancelled.")
-            }
-
-            var pressed: [RemoteKey] = []
-            for key in chord {
+        for (stepIndex, step) in plan.enumerated() {
+            for chord in step {
                 guard generation == quickCommandGeneration,
                       !Task.isCancelled,
                       isQuickCommandModeActive else {
-                    await releaseQuickCommandKeys(pressed, via: route)
                     return .unavailable("Quick Command was cancelled.")
                 }
 
-                // A transport can report rejection after the physical key-down
-                // was already emitted. Track the attempted press before await
-                // so cleanup always attempts its matching release.
-                pressed.append(key)
-                let result = await router.route(
-                    .sendKeyTransition(key, pressed: true),
-                    via: route
-                )
-                if result != .performed {
-                    await releaseQuickCommandKeys(pressed, via: route)
-                    return result
+                var pressed: [RemoteKey] = []
+                for key in chord {
+                    guard generation == quickCommandGeneration,
+                          !Task.isCancelled,
+                          isQuickCommandModeActive else {
+                        await releaseQuickCommandKeys(pressed, via: route)
+                        return .unavailable("Quick Command was cancelled.")
+                    }
+
+                    pressed.append(key)
+                    let result = await router.route(
+                        .sendKeyTransition(key, pressed: true),
+                        via: route
+                    )
+                    if result != .performed {
+                        await releaseQuickCommandKeys(pressed, via: route)
+                        return result
+                    }
+                }
+
+                for key in pressed.reversed() {
+                    let result = await router.route(
+                        .sendKeyTransition(key, pressed: false),
+                        via: route
+                    )
+                    if result != .performed {
+                        return result
+                    }
                 }
             }
 
-            for key in pressed.reversed() {
-                let result = await router.route(
-                    .sendKeyTransition(key, pressed: false),
-                    via: route
-                )
-                if result != .performed {
-                    return result
+            if stepIndex < plan.count - 1 {
+                do {
+                    try await Task.sleep(
+                        nanoseconds: QuickCommandExecutionPolicy.interStepDelayNanoseconds
+                    )
+                } catch {
+                    return .unavailable("Quick Command was cancelled.")
                 }
             }
         }
