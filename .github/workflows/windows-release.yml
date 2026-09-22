@@ -173,19 +173,6 @@ jobs:
           path: windows/dist/*
           if-no-files-found: error
 
-      - name: Install private-release tooling
-        if: ${{ inputs.publish }}
-        shell: pwsh
-        run: |
-          Push-Location distribution-gateway
-          try {
-            npm ci
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          finally {
-            Pop-Location
-          }
-
       - name: Publish private FarRelay release
         if: ${{ inputs.publish }}
         shell: pwsh
