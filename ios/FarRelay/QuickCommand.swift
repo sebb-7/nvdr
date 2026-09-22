@@ -203,6 +203,13 @@ enum QuickCommandParseError: Error, Equatable, Sendable {
     }
 }
 
+enum QuickCommandExecutionPolicy {
+    /// UI-changing grammar steps such as Win+R need a small, bounded settle
+    /// boundary before the next step starts typing. Literal text itself is
+    /// still emitted without per-character delay.
+    static let interStepDelayNanoseconds: UInt64 = 180_000_000
+}
+
 struct QuickCommandParser: Sendable {
     static let maximumSteps = 5
     static let maximumChordKeys = 4
