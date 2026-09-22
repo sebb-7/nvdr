@@ -439,6 +439,41 @@ final class HostProfileTests: XCTestCase {
         XCTAssertTrue(text.contains("farrelay"))
     }
 
+    func testRemSoundPasswordStaysInProfileScopedKeychainStorage() throws {
+        let defaults = try makeDefaults()
+        let credentialStore = TestCredentialStore()
+        let settings = AppSettings(defaults: defaults, credentialStore: credentialStore)
+        let profile = HostProfile(
+            displayName: "G14",
+            platform: .windows,
+            remSoundReceiver: RemSoundReceiverCapability(isEnabled: true, senderHost: "100.64.0.2")
+        )
+
+        XCTAssertTrue(settings.saveProfile(
+            profile,
+            credentials: HostProfileCredentials(remSoundPassword: "audio-only-secret")
+        ))
+        XCTAssertEqual(settings.credentials(for: profile)?.remSoundPassword, "audio-only-secret")
+        let stored = try XCTUnwrap(defaults.data(forKey: "farrelay.hostProfiles"))
+        let text = try XCTUnwrap(String(data: stored, encoding: .utf8))
+        XCTAssertFalse(text.contains("audio-only-secret"))
+        XCTAssertTrue(text.contains("100.64.0.2"))
+    }
+
+    func testRemSoundPasswordCannotCrossProfileCredentialScopes() throws {
+        let defaults = try makeDefaults()
+        let credentialStore = TestCredentialStore()
+        let settings = AppSettings(defaults: defaults, credentialStore: credentialStore)
+        let first = HostProfile(displayName: "First", platform: .windows)
+        let second = HostProfile(displayName: "Second", platform: .windows)
+
+        XCTAssertTrue(settings.saveProfile(first, credentials: .init(remSoundPassword: "first-secret")))
+        XCTAssertTrue(settings.saveProfile(second, credentials: .init(remSoundPassword: "second-secret")))
+
+        XCTAssertEqual(settings.credentials(for: first)?.remSoundPassword, "first-secret")
+        XCTAssertEqual(settings.credentials(for: second)?.remSoundPassword, "second-secret")
+    }
+
     func testLeavingNVDAHostContextSuspendsKeyboardForwarding() {
         let bridge = BridgeClient(speech: SpeechOutput())
         bridge.forwardingEnabled = true

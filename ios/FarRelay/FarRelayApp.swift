@@ -30,6 +30,7 @@ struct FarRelayApp: App {
     @State private var events: FarRelayEventStore
     @State private var controllerMappings: ControllerMappingSettings
     @State private var controllerAdapter: DualSenseControllerAdapter
+    @State private var audioReceiver: AudioReceiverModel
 
     init() {
         let s = AppSettings()
@@ -61,6 +62,7 @@ struct FarRelayApp: App {
             diagnostics: inputDiagnostics,
             feedback: interactionFeedback
         ))
+        _audioReceiver = State(initialValue: AudioReceiverModel())
     }
 
     var body: some Scene {
@@ -76,6 +78,7 @@ struct FarRelayApp: App {
                 .environment(events)
                 .environment(controllerMappings)
                 .environment(controllerAdapter)
+                .environment(audioReceiver)
                 .task {
                     UIApplication.shared.isIdleTimerDisabled = true
                     controllerAdapter.start()

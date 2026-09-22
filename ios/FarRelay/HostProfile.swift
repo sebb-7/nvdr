@@ -64,6 +64,26 @@ struct MacRemoteCapability: Codable, Equatable, Sendable {
     init(isEnabled: Bool = false) { self.isEnabled = isEnabled }
 }
 
+/// Optional receiver configuration for the independently transported RemSound
+/// stream. The password intentionally belongs to HostProfileCredentials.
+struct RemSoundReceiverCapability: Codable, Equatable, Sendable {
+    var isEnabled: Bool
+    var senderHost: String
+    var senderPort: UInt16
+
+    init(isEnabled: Bool = false, senderHost: String = "", senderPort: UInt16 = 47_830) {
+        self.isEnabled = isEnabled
+        self.senderHost = senderHost
+        self.senderPort = senderPort
+    }
+
+    func normalized() -> Self {
+        var copy = self
+        copy.senderHost = senderHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        return copy
+    }
+}
+
 /// A saved SSH computer. This is intentionally transport-neutral metadata:
 /// passwords and private keys stay in the device Keychain, never in Codable
 /// profile persistence.
@@ -86,6 +106,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
     var nvdaBridgeCommand: String
     var nvdaRemote: NVDARemoteCapability?
     var macRemote: MacRemoteCapability?
+    var remSoundReceiver: RemSoundReceiverCapability?
 
     init(
         id: UUID = UUID(),
@@ -99,7 +120,8 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         farRelayHostCommand: String = "farrelay-host",
         nvdaBridgeCommand: String = "farrelay",
         nvdaRemote: NVDARemoteCapability? = nil,
-        macRemote: MacRemoteCapability? = nil
+        macRemote: MacRemoteCapability? = nil,
+        remSoundReceiver: RemSoundReceiverCapability? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -113,6 +135,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         self.nvdaBridgeCommand = nvdaBridgeCommand
         self.nvdaRemote = nvdaRemote
         self.macRemote = macRemote
+        self.remSoundReceiver = remSoundReceiver
     }
 
     func sshSessionConfiguration(credentials: HostProfileCredentials) -> SSHSessionConfiguration {
@@ -147,6 +170,9 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
     }
 
     var isMacRemoteEnabled: Bool { platform == .macOS && macRemote?.isEnabled == true }
+    var isRemSoundReceiverEnabled: Bool {
+        platform == .windows && remSoundReceiver?.isEnabled == true
+    }
 
     /// The shipped direct-distribution app embeds this proxy at the stable
     /// Applications location. It fails closed if FarRelay.app is not running.
@@ -156,7 +182,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, displayName, address, port, username, authenticationMode
-        case platform, credentialReference, farRelayHostCommand, nvdaBridgeCommand, nvdaRemote, macRemote
+        case platform, credentialReference, farRelayHostCommand, nvdaBridgeCommand, nvdaRemote, macRemote, remSoundReceiver
     }
 
     init(from decoder: any Decoder) throws {
@@ -174,6 +200,7 @@ struct HostProfile: Codable, Equatable, Identifiable, Sendable {
         nvdaBridgeCommand = try values.decodeIfPresent(String.self, forKey: .nvdaBridgeCommand) ?? "farrelay"
         nvdaRemote = try values.decodeIfPresent(NVDARemoteCapability.self, forKey: .nvdaRemote)
         macRemote = try values.decodeIfPresent(MacRemoteCapability.self, forKey: .macRemote)
+        remSoundReceiver = try values.decodeIfPresent(RemSoundReceiverCapability.self, forKey: .remSoundReceiver)
     }
 }
 

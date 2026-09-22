@@ -46,6 +46,13 @@ struct HostProfileEditorView: View {
                             Label("NVDA Remote", systemImage: "accessibility")
                         }
                     }
+                    if draft.isRemSoundReceiverEnabled {
+                        NavigationLink {
+                            RemSoundAudioFeatureView(profile: draft)
+                        } label: {
+                            Label("RemSound Audio", systemImage: "speaker.wave.2")
+                        }
+                    }
                     if draft.isMacRemoteEnabled {
                         NavigationLink {
                             MacRemoteFeatureView(profile: draft)
@@ -109,6 +116,32 @@ struct HostProfileEditorView: View {
                         Toggle("Insecure (skip TLS verify)", isOn: Binding(get: { draft.nvdaRemote?.insecure ?? false }, set: { draft.nvdaRemote?.insecure = $0 }))
                         TextField("NVDA bridge command", text: $draft.nvdaBridgeCommand)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    Toggle("Configure RemSound audio receiver", isOn: Binding(
+                        get: { draft.remSoundReceiver != nil },
+                        set: { configured in
+                            draft.remSoundReceiver = configured ? (draft.remSoundReceiver ?? RemSoundReceiverCapability(senderHost: draft.address)) : nil
+                        }
+                    ))
+                    if draft.remSoundReceiver != nil {
+                        Toggle("Enable RemSound audio receiver", isOn: Binding(
+                            get: { draft.remSoundReceiver?.isEnabled ?? false },
+                            set: { draft.remSoundReceiver?.isEnabled = $0 }
+                        ))
+                        TextField("RemSound sender address", text: Binding(
+                            get: { draft.remSoundReceiver?.senderHost ?? "" },
+                            set: { draft.remSoundReceiver?.senderHost = $0 }
+                        ))
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        TextField("RemSound UDP port", value: Binding(
+                            get: { Int(draft.remSoundReceiver?.senderPort ?? 47_830) },
+                            set: { draft.remSoundReceiver?.senderPort = UInt16(clamping: $0) }
+                        ), format: .number.grouping(.never))
+                        .keyboardType(.numberPad)
+                        SecureField("RemSound shared password", text: $credentials.remSoundPassword)
+                        Text("Audio travels directly over encrypted UDP. It does not use SSH, NVDA Remote, or FarRelay control traffic.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
