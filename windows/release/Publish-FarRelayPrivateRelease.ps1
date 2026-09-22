@@ -42,9 +42,9 @@ $gatewayDir = (Resolve-Path -LiteralPath $GatewayProjectDirectory).Path
 
 Push-Location $gatewayDir
 try {
-    npx wrangler r2 object put "$Bucket/$updateKey" --file $updateFile --content-type application/zip --remote
+    npx --yes wrangler r2 object put "$Bucket/$updateKey" --file $updateFile --content-type application/zip --remote
     if ($LASTEXITCODE -ne 0) { throw 'R2 update upload failed.' }
-    npx wrangler r2 object put "$Bucket/$installerKey" --file $installerFile --content-type application/vnd.microsoft.portable-executable --remote
+    npx --yes wrangler r2 object put "$Bucket/$installerKey" --file $installerFile --content-type application/vnd.microsoft.portable-executable --remote
     if ($LASTEXITCODE -ne 0) { throw 'R2 installer upload failed.' }
 }
 finally {
