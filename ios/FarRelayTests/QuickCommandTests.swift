@@ -34,6 +34,27 @@ final class QuickCommandTests: XCTestCase {
         )
     }
 
+    func testWinRunExecutableSequenceParsesAsCommandTextCommand() throws {
+        let command = try QuickCommandParser.parse("win+r, msedge.exe,enter")
+
+        XCTAssertEqual(
+            command.steps,
+            [
+                .chord(.init(keys: [
+                    .modifier(.windows),
+                    .key(.character("r"))
+                ])),
+                .text("msedge.exe"),
+                .chord(.init(keys: [.key(.named(.enter))]))
+            ]
+        )
+        XCTAssertGreaterThan(QuickCommandExecutionPolicy.interStepDelayNanoseconds, 0)
+        XCTAssertLessThanOrEqual(
+            QuickCommandExecutionPolicy.interStepDelayNanoseconds,
+            300_000_000
+        )
+    }
+
     func testLiteralTextKeepsUsefulPunctuationWithoutQuotesOrBraces() throws {
         let command = try QuickCommandParser.parse("ctrl+l,github.com/test?a=1&b=2,enter")
 
