@@ -1,6 +1,22 @@
 import SwiftUI
 import UIKit
 
+enum ControllerInputPresentation: String, Identifiable, Sendable {
+    case textMode
+    case quickCommandMode
+
+    var id: String { rawValue }
+
+    static func active(
+        textModeActive: Bool,
+        quickCommandModeActive: Bool
+    ) -> ControllerInputPresentation? {
+        if textModeActive { return .textMode }
+        if quickCommandModeActive { return .quickCommandMode }
+        return nil
+    }
+}
+
 @main
 struct FarRelayApp: App {
     @Environment(\.scenePhase) private var scenePhase
@@ -60,17 +76,29 @@ struct FarRelayApp: App {
                     UIApplication.shared.isIdleTimerDisabled = true
                     controllerAdapter.start()
                 }
-                .sheet(isPresented: Binding(
-                    get: { controllerAdapter.isTextModeActive },
-                    set: { if !$0 { controllerAdapter.exitTextMode() } }
-                )) {
-                    TextModeEntryView(controller: controllerAdapter)
-                }
-                .sheet(isPresented: Binding(
-                    get: { controllerAdapter.isQuickCommandModeActive },
-                    set: { if !$0 { controllerAdapter.exitQuickCommandMode() } }
-                )) {
-                    QuickCommandEntryView(controller: controllerAdapter)
+                .sheet(item: Binding(
+                    get: {
+                        ControllerInputPresentation.active(
+                            textModeActive: controllerAdapter.isTextModeActive,
+                            quickCommandModeActive: controllerAdapter.isQuickCommandModeActive
+                        )
+                    },
+                    set: { presentation in
+                        guard presentation == nil else { return }
+                        if controllerAdapter.isTextModeActive {
+                            controllerAdapter.exitTextMode()
+                        }
+                        if controllerAdapter.isQuickCommandModeActive {
+                            controllerAdapter.exitQuickCommandMode()
+                        }
+                    }
+                )) { presentation in
+                    switch presentation {
+                    case .textMode:
+                        TextModeEntryView(controller: controllerAdapter)
+                    case .quickCommandMode:
+                        QuickCommandEntryView(controller: controllerAdapter)
+                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
