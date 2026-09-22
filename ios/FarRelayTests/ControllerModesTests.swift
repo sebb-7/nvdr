@@ -2,6 +2,35 @@ import XCTest
 @testable import FarRelay
 
 final class ControllerModesTests: XCTestCase {
+    func testControllerInputPresentationUsesOneDeterministicModal() {
+        XCTAssertNil(
+            ControllerInputPresentation.active(
+                textModeActive: false,
+                quickCommandModeActive: false
+            )
+        )
+        XCTAssertEqual(
+            ControllerInputPresentation.active(
+                textModeActive: true,
+                quickCommandModeActive: false
+            ),
+            .textMode
+        )
+        XCTAssertEqual(
+            ControllerInputPresentation.active(
+                textModeActive: false,
+                quickCommandModeActive: true
+            ),
+            .quickCommandMode
+        )
+    }
+
+    func testTextModeReturnRequestsSubmitAndExit() {
+        XCTAssertTrue(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "\n"))
+        XCTAssertTrue(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "\r"))
+        XCTAssertFalse(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "a"))
+    }
+
     func testHoldUsesExtendedOnlyWhileOptionsIsHeld() {
         var engine = ControllerLayerEngine()
         engine.press(layerID: "extended", at: 1)
