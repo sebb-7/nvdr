@@ -210,6 +210,15 @@ final class QuickCommandTests: XCTestCase {
         XCTAssertFalse(QuickCommandTextInputPolicy.requestsConfirmation(replacementText: "+"))
     }
 
+    func testQuickCommandEditorYieldsFocusToConfirmationAlert() {
+        XCTAssertTrue(
+            QuickCommandEditorFocusPolicy.shouldOwnFocus(isShowingConfirmation: false)
+        )
+        XCTAssertFalse(
+            QuickCommandEditorFocusPolicy.shouldOwnFocus(isShowingConfirmation: true)
+        )
+    }
+
     func testEmptyInputHasAUsefulError() {
         XCTAssertThrowsError(
             try QuickCommandParser.parse("   ")
