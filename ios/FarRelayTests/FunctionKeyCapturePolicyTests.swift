@@ -65,6 +65,45 @@ final class FunctionKeyCapturePolicyTests: XCTestCase {
         XCTAssertFalse(gate.suppresses(virtualKey: VK.f1, pressed: true, source: .keyCommandFallback, modifierFlags: 2, originUsage: 33, now: now.addingTimeInterval(0.20)))
     }
 
+    func testKeyboardCaptureRefreshesOnlyWhenBSIModalCloses() {
+        XCTAssertFalse(
+            KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: false,
+                isActive: true
+            )
+        )
+        XCTAssertFalse(
+            KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: true,
+                isActive: true
+            )
+        )
+        XCTAssertTrue(
+            KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: true,
+                isActive: false
+            )
+        )
+        XCTAssertFalse(
+            KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: false,
+                isActive: false
+            )
+        )
+    }
+
+    func testKeyboardCaptureIdentityChangesAfterModalDismissRefresh() {
+        let before = KeyboardCaptureIdentity(
+            forwardingEnabled: true,
+            refreshGeneration: 7
+        )
+        let after = KeyboardCaptureIdentity(
+            forwardingEnabled: true,
+            refreshGeneration: 8
+        )
+        XCTAssertNotEqual(before, after)
+    }
+
     func testFallbackRegistrationsDoNotRequireASequentialMode() {
         XCTAssertEqual(CommandFunctionKeyFallback.keyCommandRegistrations.count, 96)
         XCTAssertTrue(CommandFunctionKeyFallback.keyCommandRegistrations.allSatisfy { $0.modifiers.contains(.command) })
