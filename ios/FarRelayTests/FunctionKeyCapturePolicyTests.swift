@@ -4,6 +4,29 @@ import XCTest
 @testable import FarRelay
 
 final class FunctionKeyCapturePolicyTests: XCTestCase {
+    func testPhysicalFunctionRowUsesPhysicallyValidatedUIKitPriorityPath() {
+        XCTAssertFalse(PhysicalFunctionRowCapturePolicy.installsGameControllerCapture)
+
+        let registrations = PhysicalFunctionRowCapturePolicy.priorityRegistrations
+        XCTAssertEqual(registrations.count, ReservedKeyForwardingPolicy.registrations.count)
+        XCTAssertEqual(
+            Set(registrations.map(\.input)).intersection(Set(ReservedKeyForwardingPolicy.functionInputs)),
+            Set(ReservedKeyForwardingPolicy.functionInputs)
+        )
+    }
+
+    func testCommandNumberFallbackIsNotPartOfPriorityRegistrationSurface() {
+        let priorityInputs = Set(
+            PhysicalFunctionRowCapturePolicy.priorityRegistrations.map {
+                "\($0.input)|\(ReservedKeyForwardingPolicy.modifierFlags(for: $0.modifiers).rawValue)"
+            }
+        )
+        for fallback in CommandFunctionKeyFallback.keyCommandRegistrations {
+            let signature = "\(fallback.input)|\(fallback.modifiers.rawValue)"
+            XCTAssertFalse(priorityInputs.contains(signature))
+        }
+    }
+
     func testCommandFallbackCoversTheRequiredF1ThroughF12Mapping() {
         XCTAssertEqual(CommandFunctionKeyFallback.mappings.map(\.virtualKey), Array(VK.f1...(VK.f1 + 11)))
         XCTAssertEqual(CommandFunctionKeyFallback.mapping(for: .keyboard4)?.virtualKey, VK.f1 + 3)

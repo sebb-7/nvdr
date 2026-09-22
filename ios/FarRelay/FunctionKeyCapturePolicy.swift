@@ -2,6 +2,19 @@ import Foundation
 import GameController
 import UIKit
 
+/// Physical validation on source revision e5cdf6c established the UIKit raw
+/// responder + priority UIKeyCommand path as the authoritative F1-F12 route.
+/// Later GCKeyboard and Command-number priority layers remain available as
+/// implementation helpers, but are deliberately not installed in the normal
+/// remote keyboard capture path until they are separately validated on device.
+enum PhysicalFunctionRowCapturePolicy {
+    static let installsGameControllerCapture = false
+
+    static var priorityRegistrations: [ReservedKeyForwardingPolicy.Registration] {
+        ReservedKeyForwardingPolicy.registrations
+    }
+}
+
 /// The only local Command chords reserved by the NVDA Remote keyboard surface.
 /// They are deliberately physical-key based rather than character based, so
 /// keyboard layouts cannot turn a fallback chord into remote text input.
