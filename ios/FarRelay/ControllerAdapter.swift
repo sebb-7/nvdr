@@ -759,7 +759,7 @@ final class DualSenseControllerAdapter {
         let resolved = orderedModifiers.map {
             ($0, stickyModifierVirtualKeys(for: $0))
         }
-        let physicalKeys = resolved.flatMap(\.1)
+        let physicalKeys = resolved.flatMap { $0.1 }
         guard !physicalKeys.isEmpty,
               Set(physicalKeys).count == physicalKeys.count else {
             announce("Those held modifiers overlap on this NVDA modifier configuration")
