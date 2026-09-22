@@ -11,6 +11,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
     @State private var presentedIssue: UserFacingIssue?
+    @State private var keyboardCaptureRefreshGeneration = 0
 
     var body: some View {
         @Bindable var diagnostics = inputDiagnostics
@@ -84,11 +85,30 @@ struct NVDARemoteFeatureView: View {
                 // key commands changes. This is the supported SwiftUI/UIKit
                 // lifecycle path; UIKit exposes no public cache invalidation
                 // API for a UIView's `keyCommands` override.
-                .id(bridge.forwardingEnabled)
+                .id(KeyboardCaptureIdentity(
+                    forwardingEnabled: bridge.forwardingEnabled,
+                    refreshGeneration: keyboardCaptureRefreshGeneration
+                ))
         }
         .onAppear {
             activateNVDAControlTarget()
             controllerAdapter.refreshControllerStatus()
+        }
+        .onChange(of: controllerAdapter.isTextModeActive) { old, new in
+            if KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: old,
+                isActive: new
+            ) {
+                keyboardCaptureRefreshGeneration &+= 1
+            }
+        }
+        .onChange(of: controllerAdapter.isQuickCommandModeActive) { old, new in
+            if KeyboardCaptureModalLifecyclePolicy.shouldRefresh(
+                wasActive: old,
+                isActive: new
+            ) {
+                keyboardCaptureRefreshGeneration &+= 1
+            }
         }
         .onChange(of: bridge.status) { old, new in
             if old == .ready, new != .ready {
@@ -178,6 +198,20 @@ struct NVDARemoteFeatureView: View {
         default:
             break
         }
+    }
+}
+
+struct KeyboardCaptureIdentity: Hashable {
+    let forwardingEnabled: Bool
+    let refreshGeneration: Int
+}
+
+/// BSI editors intentionally become first responder while their sheet is
+/// active. Recreate the hidden NVDA keyboard capture only when such a modal
+/// closes so it can reclaim physical F1-F12 without fighting BSI for focus.
+enum KeyboardCaptureModalLifecyclePolicy {
+    static func shouldRefresh(wasActive: Bool, isActive: Bool) -> Bool {
+        wasActive && !isActive
     }
 }
 
