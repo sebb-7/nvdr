@@ -35,6 +35,11 @@ hardware before calling a build physically validated.
 - [ ] Confirm waiting-for-NVDA is not announced or presented as slave-ready.
 - [ ] Test VoiceOver on with Quick Nav on and off, then VoiceOver off; record which arrows iOS reserves.
 - [ ] Test BSI enter/type/send/exit/browse/re-enter, including terminal end and app background while BSI is active.
+- [ ] In Text Mode, type a short word and three-finger swipe up. Confirm the word arrives first, Enter is sent once, Text Mode closes, and Quick Navigation is immediately available.
+- [ ] Open Quick Command repeatedly from controller input and confirm the editing field is immediately ready for BSI without a multi-second focus delay.
+- [ ] Run `win+r, msedge.exe,enter`; confirm Run opens, the full executable including the period is typed, Enter occurs only after the text step, and Quick Command closes after successful execution.
+- [ ] Configure one Hold Modifier action as Alt + Shift held with Tab tap. Confirm first activation produces both modifier downs plus one Tab tap, the modifiers remain held, and the second activation releases both without another Tab.
+- [ ] Add a new controller profile. Confirm it opens directly for editing with every Base/Extended mapping and Quick Bar entry blank, while the original profile remains unchanged.
 - [ ] In Quick Command BSI, enter `ctrl+v` and three-finger swipe up. Confirm the alert announces FarRelay's interpretation, no remote key is sent before Send, and Cancel returns to the same command buffer without leaving Quick Command Mode.
 - [ ] Repeat the Quick Command check and choose Send. Confirm exactly one balanced Control+V is emitted, Quick Navigation is restored, then immediately verify physical F1 and F12 still reach Windows as F1/F12 rather than media actions.
 - [ ] Repeat F-key smoke tests with Magic Keyboard, generic Bluetooth keyboard, Windows-layout keyboard, and USB keyboard where supported.
