@@ -115,6 +115,7 @@ final class AppSettings {
     func saveProfile(_ profile: HostProfile, credentials: HostProfileCredentials) -> Bool {
         var normalizedProfile = profile
         normalizedProfile.nvdaRemote = profile.nvdaRemote?.normalized()
+        normalizedProfile.remSoundReceiver = profile.remSoundReceiver?.normalized()
         guard case .success = profileCredentialPersistence.save(credentials, for: normalizedProfile.id) else {
             credentialStorageError = "Unable to save credentials for \(profile.displayName)."
             return false

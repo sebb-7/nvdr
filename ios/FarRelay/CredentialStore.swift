@@ -148,6 +148,7 @@ enum HostProfileCredential: CaseIterable {
     case password
     case privateKey
     case privateKeyPassphrase
+    case remSoundPassword
 
     func account(for profileID: UUID) -> String {
         "ssh.profile.\(profileID.uuidString.lowercased()).\(suffix)"
@@ -158,14 +159,16 @@ enum HostProfileCredential: CaseIterable {
         case .password: "password"
         case .privateKey: "privateKey"
         case .privateKeyPassphrase: "privateKeyPassphrase"
+        case .remSoundPassword: "remsoundPassword"
         }
     }
 
-    fileprivate var legacyCredential: SSHCredential {
+    fileprivate var legacyCredential: SSHCredential? {
         switch self {
         case .password: .password
         case .privateKey: .privateKey
         case .privateKeyPassphrase: .privateKeyPassphrase
+        case .remSoundPassword: nil
         }
     }
 }
@@ -174,6 +177,9 @@ struct HostProfileCredentials: Equatable, Sendable {
     var password: String = ""
     var privateKeyPEM: String = ""
     var privateKeyPassphrase: String = ""
+    /// An audio-only secret. It stays in Keychain and is never serialized in
+    /// HostProfile, logs, clipboard diagnostics, or the RemSound format packet.
+    var remSoundPassword: String = ""
 }
 
 struct HostProfileCredentialPersistence {
@@ -184,7 +190,8 @@ struct HostProfileCredentialPersistence {
             HostProfileCredentials(
                 password: try store.string(for: HostProfileCredential.password.account(for: profileID)) ?? "",
                 privateKeyPEM: try store.string(for: HostProfileCredential.privateKey.account(for: profileID)) ?? "",
-                privateKeyPassphrase: try store.string(for: HostProfileCredential.privateKeyPassphrase.account(for: profileID)) ?? ""
+                privateKeyPassphrase: try store.string(for: HostProfileCredential.privateKeyPassphrase.account(for: profileID)) ?? "",
+                remSoundPassword: try store.string(for: HostProfileCredential.remSoundPassword.account(for: profileID)) ?? ""
             )
         }
     }
@@ -194,6 +201,7 @@ struct HostProfileCredentialPersistence {
             try save(credentials.password, credential: .password, profileID: profileID)
             try save(credentials.privateKeyPEM, credential: .privateKey, profileID: profileID)
             try save(credentials.privateKeyPassphrase, credential: .privateKeyPassphrase, profileID: profileID)
+            try save(credentials.remSoundPassword, credential: .remSoundPassword, profileID: profileID)
         }
     }
 
@@ -212,10 +220,11 @@ struct HostProfileCredentialPersistence {
         Result {
             var copied: [(HostProfileCredential, LegacySource)] = []
             for credential in HostProfileCredential.allCases {
+                guard let legacyCredential = credential.legacyCredential else { continue }
                 let source: LegacySource
-                if let value = try store.string(for: credential.legacyCredential.account) {
+                if let value = try store.string(for: legacyCredential.account) {
                     source = .keychain(value)
-                } else if let value = defaults.string(forKey: credential.legacyCredential.legacyDefaultsKey) {
+                } else if let value = defaults.string(forKey: legacyCredential.legacyDefaultsKey) {
                     source = .defaults(value)
                 } else {
                     continue
@@ -233,9 +242,13 @@ struct HostProfileCredentialPersistence {
             for (credential, source) in copied {
                 switch source {
                 case .keychain:
-                    try store.removeValue(for: credential.legacyCredential.account)
+                    if let legacyCredential = credential.legacyCredential {
+                        try store.removeValue(for: legacyCredential.account)
+                    }
                 case .defaults:
-                    defaults.removeObject(forKey: credential.legacyCredential.legacyDefaultsKey)
+                    if let legacyCredential = credential.legacyCredential {
+                        defaults.removeObject(forKey: legacyCredential.legacyDefaultsKey)
+                    }
                 }
             }
         }

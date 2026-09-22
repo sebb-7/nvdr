@@ -9,6 +9,7 @@ struct FarRelayApp: App {
     @State private var interactionFeedback: InteractionFeedback
     @State private var inputDiagnostics: InputDiagnosticStore
     @State private var macRemoteSession: MacRemoteSession
+    @State private var audioReceiver: AudioReceiverModel
 
     init() {
         let s = AppSettings()
@@ -26,6 +27,7 @@ struct FarRelayApp: App {
         _interactionFeedback = State(initialValue: InteractionFeedback(settings: s))
         _inputDiagnostics = State(initialValue: inputDiagnostics)
         _macRemoteSession = State(initialValue: MacRemoteSession(speech: speech))
+        _audioReceiver = State(initialValue: AudioReceiverModel())
     }
 
     var body: some Scene {
@@ -38,6 +40,7 @@ struct FarRelayApp: App {
                 .environment(interactionFeedback)
                 .environment(inputDiagnostics)
                 .environment(macRemoteSession)
+                .environment(audioReceiver)
         }
     }
 }

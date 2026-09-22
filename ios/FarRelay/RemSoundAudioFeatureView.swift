@@ -1,0 +1,106 @@
+import SwiftUI
+
+/// Minimal, accessible Phase 1 control surface. It intentionally has no
+/// dependency on BridgeClient: audio can fail, stop, or restart while remote
+/// control remains entirely available.
+struct RemSoundAudioFeatureView: View {
+    @Environment(AppSettings.self) private var settings
+    @Environment(AudioReceiverModel.self) private var audioReceiver
+    let profile: HostProfile
+    @State private var password = ""
+
+    var body: some View {
+        Form {
+            Section("Sender") {
+                Text(senderDescription)
+                Text("Configure the Windows sender to send to this iPhone or iPad on UDP port \(port).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Audio status") {
+                Text(audioReceiver.snapshot.state.accessibilityLabel)
+                    .accessibilityLabel("RemSound status")
+                    .accessibilityValue(audioReceiver.snapshot.state.accessibilityLabel)
+                if let error = audioReceiver.snapshot.statistics.lastError {
+                    Text(error).foregroundStyle(.secondary)
+                }
+                Button(actionTitle, systemImage: actionSymbol) {
+                    switch audioReceiver.snapshot.state {
+                    case .idle, .stopped, .failed:
+                        audioReceiver.start(host: host, port: port, password: password)
+                    case .connecting, .authenticating, .buffering, .playing, .reconnecting:
+                        audioReceiver.stop()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Reconnect audio", systemImage: "arrow.clockwise") {
+                    audioReceiver.reconnect()
+                }
+                .disabled(!canReconnect)
+            }
+            Section("Playback") {
+                Toggle("Mute RemSound audio", isOn: Binding(
+                    get: { audioReceiver.snapshot.muted },
+                    set: { audioReceiver.setMuted($0) }
+                ))
+                Slider(
+                    value: Binding(
+                        get: { Double(audioReceiver.snapshot.volume) },
+                        set: { audioReceiver.setVolume(Float($0)) }
+                    ),
+                    in: 0...1
+                ) {
+                    Text("Playback volume")
+                }
+                .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
+                Text("Playback-only audio. FarRelay never captures the microphone in Phase 1.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Audio diagnostics") {
+                Text("Packets received: \(audioReceiver.snapshot.statistics.packetsReceived)")
+                Text("Dropped: \(audioReceiver.snapshot.statistics.packetsDropped), lost: \(audioReceiver.snapshot.statistics.packetsLost), reordered: \(audioReceiver.snapshot.statistics.packetsReordered)")
+                Text("Authentication failures: \(audioReceiver.snapshot.statistics.authenticationFailures), buffer frames: \(audioReceiver.snapshot.statistics.bufferDepthFrames), underruns: \(audioReceiver.snapshot.statistics.underruns)")
+                if let sampleRate = audioReceiver.snapshot.sampleRate,
+                   let channels = audioReceiver.snapshot.channelCount {
+                    Text("Format: \(sampleRate) Hz, \(channels) channels, PCM")
+                }
+                Text("Diagnostics exclude passwords, derived keys, packet plaintext, and audio content.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("RemSound Audio")
+        .task {
+            password = settings.credentials(for: profile)?.remSoundPassword ?? ""
+        }
+    }
+
+    private var capability: RemSoundReceiverCapability {
+        profile.remSoundReceiver?.normalized() ?? RemSoundReceiverCapability(senderHost: profile.address)
+    }
+
+    private var host: String { capability.senderHost }
+    private var port: UInt16 { capability.senderPort }
+    private var senderDescription: String { "\(host):\(port)" }
+    private var canReconnect: Bool {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped: false
+        default: true
+        }
+    }
+
+    private var actionTitle: String {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped, .failed: "Start audio"
+        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "Stop audio"
+        }
+    }
+
+    private var actionSymbol: String {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped, .failed: "play.fill"
+        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "stop.fill"
+        }
+    }
+}
