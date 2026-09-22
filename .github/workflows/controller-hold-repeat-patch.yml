@@ -21,8 +21,12 @@ jobs:
 
       - name: Apply narrow source patch and invariance tests
         shell: bash
+        env:
+          TEST_SOURCE_BASE64: aW1wb3J0IFhDVGVzdApAdGVzdGFibGUgaW1wb3J0IEZhclJlbGF5CgpATWFpbkFjdG9yCmZpbmFsIGNsYXNzIExheWVySGVsZFN0aWNreU1vZGlmaWVyUmVwZWF0VGVzdHM6IFhDVGVzdENhc2UgewogICAgZnVuYyB0ZXN0TGF5ZXJPd25lZE9uZU1vZGlmaWVyUmV0YXBzV2l0aG91dFJlbGVhc2luZ1VudGlsTGF5ZXJSZWxlYXNlKCkgYXN5bmMgewogICAgICAgIGF3YWl0IGFzc2VydExheWVyT3duZWRSZXBlYXRUYXAoCiAgICAgICAgICAgIG1vZGlmaWVyczogWy5hbHRdLAogICAgICAgICAgICBleHBlY3RlZE1vZGlmaWVyRG93bnM6IFtWSy5tZW51XSwKICAgICAgICAgICAgZXhwZWN0ZWRNb2RpZmllclJlbGVhc2VzOiBbVksubWVudV0KICAgICAgICApCiAgICB9CgogICAgZnVuYyB0ZXN0TGF5ZXJPd25lZFR3b01vZGlmaWVyc1JldGFwV2l0aG91dFJlbGVhc2luZ1VudGlsTGF5ZXJSZWxlYXNlKCkgYXN5bmMgewogICAgICAgIGF3YWl0IGFzc2VydExheWVyT3duZWRSZXBlYXRUYXAoCiAgICAgICAgICAgIG1vZGlmaWVyczogWy5hbHQsIC5zaGlmdF0sCiAgICAgICAgICAgIGV4cGVjdGVkTW9kaWZpZXJEb3duczogW1ZLLnNoaWZ0LCBWSy5tZW51XSwKICAgICAgICAgICAgZXhwZWN0ZWRNb2RpZmllclJlbGVhc2VzOiBbVksubWVudSwgVksuc2hpZnRdCiAgICAgICAgKQogICAgfQoKICAgIGZ1bmMgdGVzdExheWVyT3duZWRUaHJlZU1vZGlmaWVyc1JldGFwV2l0aG91dFJlbGVhc2luZ1VudGlsTGF5ZXJSZWxlYXNlKCkgYXN5bmMgewogICAgICAgIGF3YWl0IGFzc2VydExheWVyT3duZWRSZXBlYXRUYXAoCiAgICAgICAgICAgIG1vZGlmaWVyczogWy5hbHQsIC5zaGlmdCwgLmNvbnRyb2xdLAogICAgICAgICAgICBleHBlY3RlZE1vZGlmaWVyRG93bnM6IFtWSy5zaGlmdCwgVksuY29udHJvbCwgVksubWVudV0sCiAgICAgICAgICAgIGV4cGVjdGVkTW9kaWZpZXJSZWxlYXNlczogW1ZLLm1lbnUsIFZLLmNvbnRyb2wsIFZLLnNoaWZ0XQogICAgICAgICkKICAgIH0KCiAgICBwcml2YXRlIGZ1bmMgYXNzZXJ0TGF5ZXJPd25lZFJlcGVhdFRhcCgKICAgICAgICBtb2RpZmllcnM6IFNldDxDb250cm9sbGVyS2V5Ym9hcmRNb2RpZmllcj4sCiAgICAgICAgZXhwZWN0ZWRNb2RpZmllckRvd25zOiBbVUludDE2XSwKICAgICAgICBleHBlY3RlZE1vZGlmaWVyUmVsZWFzZXM6IFtVSW50MTZdCiAgICApIGFzeW5jIHsKICAgICAgICBsZXQgc3VpdGVOYW1lID0gIkxheWVySGVsZFN0aWNreU1vZGlmaWVyUmVwZWF0VGVzdHMuXChVVUlEKCkudXVpZFN0cmluZykiCiAgICAgICAgbGV0IGRlZmF1bHRzID0gVXNlckRlZmF1bHRzKHN1aXRlTmFtZTogc3VpdGVOYW1lKSEKICAgICAgICBkZWZlciB7IGRlZmF1bHRzLnJlbW92ZVBlcnNpc3RlbnREb21haW4oZm9yTmFtZTogc3VpdGVOYW1lKSB9CgogICAgICAgIGxldCBtYXBwaW5ncyA9IENvbnRyb2xsZXJNYXBwaW5nU2V0dGluZ3MoZGVmYXVsdHM6IGRlZmF1bHRzKQogICAgICAgIG1hcHBpbmdzLnNldEFjdGlvbigubGF5ZXIoLmluaXQoKSksIGZvcjogLm9wdGlvbnMpCiAgICAgICAgbWFwcGluZ3Muc2V0QWN0aW9uKAogICAgICAgICAgICAuc3RpY2t5TW9kaWZpZXIoLmluaXQobW9kaWZpZXJzOiBtb2RpZmllcnMsIHRhcEtleTogLnRhYikpLAogICAgICAgICAgICBmb3I6IC5sZWZ0U2hvdWxkZXIsCiAgICAgICAgICAgIGxheWVySUQ6IENvbnRyb2xsZXJMYXllckRlZmluaXRpb24uZXh0ZW5kZWRJRAogICAgICAgICkKICAgICAgICBtYXBwaW5ncy5zYXZlRHJhZnQoKQoKICAgICAgICBsZXQgZGlhZ25vc3RpY3MgPSBJbnB1dERpYWdub3N0aWNTdG9yZSgpCiAgICAgICAgZGlhZ25vc3RpY3MuaXNFbmFibGVkID0gdHJ1ZQogICAgICAgIGxldCBzaW5rID0gTGF5ZXJIZWxkUmVwZWF0VGVzdEtleVNpbmsoKQogICAgICAgIGxldCByb3V0ZXIgPSBSZW1vdGVJbnRlbnRSb3V0ZXIoKQogICAgICAgIHJvdXRlci5yZWdpc3RlcihOVkRBUmVtb3RlSW50ZW50VGFyZ2V0KGtleVNpbms6IHNpbmspKQogICAgICAgIFhDVEFzc2VydFRydWUocm91dGVyLnNldEFjdGl2ZVRhcmdldChpZDogTlZEQVJlbW90ZUludGVudFRhcmdldC5kZWZhdWx0SUQpKQogICAgICAgIGxldCBzZXR0aW5ncyA9IEFwcFNldHRpbmdzKCkKICAgICAgICBsZXQgYWRhcHRlciA9IER1YWxTZW5zZUNvbnRyb2xsZXJBZGFwdGVyKAogICAgICAgICAgICBtYXBwaW5nczogbWFwcGluZ3MsCiAgICAgICAgICAgIHNldHRpbmdzOiBzZXR0aW5ncywKICAgICAgICAgICAgcm91dGVyOiByb3V0ZXIsCiAgICAgICAgICAgIGRpYWdub3N0aWNzOiBkaWFnbm9zdGljcywKICAgICAgICAgICAgZmVlZGJhY2s6IEludGVyYWN0aW9uRmVlZGJhY2soc2V0dGluZ3M6IHNldHRpbmdzKQogICAgICAgICkKCiAgICAgICAgYWRhcHRlci5yZWNlaXZlRm9yVGVzdGluZyhpbnB1dDogLm9wdGlvbnMsIHByZXNzZWQ6IHRydWUsIGF0OiAxKQoKICAgICAgICBmb3IgaW5kZXggaW4gMC4uPDMgewogICAgICAgICAgICBsZXQgdGltZSA9IDEuMSArIChEb3VibGUoaW5kZXgpICogMC4yKQogICAgICAgICAgICBhZGFwdGVyLnJlY2VpdmVGb3JUZXN0aW5nKGlucHV0OiAubGVmdFNob3VsZGVyLCBwcmVzc2VkOiB0cnVlLCBhdDogdGltZSkKICAgICAgICAgICAgYWRhcHRlci5yZWNlaXZlRm9yVGVzdGluZyhpbnB1dDogLmxlZnRTaG91bGRlciwgcHJlc3NlZDogZmFsc2UsIGF0OiB0aW1lICsgMC4xKQogICAgICAgICAgICBhd2FpdCBzZXR0bGUoKQogICAgICAgIH0KCiAgICAgICAgdmFyIGV4cGVjdGVkID0gZXhwZWN0ZWRNb2RpZmllckRvd25zLm1hcCB7IExheWVySGVsZFJlcGVhdFRyYW5zaXRpb24oJDAsIHRydWUpIH0KICAgICAgICBmb3IgXyBpbiAwLi48MyB7CiAgICAgICAgICAgIGV4cGVjdGVkLmFwcGVuZCguaW5pdChWSy50YWIsIHRydWUpKQogICAgICAgICAgICBleHBlY3RlZC5hcHBlbmQoLmluaXQoVksudGFiLCBmYWxzZSkpCiAgICAgICAgfQogICAgICAgIFhDVEFzc2VydEVxdWFsKHNpbmsudHJhbnNpdGlvbnMsIGV4cGVjdGVkKQogICAgICAgIFhDVEFzc2VydEZhbHNlKAogICAgICAgICAgICBzaW5rLnRyYW5zaXRpb25zLmNvbnRhaW5zIHsKICAgICAgICAgICAgICAgIGV4cGVjdGVkTW9kaWZpZXJSZWxlYXNlcy5jb250YWlucygkMC5rZXkpICYmICEkMC5wcmVzc2VkCiAgICAgICAgICAgIH0sCiAgICAgICAgICAgICJMYXllci1vd25lZCBtb2RpZmllcnMgbXVzdCBzdGF5IGRvd24gYWNyb3NzIHJlcGVhdCB0YXBzLiIKICAgICAgICApCgogICAgICAgIGFkYXB0ZXIucmVjZWl2ZUZvclRlc3RpbmcoaW5wdXQ6IC5vcHRpb25zLCBwcmVzc2VkOiBmYWxzZSwgYXQ6IDIpCiAgICAgICAgYXdhaXQgc2V0dGxlKCkKCiAgICAgICAgZXhwZWN0ZWQuYXBwZW5kKGNvbnRlbnRzT2Y6IGV4cGVjdGVkTW9kaWZpZXJSZWxlYXNlcy5tYXAgewogICAgICAgICAgICBMYXllckhlbGRSZXBlYXRUcmFuc2l0aW9uKCQwLCBmYWxzZSkKICAgICAgICB9KQogICAgICAgIFhDVEFzc2VydEVxdWFsKHNpbmsudHJhbnNpdGlvbnMsIGV4cGVjdGVkKQogICAgICAgIFhDVEFzc2VydEVxdWFsKGFkYXB0ZXIubGF5ZXJTdGF0ZUZvclRlc3RpbmcsIC5iYXNlKQogICAgfQoKICAgIHByaXZhdGUgZnVuYyBzZXR0bGUoKSBhc3luYyB7CiAgICAgICAgYXdhaXQgVGFzay55aWVsZCgpCiAgICAgICAgYXdhaXQgVGFzay55aWVsZCgpCiAgICAgICAgYXdhaXQgVGFzay55aWVsZCgpCiAgICAgICAgYXdhaXQgVGFzay55aWVsZCgpCiAgICB9Cn0KCnByaXZhdGUgc3RydWN0IExheWVySGVsZFJlcGVhdFRyYW5zaXRpb246IEVxdWF0YWJsZSB7CiAgICBsZXQga2V5OiBVSW50MTYKICAgIGxldCBwcmVzc2VkOiBCb29sCgogICAgaW5pdChfIGtleTogVUludDE2LCBfIHByZXNzZWQ6IEJvb2wpIHsKICAgICAgICBzZWxmLmtleSA9IGtleQogICAgICAgIHNlbGYucHJlc3NlZCA9IHByZXNzZWQKICAgIH0KfQoKQE1haW5BY3Rvcgpwcml2YXRlIGZpbmFsIGNsYXNzIExheWVySGVsZFJlcGVhdFRlc3RLZXlTaW5rOiBSZW1vdGVXaW5kb3dzS2V5U2luayB7CiAgICB2YXIgaXNJbnB1dEZvcndhcmRpbmdSZWFkeSA9IHRydWUKICAgIHZhciBhY3RpdmVQcm9maWxlSUQ6IFVVSUQ/CiAgICB2YXIgaW5wdXRTZXNzaW9uSUQ6IFVVSUQ/ID0gVVVJRCgpCiAgICB2YXIgbGFzdElucHV0Rm9yd2FyZGluZ1Jlc3VsdDogSW5wdXRGb3J3YXJkaW5nUmVzdWx0PyA9IC5hY2NlcHRlZAogICAgcHJpdmF0ZShzZXQpIHZhciB0cmFuc2l0aW9uczogW0xheWVySGVsZFJlcGVhdFRyYW5zaXRpb25dID0gW10KCiAgICBmdW5jIHNlbmRLZXkodms6IFVJbnQxNiwgcHJlc3NlZDogQm9vbCkgewogICAgICAgIHRyYW5zaXRpb25zLmFwcGVuZCguaW5pdCh2aywgcHJlc3NlZCkpCiAgICB9Cn0K
         run: |
           python3 - <<'PY'
+          import base64
+          import os
           from pathlib import Path
 
           adapter_path = Path('ios/FarRelay/ControllerAdapter.swift')
@@ -96,132 +100,8 @@ jobs:
           source = source[:start] + '\n'.join(new_lines) + source[end:]
           adapter_path.write_text(source)
 
-          test_path = Path('ios/FarRelayTests/LayerHeldStickyModifierRepeatTests.swift')
-          test_path.write_text(r'''import XCTest
-@testable import FarRelay
-
-@MainActor
-final class LayerHeldStickyModifierRepeatTests: XCTestCase {
-    func testLayerOwnedOneModifierRetapsWithoutReleasingUntilLayerRelease() async {
-        await assertLayerOwnedRepeatTap(
-            modifiers: [.alt],
-            expectedModifierDowns: [VK.menu],
-            expectedModifierReleases: [VK.menu]
-        )
-    }
-
-    func testLayerOwnedTwoModifiersRetapWithoutReleasingUntilLayerRelease() async {
-        await assertLayerOwnedRepeatTap(
-            modifiers: [.alt, .shift],
-            expectedModifierDowns: [VK.shift, VK.menu],
-            expectedModifierReleases: [VK.menu, VK.shift]
-        )
-    }
-
-    func testLayerOwnedThreeModifiersRetapWithoutReleasingUntilLayerRelease() async {
-        await assertLayerOwnedRepeatTap(
-            modifiers: [.alt, .shift, .control],
-            expectedModifierDowns: [VK.shift, VK.control, VK.menu],
-            expectedModifierReleases: [VK.menu, VK.control, VK.shift]
-        )
-    }
-
-    private func assertLayerOwnedRepeatTap(
-        modifiers: Set<ControllerKeyboardModifier>,
-        expectedModifierDowns: [UInt16],
-        expectedModifierReleases: [UInt16]
-    ) async {
-        let suiteName = "LayerHeldStickyModifierRepeatTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let mappings = ControllerMappingSettings(defaults: defaults)
-        mappings.setAction(.layer(.init()), for: .options)
-        mappings.setAction(
-            .stickyModifier(.init(modifiers: modifiers, tapKey: .tab)),
-            for: .leftShoulder,
-            layerID: ControllerLayerDefinition.extendedID
-        )
-        mappings.saveDraft()
-
-        let diagnostics = InputDiagnosticStore()
-        diagnostics.isEnabled = true
-        let sink = LayerHeldRepeatTestKeySink()
-        let router = RemoteIntentRouter()
-        router.register(NVDARemoteIntentTarget(keySink: sink))
-        XCTAssertTrue(router.setActiveTarget(id: NVDARemoteIntentTarget.defaultID))
-        let settings = AppSettings()
-        let adapter = DualSenseControllerAdapter(
-            mappings: mappings,
-            settings: settings,
-            router: router,
-            diagnostics: diagnostics,
-            feedback: InteractionFeedback(settings: settings)
-        )
-
-        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
-
-        for index in 0..<3 {
-            let time = 1.1 + (Double(index) * 0.2)
-            adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: time)
-            adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: time + 0.1)
-            await settle()
-        }
-
-        var expected = expectedModifierDowns.map { LayerHeldRepeatTransition($0, true) }
-        for _ in 0..<3 {
-            expected.append(.init(VK.tab, true))
-            expected.append(.init(VK.tab, false))
-        }
-        XCTAssertEqual(sink.transitions, expected)
-        XCTAssertFalse(
-            sink.transitions.contains {
-                expectedModifierReleases.contains($0.key) && !$0.pressed
-            },
-            "Layer-owned modifiers must stay down across repeat taps."
-        )
-
-        adapter.receiveForTesting(input: .options, pressed: false, at: 2)
-        await settle()
-
-        expected.append(contentsOf: expectedModifierReleases.map {
-            LayerHeldRepeatTransition($0, false)
-        })
-        XCTAssertEqual(sink.transitions, expected)
-        XCTAssertEqual(adapter.layerStateForTesting, .base)
-    }
-
-    private func settle() async {
-        await Task.yield()
-        await Task.yield()
-        await Task.yield()
-        await Task.yield()
-    }
-}
-
-private struct LayerHeldRepeatTransition: Equatable {
-    let key: UInt16
-    let pressed: Bool
-
-    init(_ key: UInt16, _ pressed: Bool) {
-        self.key = key
-        self.pressed = pressed
-    }
-}
-
-@MainActor
-private final class LayerHeldRepeatTestKeySink: RemoteWindowsKeySink {
-    var isInputForwardingReady = true
-    var activeProfileID: UUID?
-    var inputSessionID: UUID? = UUID()
-    var lastInputForwardingResult: InputForwardingResult? = .accepted
-    private(set) var transitions: [LayerHeldRepeatTransition] = []
-
-    func sendKey(vk: UInt16, pressed: Bool) {
-        transitions.append(.init(vk, pressed))
-    }
-}
-''')
+          test_source = base64.b64decode(os.environ['TEST_SOURCE_BASE64']).decode('utf-8')
+          Path('ios/FarRelayTests/LayerHeldStickyModifierRepeatTests.swift').write_text(test_source)
           PY
 
       - name: Commit narrow patch
