@@ -27,211 +27,201 @@ jobs:
 
           adapter_path = Path('ios/FarRelay/ControllerAdapter.swift')
           source = adapter_path.read_text()
-          old = '''        let ownedByThisInput = orderedModifiers.allSatisfy {
-              stickyModifierLeases[$0]?.ownerInput == input
-          }
-          if ownedByThisInput {
-              let leases = orderedModifiers.compactMap {
-                  stickyModifierLeases.removeValue(forKey: $0)
-              }
-              routeStickyModifierLeases(
-                  leases,
-                  pressed: false,
-                  eventID: eventID,
-                  input: input
-              )
-              announce("\\(heldModifierDescription(action.modifiers)) released")
-              if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
-              return true
-          }
-          '''
-          new = '''        let ownedLeases = orderedModifiers.compactMap {
-              stickyModifierLeases[$0]
-          }
-          let ownedByThisInput = ownedLeases.count == orderedModifiers.count &&
-              ownedLeases.allSatisfy { $0.ownerInput == input }
+          start_marker = '        let ownedByThisInput = orderedModifiers.allSatisfy {'
+          end_marker = '        guard orderedModifiers.allSatisfy({ stickyModifierLeases[$0] == nil }) else {'
+          start = source.find(start_marker)
+          end = source.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit(f'Could not find sticky modifier replacement boundaries: start={start}, end={end}')
 
-          // A modifier armed from a physically held Action Layer belongs to
-          // that layer gesture. Re-activating the same action must never toggle
-          // those modifiers off; it only repeats the optional tap key. The
-          // layer release remains the single authoritative release boundary.
-          if ownedByThisInput,
-             let heldLayerID = layerEngine.physicallyHeldLayerID,
-             ownedLeases.allSatisfy({ $0.ownerLayerID == heldLayerID }) {
-              let held = heldModifierDescription(action.modifiers)
-              if let tapKey = action.tapKey, let route = ownedLeases.first?.route {
-                  diagnostics.observeController(
-                      eventID: eventID,
-                      input: input,
-                      pressed: true,
-                      stage: "Sticky modifier: layer-owned repeat tap \\(tapKey.label)"
-                  )
-                  Task { @MainActor [router] in
-                      let key = RemoteKey.windowsVirtualKey(tapKey.virtualKey)
-                      _ = await router.route(
-                          .sendKeyTransition(key, pressed: true),
-                          via: route
-                      )
-                      _ = await router.route(
-                          .sendKeyTransition(key, pressed: false),
-                          via: route
-                      )
-                  }
-                  announce("\\(held) still held. \\(tapKey.label) tapped")
-              } else {
-                  announce(
-                      "\\(held) remains held until \\(heldLayerID.capitalized) layer is released"
-                  )
-              }
-              if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
-              return true
-          }
-
-          if ownedByThisInput {
-              let leases = orderedModifiers.compactMap {
-                  stickyModifierLeases.removeValue(forKey: $0)
-              }
-              routeStickyModifierLeases(
-                  leases,
-                  pressed: false,
-                  eventID: eventID,
-                  input: input
-              )
-              announce("\\(heldModifierDescription(action.modifiers)) released")
-              if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
-              return true
-          }
-          '''
-          if source.count(old) != 1:
-              raise SystemExit(f'Expected exactly one sticky toggle block, found {source.count(old)}')
-          adapter_path.write_text(source.replace(old, new))
+          new_lines = [
+              '        let ownedLeases = orderedModifiers.compactMap {',
+              '            stickyModifierLeases[$0]',
+              '        }',
+              '        let ownedByThisInput = ownedLeases.count == orderedModifiers.count &&',
+              '            ownedLeases.allSatisfy { $0.ownerInput == input }',
+              '',
+              '        // A modifier armed from a physically held Action Layer belongs to',
+              '        // that layer gesture. Re-activating the same action must never toggle',
+              '        // those modifiers off; it only repeats the optional tap key. The',
+              '        // layer release remains the single authoritative release boundary.',
+              '        if ownedByThisInput,',
+              '           let heldLayerID = layerEngine.physicallyHeldLayerID,',
+              '           ownedLeases.allSatisfy({ $0.ownerLayerID == heldLayerID }) {',
+              '            let held = heldModifierDescription(action.modifiers)',
+              '            if let tapKey = action.tapKey, let route = ownedLeases.first?.route {',
+              '                diagnostics.observeController(',
+              '                    eventID: eventID,',
+              '                    input: input,',
+              '                    pressed: true,',
+              '                    stage: "Sticky modifier: layer-owned repeat tap \\(tapKey.label)"',
+              '                )',
+              '                Task { @MainActor [router] in',
+              '                    let key = RemoteKey.windowsVirtualKey(tapKey.virtualKey)',
+              '                    _ = await router.route(',
+              '                        .sendKeyTransition(key, pressed: true),',
+              '                        via: route',
+              '                    )',
+              '                    _ = await router.route(',
+              '                        .sendKeyTransition(key, pressed: false),',
+              '                        via: route',
+              '                    )',
+              '                }',
+              '                announce("\\(held) still held. \\(tapKey.label) tapped")',
+              '            } else {',
+              '                announce(',
+              '                    "\\(held) remains held until \\(heldLayerID.capitalized) layer is released"',
+              '                )',
+              '            }',
+              '            if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }',
+              '            return true',
+              '        }',
+              '',
+              '        if ownedByThisInput {',
+              '            let leases = orderedModifiers.compactMap {',
+              '                stickyModifierLeases.removeValue(forKey: $0)',
+              '            }',
+              '            routeStickyModifierLeases(',
+              '                leases,',
+              '                pressed: false,',
+              '                eventID: eventID,',
+              '                input: input',
+              '            )',
+              '            announce("\\(heldModifierDescription(action.modifiers)) released")',
+              '            if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }',
+              '            return true',
+              '        }',
+              '',
+          ]
+          source = source[:start] + '\n'.join(new_lines) + source[end:]
+          adapter_path.write_text(source)
 
           test_path = Path('ios/FarRelayTests/LayerHeldStickyModifierRepeatTests.swift')
           test_path.write_text(r'''import XCTest
-          @testable import FarRelay
+@testable import FarRelay
 
-          @MainActor
-          final class LayerHeldStickyModifierRepeatTests: XCTestCase {
-              func testLayerOwnedOneModifierRetapsWithoutReleasingUntilLayerRelease() async {
-                  await assertLayerOwnedRepeatTap(
-                      modifiers: [.alt],
-                      expectedModifierDowns: [VK.menu],
-                      expectedModifierReleases: [VK.menu]
-                  )
-              }
+@MainActor
+final class LayerHeldStickyModifierRepeatTests: XCTestCase {
+    func testLayerOwnedOneModifierRetapsWithoutReleasingUntilLayerRelease() async {
+        await assertLayerOwnedRepeatTap(
+            modifiers: [.alt],
+            expectedModifierDowns: [VK.menu],
+            expectedModifierReleases: [VK.menu]
+        )
+    }
 
-              func testLayerOwnedTwoModifiersRetapWithoutReleasingUntilLayerRelease() async {
-                  await assertLayerOwnedRepeatTap(
-                      modifiers: [.alt, .shift],
-                      expectedModifierDowns: [VK.shift, VK.menu],
-                      expectedModifierReleases: [VK.menu, VK.shift]
-                  )
-              }
+    func testLayerOwnedTwoModifiersRetapWithoutReleasingUntilLayerRelease() async {
+        await assertLayerOwnedRepeatTap(
+            modifiers: [.alt, .shift],
+            expectedModifierDowns: [VK.shift, VK.menu],
+            expectedModifierReleases: [VK.menu, VK.shift]
+        )
+    }
 
-              func testLayerOwnedThreeModifiersRetapWithoutReleasingUntilLayerRelease() async {
-                  await assertLayerOwnedRepeatTap(
-                      modifiers: [.alt, .shift, .control],
-                      expectedModifierDowns: [VK.shift, VK.control, VK.menu],
-                      expectedModifierReleases: [VK.menu, VK.control, VK.shift]
-                  )
-              }
+    func testLayerOwnedThreeModifiersRetapWithoutReleasingUntilLayerRelease() async {
+        await assertLayerOwnedRepeatTap(
+            modifiers: [.alt, .shift, .control],
+            expectedModifierDowns: [VK.shift, VK.control, VK.menu],
+            expectedModifierReleases: [VK.menu, VK.control, VK.shift]
+        )
+    }
 
-              private func assertLayerOwnedRepeatTap(
-                  modifiers: Set<ControllerKeyboardModifier>,
-                  expectedModifierDowns: [UInt16],
-                  expectedModifierReleases: [UInt16]
-              ) async {
-                  let suiteName = "LayerHeldStickyModifierRepeatTests.\(UUID().uuidString)"
-                  let defaults = UserDefaults(suiteName: suiteName)!
-                  defer { defaults.removePersistentDomain(forName: suiteName) }
+    private func assertLayerOwnedRepeatTap(
+        modifiers: Set<ControllerKeyboardModifier>,
+        expectedModifierDowns: [UInt16],
+        expectedModifierReleases: [UInt16]
+    ) async {
+        let suiteName = "LayerHeldStickyModifierRepeatTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
 
-                  let mappings = ControllerMappingSettings(defaults: defaults)
-                  mappings.setAction(.layer(.init()), for: .options)
-                  mappings.setAction(
-                      .stickyModifier(.init(modifiers: modifiers, tapKey: .tab)),
-                      for: .leftShoulder,
-                      layerID: ControllerLayerDefinition.extendedID
-                  )
-                  mappings.saveDraft()
+        let mappings = ControllerMappingSettings(defaults: defaults)
+        mappings.setAction(.layer(.init()), for: .options)
+        mappings.setAction(
+            .stickyModifier(.init(modifiers: modifiers, tapKey: .tab)),
+            for: .leftShoulder,
+            layerID: ControllerLayerDefinition.extendedID
+        )
+        mappings.saveDraft()
 
-                  let diagnostics = InputDiagnosticStore()
-                  diagnostics.isEnabled = true
-                  let sink = LayerHeldRepeatTestKeySink()
-                  let router = RemoteIntentRouter()
-                  router.register(NVDARemoteIntentTarget(keySink: sink))
-                  XCTAssertTrue(router.setActiveTarget(id: NVDARemoteIntentTarget.defaultID))
-                  let settings = AppSettings()
-                  let adapter = DualSenseControllerAdapter(
-                      mappings: mappings,
-                      settings: settings,
-                      router: router,
-                      diagnostics: diagnostics,
-                      feedback: InteractionFeedback(settings: settings)
-                  )
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        let sink = LayerHeldRepeatTestKeySink()
+        let router = RemoteIntentRouter()
+        router.register(NVDARemoteIntentTarget(keySink: sink))
+        XCTAssertTrue(router.setActiveTarget(id: NVDARemoteIntentTarget.defaultID))
+        let settings = AppSettings()
+        let adapter = DualSenseControllerAdapter(
+            mappings: mappings,
+            settings: settings,
+            router: router,
+            diagnostics: diagnostics,
+            feedback: InteractionFeedback(settings: settings)
+        )
 
-                  adapter.receiveForTesting(input: .options, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .options, pressed: true, at: 1)
 
-                  for index in 0..<3 {
-                      let time = 1.1 + (Double(index) * 0.2)
-                      adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: time)
-                      adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: time + 0.1)
-                      await settle()
-                  }
+        for index in 0..<3 {
+            let time = 1.1 + (Double(index) * 0.2)
+            adapter.receiveForTesting(input: .leftShoulder, pressed: true, at: time)
+            adapter.receiveForTesting(input: .leftShoulder, pressed: false, at: time + 0.1)
+            await settle()
+        }
 
-                  var expected = expectedModifierDowns.map { LayerHeldRepeatTransition($0, true) }
-                  for _ in 0..<3 {
-                      expected.append(.init(VK.tab, true))
-                      expected.append(.init(VK.tab, false))
-                  }
-                  XCTAssertEqual(sink.transitions, expected)
-                  XCTAssertFalse(
-                      sink.transitions.contains {
-                          expectedModifierReleases.contains($0.key) && !$0.pressed
-                      },
-                      "Layer-owned modifiers must stay down across repeat taps."
-                  )
+        var expected = expectedModifierDowns.map { LayerHeldRepeatTransition($0, true) }
+        for _ in 0..<3 {
+            expected.append(.init(VK.tab, true))
+            expected.append(.init(VK.tab, false))
+        }
+        XCTAssertEqual(sink.transitions, expected)
+        XCTAssertFalse(
+            sink.transitions.contains {
+                expectedModifierReleases.contains($0.key) && !$0.pressed
+            },
+            "Layer-owned modifiers must stay down across repeat taps."
+        )
 
-                  adapter.receiveForTesting(input: .options, pressed: false, at: 2)
-                  await settle()
+        adapter.receiveForTesting(input: .options, pressed: false, at: 2)
+        await settle()
 
-                  expected.append(contentsOf: expectedModifierReleases.map {
-                      LayerHeldRepeatTransition($0, false)
-                  })
-                  XCTAssertEqual(sink.transitions, expected)
-                  XCTAssertEqual(adapter.layerStateForTesting, .base)
-              }
+        expected.append(contentsOf: expectedModifierReleases.map {
+            LayerHeldRepeatTransition($0, false)
+        })
+        XCTAssertEqual(sink.transitions, expected)
+        XCTAssertEqual(adapter.layerStateForTesting, .base)
+    }
 
-              private func settle() async {
-                  await Task.yield()
-                  await Task.yield()
-                  await Task.yield()
-                  await Task.yield()
-              }
-          }
+    private func settle() async {
+        await Task.yield()
+        await Task.yield()
+        await Task.yield()
+        await Task.yield()
+    }
+}
 
-          private struct LayerHeldRepeatTransition: Equatable {
-              let key: UInt16
-              let pressed: Bool
+private struct LayerHeldRepeatTransition: Equatable {
+    let key: UInt16
+    let pressed: Bool
 
-              init(_ key: UInt16, _ pressed: Bool) {
-                  self.key = key
-                  self.pressed = pressed
-              }
-          }
+    init(_ key: UInt16, _ pressed: Bool) {
+        self.key = key
+        self.pressed = pressed
+    }
+}
 
-          @MainActor
-          private final class LayerHeldRepeatTestKeySink: RemoteWindowsKeySink {
-              var isInputForwardingReady = true
-              var activeProfileID: UUID?
-              var inputSessionID: UUID? = UUID()
-              var lastInputForwardingResult: InputForwardingResult? = .accepted
-              private(set) var transitions: [LayerHeldRepeatTransition] = []
+@MainActor
+private final class LayerHeldRepeatTestKeySink: RemoteWindowsKeySink {
+    var isInputForwardingReady = true
+    var activeProfileID: UUID?
+    var inputSessionID: UUID? = UUID()
+    var lastInputForwardingResult: InputForwardingResult? = .accepted
+    private(set) var transitions: [LayerHeldRepeatTransition] = []
 
-              func sendKey(vk: UInt16, pressed: Bool) {
-                  transitions.append(.init(vk, pressed))
-              }
-          }
-          '''.replace('\n          ', '\n').lstrip())
+    func sendKey(vk: UInt16, pressed: Bool) {
+        transitions.append(.init(vk, pressed))
+    }
+}
+''')
           PY
 
       - name: Commit narrow patch
