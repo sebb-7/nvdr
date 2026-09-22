@@ -6,11 +6,13 @@ import XCTest
 final class RemSoundAudioReceiverInvariantTests: XCTestCase {
     func testAudioLifecycleDoesNotMutateControlPlane() async {
         let bridge = BridgeClient(speech: SpeechOutput())
+        let initialStatus = bridge.status
+        let initialForwarding = bridge.forwardingEnabled
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_931, password: "phase1"))
         await receiver.stop()
-        XCTAssertEqual(bridge.status, .idle)
-        XCTAssertFalse(bridge.forwardingEnabled)
+        XCTAssertEqual(bridge.status, initialStatus)
+        XCTAssertEqual(bridge.forwardingEnabled, initialForwarding)
     }
 
     func testPlaybackFailureDoesNotTerminateControlPlane() async {
