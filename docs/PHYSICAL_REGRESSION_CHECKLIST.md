@@ -35,6 +35,8 @@ hardware before calling a build physically validated.
 - [ ] Confirm waiting-for-NVDA is not announced or presented as slave-ready.
 - [ ] Test VoiceOver on with Quick Nav on and off, then VoiceOver off; record which arrows iOS reserves.
 - [ ] Test BSI enter/type/send/exit/browse/re-enter, including terminal end and app background while BSI is active.
+- [ ] In Quick Command BSI, enter `ctrl+v` and three-finger swipe up. Confirm the alert announces FarRelay's interpretation, no remote key is sent before Send, and Cancel returns to the same command buffer without leaving Quick Command Mode.
+- [ ] Repeat the Quick Command check and choose Send. Confirm exactly one balanced Control+V is emitted, Quick Navigation is restored, then immediately verify physical F1 and F12 still reach Windows as F1/F12 rather than media actions.
 - [ ] Repeat F-key smoke tests with Magic Keyboard, generic Bluetooth keyboard, Windows-layout keyboard, and USB keyboard where supported.
 - [ ] Enter Quick Navigation and swipe the DualSense touchpad horizontally: confirm Quick Bar → Profiles → Headings ordering and one rotor step per swipe.
 - [ ] In Quick Bar, press Cross and verify the selected Quick Bar action runs without a remote Enter.

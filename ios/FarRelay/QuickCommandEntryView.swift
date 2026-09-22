@@ -15,6 +15,9 @@ struct QuickCommandEntryView: View {
                 Section {
                     QuickCommandTextEditor(
                         controller: controller,
+                        allowsFirstResponder: QuickCommandEditorFocusPolicy.shouldOwnFocus(
+                            isShowingConfirmation: isShowingConfirmation
+                        ),
                         onSubmit: requestConfirmation
                     )
                     .frame(minHeight: 120)
@@ -74,13 +77,24 @@ enum QuickCommandTextInputPolicy {
     }
 }
 
+enum QuickCommandEditorFocusPolicy {
+    static func shouldOwnFocus(isShowingConfirmation: Bool) -> Bool {
+        !isShowingConfirmation
+    }
+}
+
 @MainActor
 private struct QuickCommandTextEditor: UIViewRepresentable {
     let controller: DualSenseControllerAdapter
+    let allowsFirstResponder: Bool
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(controller: controller, onSubmit: onSubmit)
+        Coordinator(
+            controller: controller,
+            allowsFirstResponder: allowsFirstResponder,
+            onSubmit: onSubmit
+        )
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -98,18 +112,29 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         textView.accessibilityHint = "Type a local command. Plus means together and comma means then. With English UEB Braille Screen Input, plus is dot 5, then dots 2-3-5. Three-finger swipe up opens confirmation. Nothing is sent until you choose Send in the alert."
         textView.text = controller.quickCommandBuffer
 
-        DispatchQueue.main.async { [weak textView] in
-            textView?.becomeFirstResponder()
+        if allowsFirstResponder {
+            DispatchQueue.main.async { [weak textView, weak coordinator = context.coordinator] in
+                guard coordinator?.allowsFirstResponder == true else { return }
+                textView?.becomeFirstResponder()
+            }
         }
         return textView
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.allowsFirstResponder = allowsFirstResponder
         if textView.text != controller.quickCommandBuffer {
             textView.text = controller.quickCommandBuffer
         }
+        if !allowsFirstResponder {
+            if textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+            return
+        }
         if !textView.isFirstResponder {
-            DispatchQueue.main.async { [weak textView] in
+            DispatchQueue.main.async { [weak textView, weak coordinator = context.coordinator] in
+                guard coordinator?.allowsFirstResponder == true else { return }
                 textView?.becomeFirstResponder()
             }
         }
@@ -117,10 +142,16 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let controller: DualSenseControllerAdapter
+        var allowsFirstResponder: Bool
         let onSubmit: () -> Void
 
-        init(controller: DualSenseControllerAdapter, onSubmit: @escaping () -> Void) {
+        init(
+            controller: DualSenseControllerAdapter,
+            allowsFirstResponder: Bool,
+            onSubmit: @escaping () -> Void
+        ) {
             self.controller = controller
+            self.allowsFirstResponder = allowsFirstResponder
             self.onSubmit = onSubmit
         }
 
