@@ -56,6 +56,49 @@ enum WindowsKeyboardKey: String, CaseIterable, Codable, Hashable, Identifiable, 
     }
 }
 
+enum WindowsKeyboardKeyGroup: String, CaseIterable, Identifiable, Sendable {
+    case actionKeys = "Action keys"
+    case lettersAndNumbers = "Letters and numbers"
+    case functionKeys = "Function keys"
+    case numpadAndSymbols = "Numpad and symbols"
+
+    var id: String { rawValue }
+
+    var keys: [WindowsKeyboardKey] {
+        switch self {
+        case .actionKeys:
+            [
+                .backspace, .tab, .enter, .escape, .space,
+                .pageUp, .pageDown, .end, .home, .left, .up, .right, .down,
+                .insert, .delete, .capsLock, .pause, .printScreen, .scrollLock,
+                .numLock, .contextMenu, .shift, .leftShift, .rightShift,
+                .control, .leftControl, .rightControl, .alt, .leftAlt,
+                .rightAlt, .windows
+            ]
+        case .lettersAndNumbers:
+            [
+                .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m,
+                .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z,
+                .digit0, .digit1, .digit2, .digit3, .digit4,
+                .digit5, .digit6, .digit7, .digit8, .digit9
+            ]
+        case .functionKeys:
+            [
+                .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12,
+                .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24
+            ]
+        case .numpadAndSymbols:
+            [
+                .numpad0, .numpad1, .numpad2, .numpad3, .numpad4,
+                .numpad5, .numpad6, .numpad7, .numpad8, .numpad9,
+                .numpadMultiply, .numpadAdd, .numpadSubtract, .numpadDecimal,
+                .numpadDivide, .semicolon, .equal, .comma, .minus, .period,
+                .slash, .grave, .leftBracket, .backslash, .rightBracket, .quote
+            ]
+        }
+    }
+}
+
 enum ControllerKeyboardModifier: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case shift, control, alt, windows, nvda
     var id: String { rawValue }
@@ -68,7 +111,57 @@ struct KeyboardAction: Codable, Hashable, Sendable {
 }
 
 struct ControllerStickyModifierAction: Codable, Hashable, Sendable {
-    var modifier: ControllerKeyboardModifier
+    static let maximumHeldModifiers = 3
+
+    var modifiers: Set<ControllerKeyboardModifier>
+    var tapKey: WindowsKeyboardKey?
+
+    init(modifier: ControllerKeyboardModifier) {
+        modifiers = [modifier]
+        tapKey = nil
+    }
+
+    init(
+        modifiers: Set<ControllerKeyboardModifier>,
+        tapKey: WindowsKeyboardKey? = nil
+    ) {
+        self.modifiers = modifiers
+        self.tapKey = tapKey
+    }
+
+    var isValid: Bool {
+        !modifiers.isEmpty && modifiers.count <= Self.maximumHeldModifiers
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modifiers
+        case tapKey
+        case modifier
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let decoded = try container.decodeIfPresent(
+            Set<ControllerKeyboardModifier>.self,
+            forKey: .modifiers
+        ) {
+            modifiers = decoded
+        } else if let legacy = try container.decodeIfPresent(
+            ControllerKeyboardModifier.self,
+            forKey: .modifier
+        ) {
+            modifiers = [legacy]
+        } else {
+            modifiers = []
+        }
+        tapKey = try container.decodeIfPresent(WindowsKeyboardKey.self, forKey: .tapKey)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(modifiers, forKey: .modifiers)
+        try container.encodeIfPresent(tapKey, forKey: .tapKey)
+    }
 }
 
 /// A profile action remains platform-independent until the adapter resolves it
@@ -118,7 +211,11 @@ extension ControllerAction {
             let modifiers = keyboard.modifiers.map(\.label).sorted()
             return (modifiers + [keyboard.key.label]).joined(separator: "+")
         case .stickyModifier(let sticky):
-            return "Hold \(sticky.modifier.label)"
+            let held = sticky.modifiers.map(\.label).sorted().joined(separator: "+")
+            if let tapKey = sticky.tapKey {
+                return "Hold \(held), tap \(tapKey.label)"
+            }
+            return held.isEmpty ? "Hold Modifier" : "Hold \(held)"
         case .layer(let layer):
             return "\(layer.layerID.capitalized) layer"
         case .quickNavigation:
@@ -189,7 +286,7 @@ struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
-    static let currentSchemaVersion = 4
+    static let currentSchemaVersion = 5
     var schemaVersion: Int = currentSchemaVersion
     var id: UUID = UUID()
     var name: String = "Default Controller Profile"
@@ -254,6 +351,24 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
     func action(for input: ControllerInput, layerID: String?) -> ControllerAction? {
         guard let layerID else { return action(for: input) }
         return layers.first { $0.id == layerID }?.action(for: input)
+    }
+
+    static func blank(name: String) -> ControllerProfile {
+        let emptyBindings = ControllerInput.allCases.map {
+            ControllerBinding(sourceInput: $0, action: nil)
+        }
+        let extended = ControllerLayerDefinition(
+            id: ControllerLayerDefinition.extendedID,
+            name: "Extended",
+            bindings: emptyBindings
+        )
+        return ControllerProfile(
+            name: name,
+            bindings: emptyBindings,
+            layers: [extended],
+            quickBar: [],
+            quickNavigationOrder: QuickNavigationCategory.defaultOrder
+        )
     }
 
     static func newDefault(name: String = "Default Controller Profile") -> ControllerProfile {
@@ -713,7 +828,7 @@ final class ControllerMappingSettings {
     @discardableResult
     func createProfile(name: String? = nil) -> UUID {
         let defaultName = "Profile \(profiles.count + 1)"
-        let profile = ControllerProfile.newDefault(name: name ?? defaultName)
+        let profile = ControllerProfile.blank(name: name ?? defaultName)
         profiles.append(profile)
         persistLibrary()
         return profile.id

@@ -134,6 +134,7 @@ struct ControllerMappingView: View {
 
 struct ControllerProfilesView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
+    @State private var createdProfileID: UUID?
 
     var body: some View {
         List {
@@ -165,10 +166,11 @@ struct ControllerProfilesView: View {
                 Button("Add Profile") {
                     let savedExistingDraft = mappings.hasUnsavedChanges
                     let id = mappings.createProfileForEditing()
+                    createdProfileID = id
                     let profile = mappings.profiles.first(where: { $0.id == id })
                     let prefix = savedExistingDraft ? "Saved current profile. " : ""
                     AccessibilityNotification.Announcement(
-                        "\(prefix)Added \(profile?.name ?? "profile"). Ready to edit."
+                        "\(prefix)Added blank \(profile?.name ?? "profile"). Editing now."
                     ).post()
                 }
                 Text("Profile order is also the order used by Next Profile and Previous Profile.")
@@ -181,6 +183,18 @@ struct ControllerProfilesView: View {
         }
         .navigationTitle("Profiles")
         .toolbar { EditButton() }
+        .navigationDestination(
+            isPresented: Binding(
+                get: { createdProfileID != nil },
+                set: { presented in
+                    if !presented { createdProfileID = nil }
+                }
+            )
+        ) {
+            if let createdProfileID {
+                ControllerProfileEditorView(profileID: createdProfileID)
+            }
+        }
     }
 }
 
@@ -476,7 +490,8 @@ struct ControllerBindingEditorState: Equatable {
     }
 
     var modifiers: Set<ControllerKeyboardModifier>
-    var stickyModifier: ControllerKeyboardModifier = .alt
+    var stickyModifiers: Set<ControllerKeyboardModifier> = [.alt]
+    var stickyTapKey: WindowsKeyboardKey?
 
     init(action: ControllerAction?) {
         switch action {
@@ -488,7 +503,8 @@ struct ControllerBindingEditorState: Equatable {
             type = .stickyModifier
             key = nil
             modifiers = []
-            stickyModifier = sticky.modifier
+            stickyModifiers = sticky.modifiers.isEmpty ? [.alt] : sticky.modifiers
+            stickyTapKey = sticky.tapKey
         case .layer:
             type = .layer
             key = nil
@@ -532,7 +548,11 @@ struct ControllerBindingEditorState: Equatable {
             guard let key else { return nil }
             return .keyboard(.init(key: key, modifiers: modifiers))
         case .stickyModifier:
-            return .stickyModifier(.init(modifier: stickyModifier))
+            let action = ControllerStickyModifierAction(
+                modifiers: stickyModifiers,
+                tapKey: stickyTapKey
+            )
+            return action.isValid ? .stickyModifier(action) : nil
         case .layer:
             return .layer(.init())
         case .quickNavigation:
@@ -627,11 +647,16 @@ private struct ControllerActionEditorSections: View {
 
         if editorState.type == .keyboard {
             Section("Keyboard") {
-                Picker("Primary key", selection: $editorState.key) {
-                    Text("Unassigned").tag(WindowsKeyboardKey?.none)
-                    ForEach(WindowsKeyboardKey.allCases) { key in
-                        Text(key.label).tag(Optional(key))
-                    }
+                NavigationLink {
+                    WindowsKeyboardKeyPicker(
+                        title: "Primary key",
+                        selection: $editorState.key
+                    )
+                } label: {
+                    LabeledContent(
+                        "Primary key",
+                        value: editorState.key?.label ?? "Unassigned"
+                    )
                 }
                 ForEach(ControllerKeyboardModifier.allCases) { modifier in
                     Toggle(modifier.label, isOn: modifierBinding(modifier))
@@ -642,12 +667,32 @@ private struct ControllerActionEditorSections: View {
 
         if editorState.type == .stickyModifier {
             Section("Hold / Sticky Modifier") {
-                Picker("Modifier", selection: $editorState.stickyModifier) {
-                    ForEach(ControllerKeyboardModifier.allCases) { modifier in
-                        Text(modifier.label).tag(modifier)
-                    }
+                ForEach(ControllerKeyboardModifier.allCases) { modifier in
+                    Toggle(
+                        "Hold \(modifier.label)",
+                        isOn: stickyModifierBinding(modifier)
+                    )
+                    .disabled(
+                        !editorState.stickyModifiers.contains(modifier) &&
+                        editorState.stickyModifiers.count >= ControllerStickyModifierAction.maximumHeldModifiers
+                    )
                 }
-                Text("In Base, this action toggles the modifier on or off. In a physically held Action Layer, it holds the modifier only until you release the layer button. While that layer-scoped modifier is held, ordinary controller inputs use their Base mappings, so Shift plus D-pad uses arrow keys instead of the layer's alternate D-pad commands. Other Hold Modifier actions in the layer remain available for combinations such as Ctrl+Shift. FarRelay also releases held modifiers on profile changes, remapping, disconnect, backgrounding, or controller loss.")
+                Text("Choose one to three held modifiers.")
+                    .foregroundStyle(.secondary)
+
+                NavigationLink {
+                    WindowsKeyboardKeyPicker(
+                        title: "Tap key",
+                        selection: $editorState.stickyTapKey
+                    )
+                } label: {
+                    LabeledContent(
+                        "Tap key",
+                        value: editorState.stickyTapKey?.label ?? "None"
+                    )
+                }
+
+                Text("On first activation, FarRelay holds the selected modifiers and optionally taps one key once. Activating the same Hold Modifier action again releases its held modifiers. Example: hold Alt and Shift, then tap Tab once. In a physically held Action Layer, the held modifiers release automatically when the layer button is released. Profile changes, remapping, disconnect, backgrounding, or controller loss also release them.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -700,5 +745,56 @@ private struct ControllerActionEditorSections: View {
                 }
             }
         )
+    }
+
+    private func stickyModifierBinding(
+        _ modifier: ControllerKeyboardModifier
+    ) -> Binding<Bool> {
+        Binding(
+            get: { editorState.stickyModifiers.contains(modifier) },
+            set: { selected in
+                if selected {
+                    guard editorState.stickyModifiers.count <
+                            ControllerStickyModifierAction.maximumHeldModifiers else { return }
+                    editorState.stickyModifiers.insert(modifier)
+                } else {
+                    guard editorState.stickyModifiers.count > 1 else { return }
+                    editorState.stickyModifiers.remove(modifier)
+                }
+            }
+        )
+    }
+}
+
+private struct WindowsKeyboardKeyPicker: View {
+    let title: String
+    @Binding var selection: WindowsKeyboardKey?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            Button("Unassigned") {
+                selection = nil
+                dismiss()
+            }
+            .accessibilityValue(selection == nil ? "Selected" : "")
+
+            ForEach(WindowsKeyboardKeyGroup.allCases) { group in
+                DisclosureGroup(group.rawValue) {
+                    ForEach(group.keys) { key in
+                        Button {
+                            selection = key
+                            dismiss()
+                        } label: {
+                            LabeledContent(
+                                key.label,
+                                value: selection == key ? "Selected" : ""
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(title)
     }
 }
