@@ -41,7 +41,7 @@ final class AudioReceiverModel {
         }
     }
 
-    deinit {
+    isolated deinit {
         updatesTask?.cancel()
         playbackTask?.cancel()
     }
@@ -115,7 +115,7 @@ private final class AudioPlayback {
             if !engine.isRunning { try engine.start() }
             if !player.isPlaying { player.play() }
             scheduledBufferCount += 1
-            player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { [weak self] in
+            player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { [weak self] _ in
                 Task { @MainActor in
                     self?.scheduledBufferCount = max((self?.scheduledBufferCount ?? 1) - 1, 0)
                 }
@@ -165,7 +165,7 @@ private final class AudioPlayback {
         })
     }
 
-    deinit {
+    isolated deinit {
         for token in notificationTokens { NotificationCenter.default.removeObserver(token) }
     }
 }
