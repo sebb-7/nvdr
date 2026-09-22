@@ -719,9 +719,48 @@ final class DualSenseControllerAdapter {
             action.modifiers.contains($0)
         }
 
-        let ownedByThisInput = orderedModifiers.allSatisfy {
-            stickyModifierLeases[$0]?.ownerInput == input
+        let ownedLeases = orderedModifiers.compactMap {
+            stickyModifierLeases[$0]
         }
+        let ownedByThisInput = ownedLeases.count == orderedModifiers.count &&
+            ownedLeases.allSatisfy { $0.ownerInput == input }
+
+        // A modifier armed from a physically held Action Layer belongs to
+        // that layer gesture. Re-activating the same action must never toggle
+        // those modifiers off; it only repeats the optional tap key. The
+        // layer release remains the single authoritative release boundary.
+        if ownedByThisInput,
+           let heldLayerID = layerEngine.physicallyHeldLayerID,
+           ownedLeases.allSatisfy({ $0.ownerLayerID == heldLayerID }) {
+            let held = heldModifierDescription(action.modifiers)
+            if let tapKey = action.tapKey, let route = ownedLeases.first?.route {
+                diagnostics.observeController(
+                    eventID: eventID,
+                    input: input,
+                    pressed: true,
+                    stage: "Sticky modifier: layer-owned repeat tap \(tapKey.label)"
+                )
+                Task { @MainActor [router] in
+                    let key = RemoteKey.windowsVirtualKey(tapKey.virtualKey)
+                    _ = await router.route(
+                        .sendKeyTransition(key, pressed: true),
+                        via: route
+                    )
+                    _ = await router.route(
+                        .sendKeyTransition(key, pressed: false),
+                        via: route
+                    )
+                }
+                announce("\(held) still held. \(tapKey.label) tapped")
+            } else {
+                announce(
+                    "\(held) remains held until \(heldLayerID.capitalized) layer is released"
+                )
+            }
+            if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
+            return true
+        }
+
         if ownedByThisInput {
             let leases = orderedModifiers.compactMap {
                 stickyModifierLeases.removeValue(forKey: $0)
@@ -736,7 +775,6 @@ final class DualSenseControllerAdapter {
             if settings.hapticFeedbackEnabled { controllerHaptics.play(.selection) }
             return true
         }
-
         guard orderedModifiers.allSatisfy({ stickyModifierLeases[$0] == nil }) else {
             announce("One of those modifiers is already held by another action")
             return false
