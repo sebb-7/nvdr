@@ -24,10 +24,15 @@ final class ControllerMappingTests: XCTestCase {
     }
 
     func testHoldModifierEditorAndCodableRoundTrip() throws {
-        let action = ControllerAction.stickyModifier(.init(modifier: .alt))
+        let sticky = ControllerStickyModifierAction(
+            modifiers: [.alt, .shift],
+            tapKey: .tab
+        )
+        let action = ControllerAction.stickyModifier(sticky)
         let state = ControllerBindingEditorState(action: action)
         XCTAssertEqual(state.type, .stickyModifier)
-        XCTAssertEqual(state.stickyModifier, .alt)
+        XCTAssertEqual(state.stickyModifiers, [.alt, .shift])
+        XCTAssertEqual(state.stickyTapKey, .tab)
         XCTAssertEqual(state.action, action)
 
         let binding = ControllerBinding(sourceInput: .triangle, action: action)
@@ -37,6 +42,39 @@ final class ControllerMappingTests: XCTestCase {
         )
         XCTAssertFalse(action.isAllowedInQuickBar)
         XCTAssertFalse(action.isRepeatableQuickBarAction)
+    }
+
+    func testHoldModifierLegacySingleModifierPayloadStillDecodes() throws {
+        let legacy = Data(#"{"modifier":"alt"}"#.utf8)
+        let decoded = try JSONDecoder().decode(
+            ControllerStickyModifierAction.self,
+            from: legacy
+        )
+        XCTAssertEqual(decoded.modifiers, [.alt])
+        XCTAssertNil(decoded.tapKey)
+        XCTAssertTrue(decoded.isValid)
+    }
+
+    func testHoldModifierSupportsAtMostThreeHeldModifiers() {
+        XCTAssertTrue(
+            ControllerStickyModifierAction(
+                modifiers: [.control, .alt, .shift],
+                tapKey: .tab
+            ).isValid
+        )
+        XCTAssertFalse(
+            ControllerStickyModifierAction(
+                modifiers: [.control, .alt, .shift, .windows],
+                tapKey: .tab
+            ).isValid
+        )
+        XCTAssertFalse(ControllerStickyModifierAction(modifiers: []).isValid)
+    }
+
+    func testKeyboardPickerGroupsCoverEveryKeyExactlyOnce() {
+        let grouped = WindowsKeyboardKeyGroup.allCases.flatMap(\.keys)
+        XCTAssertEqual(grouped.count, WindowsKeyboardKey.allCases.count)
+        XCTAssertEqual(Set(grouped), Set(WindowsKeyboardKey.allCases))
     }
 
     func testEveryDualSenseInputHasAnIndependentBindingSlot() {
@@ -328,12 +366,32 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(settings.editingProfileID, newID)
         XCTAssertEqual(settings.draftProfile.id, newID)
         XCTAssertEqual(settings.draftProfile.name, "Gaming")
+        XCTAssertTrue(settings.draftProfile.bindings.allSatisfy { $0.action == nil })
+        XCTAssertTrue(
+            settings.draftProfile.layers.flatMap(\.bindings).allSatisfy { $0.action == nil }
+        )
+        XCTAssertTrue(settings.draftProfile.quickBar.isEmpty)
         XCTAssertFalse(settings.hasUnsavedChanges)
         XCTAssertEqual(settings.profiles.first(where: { $0.id == originalID })?.name, "Desktop")
 
         let reloaded = ControllerMappingSettings(defaults: defaults)
         XCTAssertEqual(reloaded.profiles.first(where: { $0.id == originalID })?.name, "Desktop")
         XCTAssertEqual(reloaded.profiles.first(where: { $0.id == newID })?.name, "Gaming")
+    }
+
+    func testNewProfileStartsBlankInsteadOfCopyingRecommendedDefault() {
+        let defaults = makeDefaults()
+        let settings = ControllerMappingSettings(defaults: defaults)
+
+        XCTAssertNotNil(settings.activeProfile.action(for: .dpadUp))
+        let id = settings.createProfile(name: "Blank")
+        let profile = settings.profiles.first(where: { $0.id == id })
+
+        XCTAssertNotNil(profile)
+        XCTAssertTrue(profile!.bindings.allSatisfy { $0.action == nil })
+        XCTAssertTrue(profile!.layers.flatMap(\.bindings).allSatisfy { $0.action == nil })
+        XCTAssertTrue(profile!.quickBar.isEmpty)
+        XCTAssertEqual(profile!.quickNavigationOrder, QuickNavigationCategory.defaultOrder)
     }
 
     func testQuickBarAndRotorOrderMoveDeterministicallyAndPersist() {
