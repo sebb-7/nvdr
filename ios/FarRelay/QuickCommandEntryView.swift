@@ -97,8 +97,8 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         )
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> QuickCommandTextView {
+        let textView = QuickCommandTextView()
         textView.delegate = context.coordinator
         textView.font = .preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
@@ -111,18 +111,13 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         textView.accessibilityLabel = "Quick Command entry"
         textView.accessibilityHint = "Type a local command. Plus means together and comma means then. With English UEB Braille Screen Input, plus is dot 5, then dots 2-3-5. Three-finger swipe up opens confirmation. Nothing is sent until you choose Send in the alert."
         textView.text = controller.quickCommandBuffer
-
-        if allowsFirstResponder {
-            DispatchQueue.main.async { [weak textView, weak coordinator = context.coordinator] in
-                guard coordinator?.allowsFirstResponder == true else { return }
-                textView?.becomeFirstResponder()
-            }
-        }
+        textView.allowsAutomaticFocus = allowsFirstResponder
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: QuickCommandTextView, context: Context) {
         context.coordinator.allowsFirstResponder = allowsFirstResponder
+        textView.allowsAutomaticFocus = allowsFirstResponder
         if textView.text != controller.quickCommandBuffer {
             textView.text = controller.quickCommandBuffer
         }
@@ -132,11 +127,8 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
             }
             return
         }
-        if !textView.isFirstResponder {
-            DispatchQueue.main.async { [weak textView, weak coordinator = context.coordinator] in
-                guard coordinator?.allowsFirstResponder == true else { return }
-                textView?.becomeFirstResponder()
-            }
+        if !textView.isFirstResponder, textView.window != nil {
+            textView.becomeFirstResponder()
         }
     }
 
@@ -170,5 +162,17 @@ private struct QuickCommandTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             controller.updateQuickCommandBuffer(textView.text)
         }
+    }
+}
+
+
+@MainActor
+private final class QuickCommandTextView: UITextView {
+    var allowsAutomaticFocus = true
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, allowsAutomaticFocus, !isFirstResponder else { return }
+        becomeFirstResponder()
     }
 }
