@@ -226,6 +226,43 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
+    func testHoldModifierCanHoldMultipleModifiersAndTapOneKeyOnce() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(
+            .stickyModifier(.init(modifiers: [.alt, .shift], tapKey: .tab)),
+            for: .triangle
+        )
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.shift, true),
+                .init(VK.menu, true),
+                .init(VK.tab, true), .init(VK.tab, false)
+            ]
+        )
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.3)
+        await settle()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.shift, true),
+                .init(VK.menu, true),
+                .init(VK.tab, true), .init(VK.tab, false),
+                .init(VK.menu, false),
+                .init(VK.shift, false)
+            ]
+        )
+    }
+
     func testLayerScopedShiftUsesBaseDpadAndReleasesWithLayerButton() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         mappings.setAction(
@@ -742,6 +779,26 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertFalse(diagnostics.entries.contains { $0.result.contains("SECRET_SENTINEL_123") })
     }
 
+    func testTextModeSubmitSendsEnterAfterLiveTextThenExits() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        _ = adapter.applyTextModeEditorValue("ok")
+        adapter.submitTextModeAndExit()
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(0x4F, true), .init(0x4F, false),
+                .init(0x4B, true), .init(0x4B, false),
+                .init(VK.return, true), .init(VK.return, false)
+            ]
+        )
+        XCTAssertFalse(adapter.isTextModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(adapter.textModeBuffer, "")
+    }
+
     func testNativeBSIDeleteWithEmptyLocalBufferBackspacesPreexistingRemoteText() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
@@ -807,6 +864,34 @@ final class ControllerAdapterTests: XCTestCase {
         // "powershell" is ten literal characters, each represented by one
         // down/up pair between Win+R and Enter.
         XCTAssertEqual(sink.transitions.count, 4 + (10 * 2) + 2)
+    }
+
+    func testQuickCommandWinRunExecutableTextSupportsPeriodAndExits() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("win+r, msedge.exe,enter")
+        XCTAssertEqual(
+            adapter.prepareQuickCommandForConfirmation(),
+            "Windows plus R. Then Type msedge.exe. Then Enter"
+        )
+        XCTAssertTrue(adapter.confirmQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertTrue(
+            sink.transitions.contains {
+                $0.key == WindowsKeyboardKey.period.virtualKey && $0.pressed
+            }
+        )
+        XCTAssertEqual(
+            Array(sink.transitions.suffix(2)),
+            [.init(VK.return, true), .init(VK.return, false)]
+        )
+        XCTAssertFalse(adapter.isQuickCommandModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testQuickCommandSupportsFourPhysicalKeysAndReleasesInReverseOrder() async {
