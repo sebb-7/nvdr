@@ -174,9 +174,7 @@ fn curl_post_json(url: &str, body: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn powershell_transform_command(script: &str) -> String {
-    format!(
-        "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;{script}"
-    )
+    format!("$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;{script}")
 }
 
 fn powershell_transform(script: &str, input: &str) -> Result<String, String> {
@@ -337,8 +335,8 @@ fn activate(code: String) -> Result<(), String> {
         &format!("{origin}/v1/activate"),
         &serde_json::to_vec(&body).map_err(|e| e.to_string())?,
     )?;
-    let activation: ActivationResponse =
-        serde_json::from_slice(&response).map_err(|e| format!("invalid activation response: {e}"))?;
+    let activation: ActivationResponse = serde_json::from_slice(&response)
+        .map_err(|e| format!("invalid activation response: {e}"))?;
     if activation.channel != config.channel {
         return Err("tester code is for a different FarRelay release channel".into());
     }
@@ -385,7 +383,9 @@ fn read_activation_code() -> Result<String, String> {
 }
 
 fn provision_shell_links(install_dir: &Path) -> Result<(), String> {
-    let script = install_dir.join("scripts").join("Install-FarRelayShellLinks.ps1");
+    let script = install_dir
+        .join("scripts")
+        .join("Install-FarRelayShellLinks.ps1");
     if !script.is_file() {
         return Err("FarRelay shell-link provisioning script is missing".into());
     }
@@ -552,13 +552,8 @@ fn main() {
     if let Err(error) = result {
         if matches!(command.as_str(), "check" | "update" | "--check-and-install") {
             if let Ok(config) = load_config() {
-                let _ = write_update_status(
-                    "error",
-                    &config.installed_version,
-                    None,
-                    false,
-                    &error,
-                );
+                let _ =
+                    write_update_status("error", &config.installed_version, None, false, &error);
             }
         }
         eprintln!("farrelay-updater: {error}");
@@ -573,17 +568,22 @@ mod tests {
     #[test]
     fn dpapi_transform_loads_system_security_in_clean_powershell() {
         let command = powershell_transform_command("Write-Output ok");
-        assert!(command.starts_with(
-            "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;"
-        ));
+        assert!(command
+            .starts_with("$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Security;"));
         assert!(command.ends_with("Write-Output ok"));
     }
 
     #[test]
     fn accepts_only_root_https_manifest_endpoint() {
-        assert!(valid_manifest_url("https://example.workers.dev/v1/manifest"));
-        assert!(!valid_manifest_url("http://example.workers.dev/v1/manifest"));
-        assert!(!valid_manifest_url("https://user@example.workers.dev/v1/manifest"));
+        assert!(valid_manifest_url(
+            "https://example.workers.dev/v1/manifest"
+        ));
+        assert!(!valid_manifest_url(
+            "http://example.workers.dev/v1/manifest"
+        ));
+        assert!(!valid_manifest_url(
+            "https://user@example.workers.dev/v1/manifest"
+        ));
         assert!(!valid_manifest_url("https://example.workers.dev/v1/other"));
     }
 
