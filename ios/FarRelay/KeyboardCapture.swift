@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Hosts the UIKit responder path and the additive GameController path for an
-/// attached physical keyboard. The view is intentionally non-interactive and
-/// inaccessible: it never competes with the remote screen's VoiceOver order.
+/// Hosts the UIKit responder path for an attached physical keyboard. Direct
+/// F1-F12 priority commands are authoritative because that path is physically
+/// validated. The view is intentionally non-interactive and inaccessible.
 struct KeyboardCapture: UIViewRepresentable {
     let bridge: BridgeClient
     let settings: AppSettings
@@ -54,6 +54,7 @@ final class CaptureView: UIView {
     private var forwardedCommandUsages: Set<Int> = []
     private var consumedFallbackCommandUsages: Set<Int> = []
     private var gameControllerCapture: GameControllerKeyboardCapture?
+    private var keyboardCaptureActive = false
 
     override var canBecomeFirstResponder: Bool { true }
 
@@ -71,12 +72,23 @@ final class CaptureView: UIView {
     }
 
     func setKeyboardCaptureActive(_ active: Bool) {
+        guard active != keyboardCaptureActive else { return }
+        keyboardCaptureActive = active
+
         if active {
-            if gameControllerCapture == nil {
+            // Keep the physically validated UIKit responder + priority
+            // UIKeyCommand path authoritative. Do not install GCKeyboard in
+            // front of it; that later layer has not been physically validated
+            // against the media-key regression.
+            if PhysicalFunctionRowCapturePolicy.installsGameControllerCapture {
                 let capture = GameControllerKeyboardCapture(owner: self)
                 gameControllerCapture = capture
                 capture.start()
             }
+            diagnostics?.observe(
+                source: .responder,
+                result: "direct priority F1-F12 capture armed"
+            )
         } else {
             gameControllerCapture?.stop()
             gameControllerCapture = nil
@@ -130,22 +142,10 @@ final class CaptureView: UIView {
                 }
             }
             flushPendingCommand(bridge)
-            let possibleVK = remoteVK(for: key)
-            if let possibleVK, isFunctionVirtualKey(possibleVK) {
-                if functionDuplicateGate.suppresses(
-                    virtualKey: possibleVK,
-                    pressed: pressed,
-                    source: .rawPress,
-                    modifierFlags: key.modifierFlags.rawValue,
-                    originUsage: key.keyCode.rawValue
-                ) {
-                    diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: possibleVK, result: "deduplicated against another capture path")
-                    claimed = true
-                    continue
-                }
-                claimed = forwardRawKey(key, pressed: pressed, bridge: bridge, functionDedupAlreadyChecked: true) || claimed
-                continue
-            }
+            // Match the physically validated direct path: raw F1-F12 are
+            // forwarded immediately. Priority UIKeyCommand duplication is
+            // handled by PriorityRawDuplicateGate, not by a timed cross-source
+            // gate.
             claimed = forwardRawKey(key, pressed: pressed, bridge: bridge) || claimed
         }
         return claimed
@@ -184,8 +184,7 @@ final class CaptureView: UIView {
     private func forwardRawKey(
         _ key: UIKey,
         pressed: Bool,
-        bridge: BridgeClient,
-        functionDedupAlreadyChecked: Bool = false
+        bridge: BridgeClient
     ) -> Bool {
         let vk = remoteVK(for: key)
         diagnostics?.observe(
@@ -197,16 +196,6 @@ final class CaptureView: UIView {
             result: vk == nil ? "unmapped HID usage" : "mapped"
         )
         guard let vk else { return false }
-        if !functionDedupAlreadyChecked, isFunctionVirtualKey(vk), functionDuplicateGate.suppresses(
-            virtualKey: vk,
-            pressed: pressed,
-            source: .rawPress,
-            modifierFlags: key.modifierFlags.rawValue,
-            originUsage: key.keyCode.rawValue
-        ) {
-            diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: "deduplicated against another capture path")
-            return true
-        }
         if priorityDuplicateGate.suppressesRaw(vk: vk, pressed: pressed) {
             diagnostics?.observe(source: .rawPress, hidUsage: key.keyCode.rawValue, modifiers: key.modifierFlags.rawValue, pressed: pressed, virtualKey: vk, result: "suppressed priority-command duplicate")
             return true
@@ -230,16 +219,6 @@ final class CaptureView: UIView {
         reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
         consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
         pendingCommandKeys.removeAll()
-        if functionDuplicateGate.suppresses(
-            virtualKey: mapping.virtualKey,
-            pressed: true,
-            source: .rawFallback,
-            modifierFlags: key.modifierFlags.rawValue,
-            originUsage: mapping.hidUsage.rawValue
-        ) {
-            diagnostics?.observe(source: .commandFallback, hidUsage: mapping.hidUsage.rawValue, modifiers: key.modifierFlags.rawValue, virtualKey: mapping.virtualKey, result: "deduplicated fallback event")
-            return true
-        }
         let results = bridge.forwardFunctionKeyTap(
             vk: mapping.virtualKey,
             modifiers: CommandFunctionKeyFallback.preservedModifiers(for: key.modifierFlags)
@@ -256,7 +235,13 @@ final class CaptureView: UIView {
 
     override var keyCommands: [UIKeyCommand]? {
         guard bridge?.forwardingEnabled == true else { return [] }
-        let reserved = ReservedKeyForwardingPolicy.registrations.map { registration in
+
+        // Keep the exact physically validated priority surface: arrows,
+        // Escape, and F1-F12 with their modifier combinations. Command-number
+        // fallback still exists in raw presses, but its 96 additional
+        // UIKeyCommands are intentionally not installed in front of the
+        // direct function row.
+        return PhysicalFunctionRowCapturePolicy.priorityRegistrations.map { registration in
             let command = UIKeyCommand(
                 input: registration.input,
                 modifierFlags: ReservedKeyForwardingPolicy.modifierFlags(for: registration.modifiers),
@@ -265,67 +250,34 @@ final class CaptureView: UIView {
             command.wantsPriorityOverSystemBehavior = true
             return command
         }
-        let fallbacks = CommandFunctionKeyFallback.keyCommandRegistrations.map { registration in
-            let command = UIKeyCommand(
-                input: registration.input,
-                modifierFlags: registration.modifiers,
-                action: #selector(handleReservedKeyCommand(_:))
-            )
-            command.wantsPriorityOverSystemBehavior = true
-            return command
-        }
-        return reserved + fallbacks
     }
 
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
         guard let bridge, bridge.forwardingEnabled, let input = command.input else { return }
-        if command.modifierFlags.contains(.command),
-           let mapping = CommandFunctionKeyFallback.mapping(forInput: input) {
-            reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
-            consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
-            pendingCommandKeys.removeAll()
-            if functionDuplicateGate.suppresses(
-                virtualKey: mapping.virtualKey,
-                pressed: true,
-                source: .keyCommandFallback,
-                modifierFlags: command.modifierFlags.rawValue,
-                originUsage: mapping.hidUsage.rawValue
-            ) {
-                diagnostics?.observe(source: .commandFallback, hidUsage: mapping.hidUsage.rawValue, modifiers: command.modifierFlags.rawValue, virtualKey: mapping.virtualKey, result: "deduplicated fallback event")
-                return
-            }
-            let results = bridge.forwardFunctionKeyTap(
-                vk: mapping.virtualKey,
-                modifiers: CommandFunctionKeyFallback.preservedModifiers(for: command.modifierFlags)
-            )
-            diagnostics?.observe(source: .commandFallback, hidUsage: mapping.hidUsage.rawValue, modifiers: command.modifierFlags.rawValue, virtualKey: mapping.virtualKey, result: fallbackDiagnosticResult(flags: command.modifierFlags, results: results))
-            return
-        }
         guard let transitions = ReservedKeyForwardingPolicy.transitions(
             for: input,
             modifierFlags: command.modifierFlags,
             optionMapping: .alt,
             commandMapping: .win
         ) else {
-            diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, result: "unmapped key command")
-            return
-        }
-        if let functionVK = ReservedKeyForwardingPolicy.vk(forInput: input),
-           isFunctionVirtualKey(functionVK),
-           functionDuplicateGate.suppresses(
-                virtualKey: functionVK,
-                pressed: true,
+            diagnostics?.observe(
                 source: .keyCommand,
-                modifierFlags: command.modifierFlags.rawValue,
-                originUsage: functionHIDUsage(for: functionVK)
-           ) {
-            diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, virtualKey: functionVK, result: "deduplicated against another capture path")
+                modifiers: command.modifierFlags.rawValue,
+                result: "unmapped key command"
+            )
             return
         }
+
         priorityDuplicateGate.recordPriorityTransitions(transitions)
         for transition in transitions {
             let result = bridge.forwardKey(vk: transition.vk, pressed: transition.pressed)
-            diagnostics?.observe(source: .keyCommand, modifiers: command.modifierFlags.rawValue, pressed: transition.pressed, virtualKey: transition.vk, result: result.diagnosticText)
+            diagnostics?.observe(
+                source: .keyCommand,
+                modifiers: command.modifierFlags.rawValue,
+                pressed: transition.pressed,
+                virtualKey: transition.vk,
+                result: result.diagnosticText
+            )
         }
     }
 
