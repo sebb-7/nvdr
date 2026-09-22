@@ -14,7 +14,7 @@ struct TextModeEntryView: View {
                     RemoteTextModeEditor(controller: controller)
                         .frame(minHeight: 120)
                 } footer: {
-                    Text("Text is sent live. Swipe left in Braille Screen Input to delete. Once the local session is empty, further deletes remove pre-existing remote text. R3 also sends a remote Backspace.")
+                    Text("Text is sent live. Three-finger swipe up in Braille Screen Input sends Enter, closes Text Mode, and returns to Quick Navigation. Swipe left to delete. Once the local session is empty, further deletes remove pre-existing remote text. R3 also sends a remote Backspace.")
                 }
             }
             .navigationTitle("Text Mode")
@@ -24,6 +24,12 @@ struct TextModeEntryView: View {
                 }
             }
         }
+    }
+}
+
+enum TextModeInputPolicy {
+    static func requestsSubmitAndExit(replacementText: String) -> Bool {
+        replacementText.contains("\n") || replacementText.contains("\r")
     }
 }
 
@@ -52,7 +58,7 @@ struct RemoteTextModeEditor: UIViewRepresentable {
         textView.smartQuotesType = .no
         textView.smartInsertDeleteType = .no
         textView.accessibilityLabel = "Remote text entry"
-        textView.accessibilityHint = "Text is sent live. Text Mode supports appending and deleting from the end."
+        textView.accessibilityHint = "Text is sent live. Three-finger swipe up sends Enter and exits Text Mode. Text Mode supports appending and deleting from the end."
         textView.text = controller.textModeBuffer
         context.coordinator.moveCaretToEnd(textView)
 
@@ -87,6 +93,11 @@ struct RemoteTextModeEditor: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText replacement: String
         ) -> Bool {
+            if TextModeInputPolicy.requestsSubmitAndExit(replacementText: replacement) {
+                controller.submitTextModeAndExit()
+                return false
+            }
+
             let end = (textView.text as NSString).length
 
             if replacement.isEmpty {
