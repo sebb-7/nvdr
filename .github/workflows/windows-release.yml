@@ -71,6 +71,21 @@ jobs:
           if (-not $env:GATEWAY_URL.StartsWith("https://")) { throw "gateway_url must use HTTPS" }
           if ($env:GATEWAY_URL.EndsWith("/")) { throw "gateway_url must not end with a slash" }
 
+      - name: Validate publish secrets
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        env:
+          FARRELAY_ADMIN_TOKEN: ${{ secrets.FARRELAY_ADMIN_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          foreach ($name in @('FARRELAY_ADMIN_TOKEN','CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID')) {
+            $value = (Get-Item "Env:$name").Value
+            if ([string]::IsNullOrWhiteSpace($value)) {
+              throw "Required GitHub Actions secret $name is not configured."
+            }
+          }
+
       - name: Test FarRelay core
         run: cargo test --locked
 
@@ -181,11 +196,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          foreach ($name in @('FARRELAY_ADMIN_TOKEN','CLOUDFLARE_API_TOKEN','CLOUDFLARE_ACCOUNT_ID')) {
-            if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) {
-              throw "Required GitHub Actions secret $name is not configured."
-            }
-          }
           & .\windows\release\Publish-FarRelayPrivateRelease.ps1 `
             -Channel $env:CHANNEL `
             -DistributionDirectory $env:DIST `
