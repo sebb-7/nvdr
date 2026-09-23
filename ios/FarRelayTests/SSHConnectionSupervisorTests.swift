@@ -181,11 +181,11 @@ final class SSHConnectionSupervisorTests: XCTestCase {
         var input = SSHInputState()
 
         XCTAssertEqual(
-            input.command(forKey: VK.f5, pressed: true, eventID: 418)?.line,
+            input.command(forKey: VK.f1 + 4, pressed: true, eventID: 418)?.line,
             "key 116 1 event=418"
         )
         XCTAssertEqual(
-            input.command(forKey: VK.f5, pressed: false, eventID: 419)?.line,
+            input.command(forKey: VK.f1 + 4, pressed: false, eventID: 419)?.line,
             "key 116 0 event=419"
         )
     }
