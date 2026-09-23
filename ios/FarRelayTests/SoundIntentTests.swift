@@ -26,7 +26,10 @@ final class SoundIntentTests: XCTestCase {
 
         XCTAssertFalse(preferences.preference(for: .action).isEnabled)
         XCTAssertTrue(preferences.preference(for: .success).isEnabled)
-        XCTAssertEqual(preferences.preference(for: .success).filename, .success.defaultFilename)
+        XCTAssertEqual(
+            preferences.preference(for: .success).filename,
+            InteractionSoundIntent.success.defaultFilename
+        )
     }
 
     func testSelectingAnAppSoundChangesOnlyThatSemanticEvent() {

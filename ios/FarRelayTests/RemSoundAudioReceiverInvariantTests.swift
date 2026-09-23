@@ -63,7 +63,8 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         let receiver = RemSoundAudioReceiver()
         let malformedPing = try XCTUnwrap(Data(hex: "524D4E440104FFFF0100000000"))
 
-        XCTAssertNil(await receiver.ingestAndPrepareReply(malformedPing))
+        let reply = await receiver.ingestAndPrepareReply(malformedPing)
+        XCTAssertNil(reply)
         let snapshot = await receiver.snapshot()
         XCTAssertEqual(snapshot.state, .idle)
         XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 0)
@@ -75,9 +76,11 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
     func testHeartbeatPongAndControlPacketsCannotManufactureReplies() async throws {
         let receiver = RemSoundAudioReceiver()
         let pong = try XCTUnwrap(Data(hex: "524D4E440104FFFF01000000010100000000000000"))
-        XCTAssertNil(await receiver.ingestAndPrepareReply(pong))
+        let pongReply = await receiver.ingestAndPrepareReply(pong)
+        XCTAssertNil(pongReply)
         let control = try XCTUnwrap(Data(hex: "524D4E4401050100010000000000"))
-        XCTAssertNil(await receiver.ingestAndPrepareReply(control))
+        let controlReply = await receiver.ingestAndPrepareReply(control)
+        XCTAssertNil(controlReply)
         let snapshot = await receiver.snapshot()
         XCTAssertEqual(snapshot.state, .idle)
         XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 0)
@@ -122,7 +125,8 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_939, password: "wrong password"))
 
         let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
-        XCTAssertNotNil(await receiver.ingestAndPrepareReply(ping))
+        let reply = await receiver.ingestAndPrepareReply(ping)
+        XCTAssertNotNil(reply)
         var snapshot = await receiver.snapshot()
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
         XCTAssertNotEqual(snapshot.state, .failed("The sender password does not match."))
