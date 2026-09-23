@@ -279,25 +279,31 @@ final class BridgeClient {
     /// Unicode by iOS. Send it through the bridge's clipboard-paste command so
     /// the result does not depend on either the local physical keyboard layout
     /// or the active Windows keyboard layout.
-    func sendText(_ text: String) {
+    @discardableResult
+    func sendText(_ text: String) -> InputForwardingResult {
         guard status == .ready else {
-            lastInputForwardingResult = .rejected("connection is not ready")
-            return
+            let result: InputForwardingResult = .rejected("connection is not ready")
+            lastInputForwardingResult = result
+            return result
         }
         guard inputReady, let commandContinuation else {
-            lastInputForwardingResult = .rejected("input channel is not ready")
-            return
+            let result: InputForwardingResult = .rejected("input channel is not ready")
+            lastInputForwardingResult = result
+            return result
         }
+        let result: InputForwardingResult
         switch commandContinuation.yield(.type(text)) {
         case .enqueued:
-            lastInputForwardingResult = .accepted
+            result = .accepted
         case .dropped:
-            lastInputForwardingResult = .rejected("transmission queue is full")
+            result = .rejected("transmission queue is full")
         case .terminated:
-            lastInputForwardingResult = .rejected("transmission channel ended")
+            result = .rejected("transmission channel ended")
         @unknown default:
-            lastInputForwardingResult = .rejected("unknown transmission state")
+            result = .rejected("unknown transmission state")
         }
+        lastInputForwardingResult = result
+        return result
     }
 
     /// Read-only remote-channel readiness for semantic adapters. This never

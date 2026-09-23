@@ -209,4 +209,6 @@ private final class CrossTargetWindowsSink: RemoteWindowsKeySink {
         let state = pressed ? "down" : "up"
         transitions.append("\(vk) \(state)")
     }
+
+    func sendText(_ text: String) -> InputForwardingResult { lastInputForwardingResult ?? .accepted }
 }

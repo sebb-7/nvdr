@@ -121,4 +121,6 @@ private final class LayerHeldRepeatTestKeySink: RemoteWindowsKeySink {
     func sendKey(vk: UInt16, pressed: Bool) {
         transitions.append(.init(vk, pressed))
     }
+
+    func sendText(_ text: String) -> InputForwardingResult { lastInputForwardingResult ?? .accepted }
 }

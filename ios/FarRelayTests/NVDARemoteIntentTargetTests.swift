@@ -106,6 +106,18 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
+    func testRejectedResolvedTextIsNotReportedAsPerformed() async {
+        let sink = FakeWindowsKeySink()
+        sink.lastInputForwardingResult = .rejected("transmission queue is full")
+        let target = NVDARemoteIntentTarget(keySink: sink)
+
+        let result = await target.perform(.sendText("á"))
+
+        XCTAssertEqual(result, .failed("NVDA transport rejected the text: transmission queue is full"))
+        XCTAssertEqual(sink.texts, ["á"])
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
     func testStatefulChordBalancesModifierAndKeyOnRelease() async {
         let sink = FakeWindowsKeySink()
         let target = NVDARemoteIntentTarget(keySink: sink)
@@ -199,7 +211,8 @@ private final class FakeWindowsKeySink: RemoteWindowsKeySink {
         transitions.append(KeyTransition(vk, pressed))
     }
 
-    func sendText(_ text: String) {
+    func sendText(_ text: String) -> InputForwardingResult {
         texts.append(text)
+        return lastInputForwardingResult ?? .accepted
     }
 }

@@ -1340,8 +1340,9 @@ private final class ControllerTestKeySink: RemoteWindowsKeySink {
         transitions.append(.init(vk, pressed))
     }
 
-    func sendText(_ text: String) {
+    func sendText(_ text: String) -> InputForwardingResult {
         texts.append(text)
+        return lastInputForwardingResult ?? .accepted
     }
 }
 
