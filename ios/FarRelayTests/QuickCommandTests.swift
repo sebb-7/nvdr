@@ -61,8 +61,8 @@ final class QuickCommandTests: XCTestCase {
         XCTAssertEqual(command.steps[1], .text("github.com/test?a=1&b=2"))
     }
 
-    func testFourSimultaneousKeysAreAllowed() throws {
-        let command = try QuickCommandParser.parse("ctrl+shift+delete+escape")
+    func testFourModifiersAndOneTargetAreAllowed() throws {
+        let command = try QuickCommandParser.parse("ctrl+shift+alt+win+s")
 
         XCTAssertEqual(
             command.steps,
@@ -70,20 +70,36 @@ final class QuickCommandTests: XCTestCase {
                 .chord(.init(keys: [
                     .modifier(.control),
                     .modifier(.shift),
-                    .key(.named(.delete)),
-                    .key(.named(.escape)),
+                    .modifier(.alt),
+                    .modifier(.windows),
+                    .key(.character("s")),
                 ])),
             ]
         )
     }
 
-    func testFiveSimultaneousKeysFailClosed() {
+    func testMultipleTargetKeysFailClosed() {
         XCTAssertThrowsError(
-            try QuickCommandParser.parse("ctrl+shift+alt+delete+escape")
+            try QuickCommandParser.parse("ctrl+shift+delete+escape")
         ) { error in
             XCTAssertEqual(
                 error as? QuickCommandParseError,
-                .tooManyChordKeys(position: 1, maximum: 4)
+                .multipleChordTargets(position: 1)
+            )
+        }
+    }
+
+    func testModifierAfterTargetFailsClosed() {
+        XCTAssertThrowsError(try QuickCommandParser.parse("ctrl+tab+shift")) { error in
+            XCTAssertEqual(error as? QuickCommandParseError, .modifierAfterTarget(position: 1))
+        }
+    }
+
+    func testMoreThanFourModifiersFailsClosed() {
+        XCTAssertThrowsError(try QuickCommandParser.parse("ctrl+shift+alt+win+nvda+a")) { error in
+            XCTAssertEqual(
+                error as? QuickCommandParseError,
+                .tooManyChordKeys(position: 1, maximum: 5)
             )
         }
     }

@@ -30,6 +30,10 @@ enum RemoteIntent: Equatable, Sendable {
 
     case sendKey(RemoteKey)
     case sendChord(RemoteChord)
+    /// Unicode text that has already been resolved by the local text input
+    /// system. Targets must preserve these characters rather than translating
+    /// them through the remote machine's active keyboard layout.
+    case sendText(String)
     /// Stateful raw input used by controller adapters. A matching release is
     /// required so a remote modifier or key cannot remain held after a local
     /// controller lifecycle change.
@@ -65,6 +69,8 @@ enum RemoteIntent: Equatable, Sendable {
             .rawKeyInput
         case .sendChord, .sendChordTransition, .repeatChord:
             .rawChordInput
+        case .sendText:
+            .textInput
         case .macRemote:
             .macRemoteControl
         }
@@ -199,6 +205,7 @@ enum RemoteCapability: Hashable, Sendable {
     case terminalControl
     case rawKeyInput
     case rawChordInput
+    case textInput
     case macRemoteControl
 }
 

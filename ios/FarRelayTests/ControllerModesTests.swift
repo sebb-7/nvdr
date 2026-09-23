@@ -195,15 +195,36 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(gesture.move(x: 0.0), 1)
     }
 
-    func testTextMapperUsesShiftForUppercaseAndCommonPunctuation() {
+    func testTextMapperHasCompleteUSAsciiPunctuationTable() {
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "A"), .init(key: .a, modifiers: [.shift]))
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: "z"), .init(key: .z))
         XCTAssertEqual(ControllerTextCharacterMapper.action(for: " "), .init(key: .space))
-        XCTAssertEqual(ControllerTextCharacterMapper.action(for: "?"), .init(key: .slash, modifiers: [.shift]))
-        XCTAssertEqual(ControllerTextCharacterMapper.action(for: "{"), .init(key: .leftBracket, modifiers: [.shift]))
-        XCTAssertEqual(ControllerTextCharacterMapper.action(for: "!"), .init(key: .digit1, modifiers: [.shift]))
-        XCTAssertEqual(ControllerTextCharacterMapper.action(for: "@"), .init(key: .digit2, modifiers: [.shift]))
-        XCTAssertEqual(ControllerTextCharacterMapper.action(for: "_"), .init(key: .minus, modifiers: [.shift]))
+        let cases: [(Character, KeyboardAction)] = [
+            ("/", .init(key: .slash)), ("?", .init(key: .slash, modifiers: [.shift])),
+            ("[", .init(key: .leftBracket)), ("{", .init(key: .leftBracket, modifiers: [.shift])),
+            ("]", .init(key: .rightBracket)), ("}", .init(key: .rightBracket, modifiers: [.shift])),
+            ("\\", .init(key: .backslash)), ("|", .init(key: .backslash, modifiers: [.shift])),
+            (";", .init(key: .semicolon)), (":", .init(key: .semicolon, modifiers: [.shift])),
+            ("'", .init(key: .quote)), ("\"", .init(key: .quote, modifiers: [.shift])),
+            (",", .init(key: .comma)), ("<", .init(key: .comma, modifiers: [.shift])),
+            (".", .init(key: .period)), (">", .init(key: .period, modifiers: [.shift])),
+            ("`", .init(key: .grave)), ("~", .init(key: .grave, modifiers: [.shift])),
+            ("-", .init(key: .minus)), ("_", .init(key: .minus, modifiers: [.shift])),
+            ("=", .init(key: .equal)), ("+", .init(key: .equal, modifiers: [.shift])),
+            ("1", .init(key: .digit1)), ("!", .init(key: .digit1, modifiers: [.shift])),
+            ("2", .init(key: .digit2)), ("@", .init(key: .digit2, modifiers: [.shift])),
+            ("3", .init(key: .digit3)), ("#", .init(key: .digit3, modifiers: [.shift])),
+            ("4", .init(key: .digit4)), ("$", .init(key: .digit4, modifiers: [.shift])),
+            ("5", .init(key: .digit5)), ("%", .init(key: .digit5, modifiers: [.shift])),
+            ("6", .init(key: .digit6)), ("^", .init(key: .digit6, modifiers: [.shift])),
+            ("7", .init(key: .digit7)), ("&", .init(key: .digit7, modifiers: [.shift])),
+            ("8", .init(key: .digit8)), ("*", .init(key: .digit8, modifiers: [.shift])),
+            ("9", .init(key: .digit9)), ("(", .init(key: .digit9, modifiers: [.shift])),
+            ("0", .init(key: .digit0)), (")", .init(key: .digit0, modifiers: [.shift])),
+        ]
+        for (character, expected) in cases {
+            XCTAssertEqual(ControllerTextCharacterMapper.action(for: character), expected, "\(character)")
+        }
         XCTAssertNil(ControllerTextCharacterMapper.action(for: "é"))
     }
 

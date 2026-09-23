@@ -95,6 +95,17 @@ final class NVDARemoteIntentTargetTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.return, true), .init(VK.return, false)])
     }
 
+    func testResolvedTextIsPassedWithoutVirtualKeyTranslation() async {
+        let sink = FakeWindowsKeySink()
+        let target = NVDARemoteIntentTarget(keySink: sink)
+
+        let result = await target.perform(.sendText("/ ? [ ] { } \\ | ; : ' \" , < . > - _ = +"))
+
+        XCTAssertEqual(result, .performed)
+        XCTAssertEqual(sink.texts, ["/ ? [ ] { } \\ | ; : ' \" , < . > - _ = +"])
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
     func testStatefulChordBalancesModifierAndKeyOnRelease() async {
         let sink = FakeWindowsKeySink()
         let target = NVDARemoteIntentTarget(keySink: sink)
@@ -178,6 +189,7 @@ private final class FakeWindowsKeySink: RemoteWindowsKeySink {
     var inputSessionID: UUID?
     var lastInputForwardingResult: InputForwardingResult? = .accepted
     var transitions: [KeyTransition] = []
+    var texts: [String] = []
 
     init(isInputForwardingReady: Bool = true) {
         self.isInputForwardingReady = isInputForwardingReady
@@ -185,5 +197,9 @@ private final class FakeWindowsKeySink: RemoteWindowsKeySink {
 
     func sendKey(vk: UInt16, pressed: Bool) {
         transitions.append(KeyTransition(vk, pressed))
+    }
+
+    func sendText(_ text: String) {
+        texts.append(text)
     }
 }

@@ -60,7 +60,7 @@ final class DualSenseControllerAdapter {
     private struct PreparedQuickCommand {
         let command: QuickCommand
         let preview: String
-        let plan: [[[RemoteKey]]]
+        let plan: [[QuickCommandTransmission]]
         let route: RemoteIntentRoute
     }
 
@@ -1108,7 +1108,7 @@ final class DualSenseControllerAdapter {
             return nil
         }
 
-        let plan: [[[RemoteKey]]]
+        let plan: [[QuickCommandTransmission]]
         do {
             switch target.kind {
             case .nvdaRemote:
@@ -1243,10 +1243,15 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    private enum QuickCommandTransmission {
+        case chord([RemoteKey])
+        case resolvedText(String)
+    }
+
     private func resolveWindowsQuickCommandPlan(
         _ command: QuickCommand
-    ) throws -> [[[RemoteKey]]] {
-        var plan: [[[RemoteKey]]] = []
+    ) throws -> [[QuickCommandTransmission]] {
+        var plan: [[QuickCommandTransmission]] = []
         for step in command.steps {
             switch step {
             case .chord(let chord):
@@ -1254,25 +1259,13 @@ final class DualSenseControllerAdapter {
                 guard virtualKeys.count <= QuickCommandParser.maximumChordKeys else {
                     throw QuickCommandExecutionError.resolvedChordTooLarge
                 }
-                plan.append([virtualKeys.map(RemoteKey.windowsVirtualKey)])
+                plan.append([.chord(virtualKeys.map(RemoteKey.windowsVirtualKey))])
 
             case .text(let text):
-                var textStep: [[RemoteKey]] = []
-                textStep.reserveCapacity(text.count)
-                for character in text {
-                    guard let action = ControllerTextCharacterMapper.action(for: character) else {
-                        throw QuickCommandExecutionError.unsupportedTextCharacter(
-                            target: "Windows/NVDA"
-                        )
-                    }
-                    let modifiers = windowsVirtualKeys(for: action.modifiers)
-                    let virtualKeys = modifiers + [action.key.virtualKey]
-                    guard virtualKeys.count <= QuickCommandParser.maximumChordKeys else {
-                        throw QuickCommandExecutionError.resolvedChordTooLarge
-                    }
-                    textStep.append(virtualKeys.map(RemoteKey.windowsVirtualKey))
-                }
-                plan.append(textStep)
+                // Text comes from iOS as Unicode, not as physical key usages.
+                // Preserve it through the bridge's layout-independent text
+                // path rather than reproducing it through the remote layout.
+                plan.append([.resolvedText(text)])
             }
         }
         return plan
@@ -1307,16 +1300,15 @@ final class DualSenseControllerAdapter {
                     )
                 }
             case .key(let key):
-                result.append(try windowsVirtualKey(for: key))
+                result.append(contentsOf: try windowsVirtualKeys(for: key))
             }
         }
-        guard Set(result).count == result.count else {
-            throw QuickCommandExecutionError.unsupportedKey(
-                "Duplicate resolved key",
-                target: "Windows/NVDA"
-            )
+        // A shifted punctuation target contributes Shift itself. If the user
+        // also wrote Shift explicitly, retain one physical Shift rather than
+        // rejecting a valid chord or sending duplicate downs.
+        return result.reduce(into: []) { unique, key in
+            if !unique.contains(key) { unique.append(key) }
         }
-        return result
     }
 
     private func windowsVirtualKeys(
@@ -1330,7 +1322,7 @@ final class DualSenseControllerAdapter {
         return result
     }
 
-    private func windowsVirtualKey(for key: QuickCommandKey) throws -> UInt16 {
+    private func windowsVirtualKeys(for key: QuickCommandKey) throws -> [UInt16] {
         switch key {
         case .function(let number):
             guard (1...24).contains(number) else {
@@ -1339,23 +1331,17 @@ final class DualSenseControllerAdapter {
                     target: "Windows/NVDA"
                 )
             }
-            return 0x70 + UInt16(number - 1)
+            return [0x70 + UInt16(number - 1)]
         case .character(let character):
-            let lower = String(character).lowercased()
-            if let scalar = lower.unicodeScalars.first, lower.unicodeScalars.count == 1 {
-                if (97...122).contains(scalar.value) {
-                    return UInt16(scalar.value - 32)
-                }
-                if (48...57).contains(scalar.value) {
-                    return UInt16(scalar.value)
-                }
+            guard let action = ControllerTextCharacterMapper.action(for: character) else {
+                throw QuickCommandExecutionError.unsupportedKey(
+                    String(character),
+                    target: "Windows/NVDA"
+                )
             }
-            throw QuickCommandExecutionError.unsupportedKey(
-                String(character),
-                target: "Windows/NVDA"
-            )
+            return windowsVirtualKeys(for: action.modifiers) + [action.key.virtualKey]
         case .named(let named):
-            return switch named {
+            let virtualKey: UInt16 = switch named {
             case .tab: WindowsKeyboardKey.tab.virtualKey
             case .enter: WindowsKeyboardKey.enter.virtualKey
             case .escape: WindowsKeyboardKey.escape.virtualKey
@@ -1389,13 +1375,14 @@ final class DualSenseControllerAdapter {
             case .leftBracket: WindowsKeyboardKey.leftBracket.virtualKey
             case .rightBracket: WindowsKeyboardKey.rightBracket.virtualKey
             }
+            return [virtualKey]
         }
     }
 
     private func resolveMacQuickCommandPlan(
         _ command: QuickCommand
-    ) throws -> [[[RemoteKey]]] {
-        var plan: [[[RemoteKey]]] = []
+    ) throws -> [[QuickCommandTransmission]] {
+        var plan: [[QuickCommandTransmission]] = []
         for step in command.steps {
             switch step {
             case .chord(let chord):
@@ -1413,10 +1400,10 @@ final class DualSenseControllerAdapter {
                     }
                     return key
                 }
-                plan.append([keys])
+                plan.append([.chord(keys)])
 
             case .text(let text):
-                var textStep: [[RemoteKey]] = []
+                var textStep: [QuickCommandTransmission] = []
                 textStep.reserveCapacity(text.count)
                 for character in text {
                     guard let usages = macHIDChord(for: character) else {
@@ -1437,7 +1424,7 @@ final class DualSenseControllerAdapter {
                         }
                         return key
                     }
-                    textStep.append(keys)
+                    textStep.append(.chord(keys))
                 }
                 plan.append(textStep)
             }
@@ -1599,16 +1586,25 @@ final class DualSenseControllerAdapter {
     }
 
     private func executeQuickCommandPlan(
-        _ plan: [[[RemoteKey]]],
+        _ plan: [[QuickCommandTransmission]],
         via route: RemoteIntentRoute,
         generation: Int
     ) async -> RemoteIntentResult {
         for (stepIndex, step) in plan.enumerated() {
-            for chord in step {
+            for transmission in step {
                 guard generation == quickCommandGeneration,
                       !Task.isCancelled,
                       isQuickCommandModeActive else {
                     return .unavailable("Quick Command was cancelled.")
+                }
+
+                switch transmission {
+                case .resolvedText(let text):
+                    let result = await router.route(.sendText(text), via: route)
+                    guard result == .performed else { return result }
+                    continue
+                case .chord(let chord):
+                    break
                 }
 
                 var pressed: [RemoteKey] = []
@@ -1671,9 +1667,9 @@ final class DualSenseControllerAdapter {
         UIAccessibility.post(notification: .announcement, argument: text)
     }
 
-    /// Mirrors local BSI/editor deltas one character at a time through the
-    /// same router used by controller bindings. It intentionally records only
-    /// counts and outcomes, never text content.
+    /// Mirrors local BSI/editor deltas through the same router used by
+    /// controller bindings. iOS has already resolved the text to Unicode, so
+    /// it must not be converted back through a physical-key layout.
     /// Text Mode v1 deliberately accepts append-at-end and suffix deletion
     /// only. Other edits are rejected locally instead of guessing a remote
     /// cursor operation from a whole-string diff.
@@ -1694,21 +1690,10 @@ final class DualSenseControllerAdapter {
 
     func mirrorTextInsertion(_ characters: [Character]) {
         guard isTextModeActive else { return }
-        var unsupported = 0
-        for character in characters {
-            if let action = ControllerTextCharacterMapper.action(for: character) {
-                textMirrorSession.append(character, mirrored: true)
-                enqueueTextTap(action, diagnostic: "Text Mode: character transmitted")
-            } else {
-                textMirrorSession.append(character, mirrored: false)
-                unsupported += 1
-            }
-        }
+        guard !characters.isEmpty else { return }
+        for character in characters { textMirrorSession.append(character, mirrored: true) }
         textModeBuffer = textMirrorSession.text
-        if unsupported > 0 {
-            announce("Unsupported character")
-            diagnostics.observe(source: .controller, result: "Text Mode: \(unsupported) unsupported character")
-        }
+        enqueueTextInsertion(String(characters), diagnostic: "Text Mode: text transmitted")
     }
 
     func mirrorTextBackspace(count: Int = 1) {
@@ -1744,6 +1729,16 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    private func enqueueTextInsertion(_ text: String, diagnostic: String) {
+        let previous = textOperationTail
+        let generation = textOperationGeneration
+        textOperationTail = Task { @MainActor [weak self, previous] in
+            _ = await previous?.value
+            guard let self, generation == self.textOperationGeneration, !Task.isCancelled else { return }
+            await self.routeTextInsertion(text, diagnostic: diagnostic)
+        }
+    }
+
     private func cancelTextOperations() {
         textOperationGeneration += 1
         textOperationTail?.cancel()
@@ -1762,6 +1757,15 @@ final class DualSenseControllerAdapter {
             : .sendChord(.init(modifiers: modifiers, key: key))
         diagnostics.observe(source: .controller, result: diagnostic)
         _ = await router.route(intent, to: targetID)
+    }
+
+    private func routeTextInsertion(_ text: String, diagnostic: String) async {
+        guard let targetID = router.activeTargetID else {
+            diagnostics.observe(source: .controller, result: "\(diagnostic); no active target")
+            return
+        }
+        diagnostics.observe(source: .controller, result: diagnostic)
+        _ = await router.route(.sendText(text), to: targetID)
     }
 
     private func present(_ stateChange: LayerFeedback) {

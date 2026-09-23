@@ -275,6 +275,31 @@ final class BridgeClient {
         lastInputForwardingResult = forwardRemoteKey(vk: vk, pressed: pressed)
     }
 
+    /// Text-mode and Quick Command literal text have already been resolved to
+    /// Unicode by iOS. Send it through the bridge's clipboard-paste command so
+    /// the result does not depend on either the local physical keyboard layout
+    /// or the active Windows keyboard layout.
+    func sendText(_ text: String) {
+        guard status == .ready else {
+            lastInputForwardingResult = .rejected("connection is not ready")
+            return
+        }
+        guard inputReady, let commandContinuation else {
+            lastInputForwardingResult = .rejected("input channel is not ready")
+            return
+        }
+        switch commandContinuation.yield(.type(text)) {
+        case .enqueued:
+            lastInputForwardingResult = .accepted
+        case .dropped:
+            lastInputForwardingResult = .rejected("transmission queue is full")
+        case .terminated:
+            lastInputForwardingResult = .rejected("transmission channel ended")
+        @unknown default:
+            lastInputForwardingResult = .rejected("unknown transmission state")
+        }
+    }
+
     /// Read-only remote-channel readiness for semantic adapters. This never
     /// changes forwarding state or attempts to establish the NVDA input
     /// channel, and deliberately does not include `forwardingEnabled`.

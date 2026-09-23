@@ -12,6 +12,14 @@ protocol RemoteWindowsKeySink: AnyObject {
     var inputSessionID: UUID? { get }
     var lastInputForwardingResult: InputForwardingResult? { get }
     func sendKey(vk: UInt16, pressed: Bool)
+    func sendText(_ text: String)
+}
+
+/// Text transport was added after raw-key transport. Targets which only
+/// understand keys remain source-compatible and report the text intent as
+/// unsupported; the NVDA bridge provides the concrete implementation.
+extension RemoteWindowsKeySink {
+    func sendText(_ text: String) {}
 }
 
 extension BridgeClient: RemoteWindowsKeySink {}
@@ -104,7 +112,8 @@ final class TerminalRemoteIntentTarget: HostTargetExecutor {
         case .sendKey(let key):
             guard let controlID = terminalControlID(for: key) else { return .unsupported }
             return await send(defaultControlID: controlID, using: presentation)
-        case .reviewPrevious, .reviewNext, .returnToLive,
+        case .sendText,
+             .reviewPrevious, .reviewNext, .returnToLive,
              .accessibilityNext, .accessibilityPrevious, .accessibilityActivate,
              .recovery,
              .nextApplication, .previousApplication, .closeWindow, .showDesktop, .openStart,
@@ -154,7 +163,8 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         .applicationSwitching,
         .applicationNavigation,
         .rawKeyInput,
-        .rawChordInput
+        .rawChordInput,
+        .textInput
     ]
 
     private let keySink: any RemoteWindowsKeySink
@@ -227,6 +237,8 @@ final class NVDARemoteIntentTarget: HostTargetExecutor {
         case .sendChord(let chord):
             guard let key = windowsVirtualKey(for: chord.key) else { return .unsupported }
             emitChord(modifiers: chord.modifiers, key: key)
+        case .sendText(let text):
+            keySink.sendText(text)
         case .sendKeyTransition(let key, let pressed):
             guard let key = windowsVirtualKey(for: key) else { return .unsupported }
             transition(key, pressed: pressed)
@@ -419,6 +431,9 @@ final class MacRemoteIntentTarget: HostTargetExecutor {
         case .sendChord(let chord):
             guard let keys = macKeys(for: chord) else { return .unsupported }
             return await tap(keys)
+
+        case .sendText:
+            return .unsupported
 
         case .sendKeyTransition(let key, let pressed):
             guard let key = macKey(for: key) else { return .unsupported }

@@ -177,6 +177,8 @@ enum QuickCommandParseError: Error, Equatable, Sendable {
     case unknownChordKey(String, position: Int)
     case duplicateChordKey(String, position: Int)
     case modifierOnlyChord(position: Int)
+    case multipleChordTargets(position: Int)
+    case modifierAfterTarget(position: Int)
     case literalTextTooLong(position: Int, maximum: Int)
 
     var message: String {
@@ -197,6 +199,10 @@ enum QuickCommandParseError: Error, Equatable, Sendable {
             "Step \(position) repeats the same key: \(token)."
         case .modifierOnlyChord(let position):
             "Step \(position) needs at least one non-modifier key."
+        case .multipleChordTargets(let position):
+            "Step \(position) must have exactly one non-modifier target key."
+        case .modifierAfterTarget(let position):
+            "Step \(position) must put modifier keys before its target key."
         case .literalTextTooLong(let position, let maximum):
             "Step \(position) has too much literal text. The maximum is \(maximum) characters."
         }
@@ -212,7 +218,9 @@ enum QuickCommandExecutionPolicy {
 
 struct QuickCommandParser: Sendable {
     static let maximumSteps = 5
-    static let maximumChordKeys = 4
+    /// A Command Mode chord supports all four Windows modifier families plus
+    /// exactly one target key.
+    static let maximumChordKeys = 5
     static let maximumLiteralCharacters = 256
 
     static func parse(_ input: String) throws -> QuickCommand {
@@ -299,13 +307,27 @@ struct QuickCommandParser: Sendable {
                 position: position
             )
         }
-        guard keys.contains(where: { !$0.isModifier }) else {
+        let targetIndexes = keys.indices.filter { !keys[$0].isModifier }
+        guard !targetIndexes.isEmpty else {
             throw QuickCommandParseError.modifierOnlyChord(position: position)
+        }
+        guard targetIndexes.count == 1 else {
+            throw QuickCommandParseError.multipleChordTargets(position: position)
+        }
+        guard targetIndexes[0] == keys.index(before: keys.endIndex) else {
+            throw QuickCommandParseError.modifierAfterTarget(position: position)
         }
         return QuickCommandChord(keys: keys)
     }
 
     private static func resolveChordKey(_ token: String) -> QuickCommandChordKey? {
+        // Preserve literal punctuation before normalizing aliases: normalization
+        // intentionally removes '-' and '_' from words such as "page-up", but
+        // those are meaningful command targets in their own right.
+        if token.count == 1, let character = token.first,
+           ControllerTextCharacterMapper.action(for: character) != nil {
+            return .key(.character(character))
+        }
         let normalized = normalize(token)
 
         if let modifier = modifierAliases[normalized] {
@@ -313,12 +335,6 @@ struct QuickCommandParser: Sendable {
         }
         if let named = namedKeyAliases[normalized] {
             return .key(.named(named))
-        }
-        if normalized.count == 1,
-           let character = normalized.first,
-           character.isASCII,
-           (character.isLetter || character.isNumber) {
-            return .key(.character(character))
         }
         if normalized.first == "f",
            let number = Int(normalized.dropFirst()),

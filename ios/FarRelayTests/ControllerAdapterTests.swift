@@ -441,7 +441,11 @@ final class ControllerAdapterTests: XCTestCase {
     }
 
     func testQuickNavigationUsesTouchpadRotorAndRightStickMovement() async {
-        let (_, adapter, sink, _, _) = makeAdapter()
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        // This test exercises the local Quick Navigation exit. A mapped
+        // remote Escape intentionally preempts that local behavior.
+        mappings.setAction(nil, for: .circle)
+        mappings.saveDraft()
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
 
         // Quick Bar starts on Show Desktop. Cross executes Windows+D; it must
@@ -638,7 +642,9 @@ final class ControllerAdapterTests: XCTestCase {
     }
 
     func testQuickNavigationExitClearsInFlightTouchpadContact() {
-        let (_, adapter, _, _, _) = makeAdapter()
+        let (mappings, adapter, _, _, _) = makeAdapter()
+        mappings.setAction(nil, for: .circle)
+        mappings.saveDraft()
 
         adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
         adapter.receiveForTesting(input: .circle, pressed: true, at: 1)
@@ -727,6 +733,7 @@ final class ControllerAdapterTests: XCTestCase {
     func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         mappings.setAction(.farRelay(.repeatLastQuickBar), for: .triangle)
+        mappings.setAction(nil, for: .circle)
         mappings.saveDraft()
 
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
@@ -777,7 +784,7 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
-    func testUnsupportedLocalCharacterCannotDeleteRemoteMirroredCharacter() async {
+    func testResolvedUnicodeTextUsesLayoutIndependentTransport() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
         _ = adapter.applyTextModeEditorValue("aé")
@@ -785,7 +792,7 @@ final class ControllerAdapterTests: XCTestCase {
         _ = adapter.applyTextModeEditorValue("a")
         await adapter.waitForTextOperationsForTesting()
         XCTAssertEqual(adapter.textModeBuffer, "a")
-        XCTAssertEqual(sink.transitions, [.init(0x41, true), .init(0x41, false)])
+        XCTAssertEqual(sink.texts, ["aé"])
     }
 
     func testRemoteBackspaceDoesNotCauseLaterDuplicateLocalDeletion() async {
@@ -806,7 +813,7 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
         _ = adapter.applyTextModeEditorValue("abc")
         await adapter.waitForTextOperationsForTesting()
-        XCTAssertEqual(sink.transitions.map(\.key), [0x41, 0x41, 0x42, 0x42, 0x43, 0x43])
+        XCTAssertEqual(sink.texts, ["abc"])
         _ = adapter.applyTextModeEditorValue("SECRET_SENTINEL_123")
         await adapter.waitForTextOperationsForTesting()
         XCTAssertFalse(diagnostics.entries.contains { $0.result.contains("SECRET_SENTINEL_123") })
@@ -822,11 +829,10 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(
             sink.transitions,
             [
-                .init(0x4F, true), .init(0x4F, false),
-                .init(0x4B, true), .init(0x4B, false),
                 .init(VK.return, true), .init(VK.return, false)
             ]
         )
+        XCTAssertEqual(sink.texts, ["ok"])
         XCTAssertFalse(adapter.isTextModeActive)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         XCTAssertEqual(adapter.textModeBuffer, "")
@@ -894,9 +900,10 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(Array(sink.transitions.prefix(4)), expectedPrefix)
         XCTAssertEqual(Array(sink.transitions.suffix(2)), [.init(VK.return, true), .init(VK.return, false)])
 
-        // "powershell" is ten literal characters, each represented by one
-        // down/up pair between Win+R and Enter.
-        XCTAssertEqual(sink.transitions.count, 4 + (10 * 2) + 2)
+        // Literal text is one layout-independent Unicode transmission between
+        // Win+R and Enter, rather than a series of host-layout VK events.
+        XCTAssertEqual(sink.texts, ["powershell"])
+        XCTAssertEqual(sink.transitions.count, 6)
     }
 
     func testQuickCommandWinRunExecutableTextSupportsPeriodAndExits() async {
@@ -914,11 +921,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
 
-        XCTAssertTrue(
-            sink.transitions.contains {
-                $0.key == WindowsKeyboardKey.period.virtualKey && $0.pressed
-            }
-        )
+        XCTAssertEqual(sink.texts, ["msedge.exe"])
         XCTAssertEqual(
             Array(sink.transitions.suffix(2)),
             [.init(VK.return, true), .init(VK.return, false)]
@@ -927,14 +930,14 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
     }
 
-    func testQuickCommandSupportsFourPhysicalKeysAndReleasesInReverseOrder() async {
+    func testQuickCommandHoldsFourModifiersUntilItsOneTargetReleases() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
         mappings.saveDraft()
         adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
         adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
 
-        adapter.updateQuickCommandBuffer("ctrl+shift+delete+escape")
+        adapter.updateQuickCommandBuffer("ctrl+shift+alt+win+s")
         XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
         XCTAssertTrue(adapter.confirmQuickCommand())
         await adapter.waitForQuickCommandForTesting()
@@ -944,12 +947,70 @@ final class ControllerAdapterTests: XCTestCase {
             [
                 .init(VK.control, true),
                 .init(VK.shift, true),
-                .init(VK.delete, true),
-                .init(VK.escape, true),
-                .init(VK.escape, false),
-                .init(VK.delete, false),
+                .init(VK.menu, true),
+                .init(VK.lwin, true),
+                .init(0x53, true),
+                .init(0x53, false),
+                .init(VK.lwin, false),
+                .init(VK.menu, false),
                 .init(VK.shift, false),
                 .init(VK.control, false)
+            ]
+        )
+    }
+
+    func testQuickCommandSlashAndQuestionMarkUseOEM2NotRightBracket() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("ctrl+/,ctrl+?")
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.control, true), .init(VK.oem2, true), .init(VK.oem2, false), .init(VK.control, false),
+                .init(VK.control, true), .init(VK.shift, true), .init(VK.oem2, true), .init(VK.oem2, false), .init(VK.shift, false), .init(VK.control, false),
+            ]
+        )
+        XCTAssertFalse(sink.transitions.contains { $0.key == VK.oem6 })
+    }
+
+    func testTextModePreservesFullPunctuationStringAcrossLayoutBoundary() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        let punctuation = "/ ? [ ] { } \\ | ; : ' \" , < . > ` ~ - _ = + 1 ! 2 @ 3 # 4 $ 5 % 6 ^ 7 & 8 * 9 ( 0 )"
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        _ = adapter.applyTextModeEditorValue(punctuation)
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(sink.texts, [punctuation])
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
+    func testQuickCommandMultiModifierChordsKeepEveryModifierHeldForTarget() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+
+        adapter.updateQuickCommandBuffer("ctrl+shift+tab,alt+shift+tab,ctrl+alt+delete,win+shift+s")
+        XCTAssertNotNil(adapter.prepareQuickCommandForConfirmation())
+        XCTAssertTrue(adapter.confirmQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.control, true), .init(VK.shift, true), .init(VK.tab, true), .init(VK.tab, false), .init(VK.shift, false), .init(VK.control, false),
+                .init(VK.menu, true), .init(VK.shift, true), .init(VK.tab, true), .init(VK.tab, false), .init(VK.shift, false), .init(VK.menu, false),
+                .init(VK.control, true), .init(VK.menu, true), .init(VK.delete, true), .init(VK.delete, false), .init(VK.menu, false), .init(VK.control, false),
+                .init(VK.lwin, true), .init(VK.shift, true), .init(0x53, true), .init(0x53, false), .init(VK.shift, false), .init(VK.lwin, false),
             ]
         )
     }
@@ -1273,9 +1334,14 @@ private final class ControllerTestKeySink: RemoteWindowsKeySink {
     var lastInputForwardingResult: InputForwardingResult? = .accepted
     var forwardKeyboardEnabled = true
     var transitions: [ControllerTransition] = []
+    var texts: [String] = []
 
     func sendKey(vk: UInt16, pressed: Bool) {
         transitions.append(.init(vk, pressed))
+    }
+
+    func sendText(_ text: String) {
+        texts.append(text)
     }
 }
 
