@@ -4,8 +4,8 @@ import XCTest
 @testable import FarRelay
 
 final class FunctionKeyCapturePolicyTests: XCTestCase {
-    func testPhysicalFunctionRowUsesPhysicallyValidatedUIKitPriorityPath() {
-        XCTAssertFalse(PhysicalFunctionRowCapturePolicy.installsGameControllerCapture)
+    func testPhysicalFunctionRowUsesUIKitPriorityPlusGameControllerFallback() {
+        XCTAssertTrue(PhysicalFunctionRowCapturePolicy.installsGameControllerCapture)
 
         let registrations = PhysicalFunctionRowCapturePolicy.priorityRegistrations
         XCTAssertEqual(registrations.count, ReservedKeyForwardingPolicy.registrations.count)
@@ -58,6 +58,21 @@ final class FunctionKeyCapturePolicyTests: XCTestCase {
         let keyCodes: [GCKeyCode] = [.F1, .F2, .F3, .F4, .F5, .F6, .F7, .F8, .F9, .F10, .F11, .F12]
         XCTAssertEqual(keyCodes.compactMap { GameControllerFunctionKeyMapping.virtualKey(for: $0) }, Array(VK.f1...(VK.f1 + 11)))
         XCTAssertNil(GameControllerFunctionKeyMapping.virtualKey(for: .F13))
+    }
+
+    func testModifierFingerprintMatchesUIKitAndGameControllerRepresentations() {
+        let ui = FunctionKeyModifierFingerprint.fromUIKit([.command, .control, .alternate, .shift, .alphaShift])
+        let gameController = FunctionKeyModifierFingerprint.fromRemoteModifiers([
+            VK.control, VK.menu, VK.shift, VK.capital
+        ])
+        XCTAssertEqual(ui, gameController)
+    }
+
+    func testModifierFingerprintIgnoresCommandForCrossSourceDeduplication() {
+        XCTAssertEqual(
+            FunctionKeyModifierFingerprint.fromUIKit([.command, .shift]),
+            FunctionKeyModifierFingerprint.fromUIKit([.shift])
+        )
     }
 
     func testGameControllerLifecycleReleasesPressedKeysOnDisconnect() {
