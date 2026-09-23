@@ -16,11 +16,14 @@ struct RemSoundAudioFeatureView: View {
                 Text("This is the Windows PC address, not the iPhone address. Start audio to announce FarRelay iOS directly to that RemSound app. Then select FarRelay iOS in RemSound's discovered peers and send PCM audio to it on UDP port \(port).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                Text("RemSound does not use an interactive pairing request for this direct connection. Windows heartbeat proves reachability; the shared password is validated when its audio Format packet supplies the password fingerprint.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             Section("Audio status") {
-                Text(audioReceiver.snapshot.state.accessibilityLabel)
+                Text(audioReceiver.compactStatusLabel)
                     .accessibilityLabel("RemSound status")
-                    .accessibilityValue(audioReceiver.snapshot.state.accessibilityLabel)
+                    .accessibilityValue(audioReceiver.compactStatusLabel)
                 if let error = audioReceiver.snapshot.statistics.lastError {
                     Text(error).foregroundStyle(.secondary)
                 }
@@ -58,6 +61,8 @@ struct RemSoundAudioFeatureView: View {
                     .foregroundStyle(.secondary)
             }
             Section("Audio diagnostics") {
+                Text("Discovery: \(audioReceiver.discoveryDiagnostics.isActive ? "active" : "inactive"), attempts \(audioReceiver.discoveryDiagnostics.announcementsAttempted), local completions \(audioReceiver.discoveryDiagnostics.announcementsCompleted), failures \(audioReceiver.discoveryDiagnostics.announcementFailures)")
+                Text("Windows heartbeat: pings received \(audioReceiver.snapshot.statistics.heartbeatPingsReceived), pongs sent \(audioReceiver.snapshot.statistics.heartbeatPongsSent), reply failures \(audioReceiver.snapshot.statistics.heartbeatReplyFailures)")
                 Text("Packets received: \(audioReceiver.snapshot.statistics.packetsReceived)")
                 Text("Dropped: \(audioReceiver.snapshot.statistics.packetsDropped), lost: \(audioReceiver.snapshot.statistics.packetsLost), reordered: \(audioReceiver.snapshot.statistics.packetsReordered)")
                 Text("Authentication failures: \(audioReceiver.snapshot.statistics.authenticationFailures), buffer frames: \(audioReceiver.snapshot.statistics.bufferDepthFrames), underruns: \(audioReceiver.snapshot.statistics.underruns)")
@@ -65,7 +70,10 @@ struct RemSoundAudioFeatureView: View {
                    let channels = audioReceiver.snapshot.channelCount {
                     Text("Format: \(sampleRate) Hz, \(channels) channels, PCM")
                 }
-                Text("Diagnostics exclude passwords, derived keys, packet plaintext, and audio content.")
+                Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
+                    AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                }
+                Text("Diagnostics exclude passwords, derived keys, fingerprints, packet plaintext, and audio content. A completed UDP discovery send confirms only that iOS accepted the datagram locally; Windows heartbeat pings are the stronger proof that the PC can reach this device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
