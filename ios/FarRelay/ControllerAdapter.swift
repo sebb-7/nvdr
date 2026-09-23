@@ -1598,13 +1598,14 @@ final class DualSenseControllerAdapter {
                     return .unavailable("Quick Command was cancelled.")
                 }
 
+                let chord: [RemoteKey]
                 switch transmission {
                 case .resolvedText(let text):
                     let result = await router.route(.sendText(text), via: route)
                     guard result == .performed else { return result }
                     continue
-                case .chord(let chord):
-                    break
+                case .chord(let resolvedChord):
+                    chord = resolvedChord
                 }
 
                 var pressed: [RemoteKey] = []
