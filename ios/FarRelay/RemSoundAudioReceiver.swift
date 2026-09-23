@@ -434,7 +434,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
             format = supported
         case .unsupported(let codec):
             receiverSnapshot.statistics.unsupportedFormatPackets += 1
-            receiverSnapshot.statistics.lastError = "Unsupported RemSound format: \(codec == .opus ? \"Opus\" : \"PCM variant\")."
+            receiverSnapshot.statistics.lastError = "Unsupported RemSound format: \(codec == .opus ? "Opus" : "PCM variant")."
             if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
                 receiverSnapshot.state = .waitingForAudio
             }
