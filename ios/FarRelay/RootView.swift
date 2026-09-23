@@ -355,19 +355,24 @@ private struct HomeStatusRow: View {
     let profile: HostProfile
     let status: FarRelayComputerStatus
     let events: [FarRelayEvent]
+    @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("\(profile.displayName) — \(status.primary)")
-            Text(status.nvda).foregroundStyle(.secondary)
-            Text(status.terminalSummary).foregroundStyle(.secondary)
-            Text(status.controller).foregroundStyle(.secondary)
-            Button("Copy Status Report", systemImage: "doc.on.doc") {
-                AppClipboard.copy(FarRelayStatusReport.make(profile: profile, status: status, events: events))
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(status.detail).foregroundStyle(.secondary)
+                Text(status.nvda).foregroundStyle(.secondary)
+                Text(status.terminalSummary).foregroundStyle(.secondary)
+                Text(status.controller).foregroundStyle(.secondary)
+                Button("Copy Status Report", systemImage: "doc.on.doc") {
+                    AppClipboard.copy(FarRelayStatusReport.make(profile: profile, status: status, events: events))
+                }
+                .accessibilityHint("Copies a privacy-safe status report without credentials, channel keys, typed content, terminal text, or speech.")
             }
-            .accessibilityHint("Copies a privacy-safe status report without credentials, channel keys, typed content, terminal text, or speech.")
+        } label: {
+            Text("\(profile.displayName) — \(status.primary)")
         }
-        .accessibilityLabel("\(profile.displayName). \(status.primary). \(status.detail). \(status.nvda). \(status.terminalSummary). \(status.controller).")
+        .accessibilityHint(isExpanded ? "Double-tap to collapse status details." : "Double-tap to show remote-control, NVDA, terminal, and ownership details.")
     }
 }
 
@@ -411,8 +416,7 @@ private struct HomeDestinationView: View {
                 ContentUnavailableView(
                     "Computer removed",
                     systemImage: "accessibility",
-                    description: Text("This computer is no longer saved on Home.")
-                )
+                    description: Text("This computer is no longer saved on Home."))
             }
         case .terminal(let id):
             if let session = terminals.session(id: id) {
@@ -438,8 +442,7 @@ private struct TerminalsTabView: View {
                 ContentUnavailableView(
                     "No active terminals",
                     systemImage: "terminal",
-                    description: Text("Open New Terminal from Home or this tab.")
-                )
+                    description: Text("Open New Terminal from Home or this tab."))
             } else {
                 ForEach(groups) { group in
                     HostTerminalGroupView(
@@ -622,8 +625,7 @@ private struct NewTerminalComputerPicker: View {
                     ContentUnavailableView(
                         "No computers",
                         systemImage: "desktopcomputer",
-                        description: Text("Add a computer on Home before opening a terminal.")
-                    )
+                        description: Text("Add a computer on Home before opening a terminal."))
                 } else {
                     List(settings.hostProfiles) { profile in
                         Button(profile.displayName) {
