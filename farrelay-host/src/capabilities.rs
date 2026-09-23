@@ -72,7 +72,14 @@ mod tests {
             &caps.operations[..3],
             ["host.info", "process.list", "process.info"]
         );
-        assert!(caps.features.is_empty());
+        if std::env::consts::OS == "macos" {
+            assert_eq!(
+                caps.features,
+                ["macRemote", "voiceOverSemanticFeedback"]
+            );
+        } else {
+            assert!(caps.features.is_empty());
+        }
     }
 
     #[test]
