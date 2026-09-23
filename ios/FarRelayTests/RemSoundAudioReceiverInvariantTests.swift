@@ -24,6 +24,30 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(bridge.status, .idle)
     }
 
+    func testWindowsHeartbeatPingGetsPongWithoutAuthenticatingOrPlaying() async throws {
+        let receiver = RemSoundAudioReceiver()
+        let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
+        let reply = await receiver.ingestAndPrepareReply(ping)
+        XCTAssertEqual(reply, Data(hex: "524D4E440104FFFF010000000110A4000000000000"))
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 1)
+        XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        XCTAssertNil(snapshot.sampleRate)
+        XCTAssertNil(snapshot.channelCount)
+    }
+
+    func testHeartbeatPongAndControlPacketsCannotManufactureReplies() async throws {
+        let receiver = RemSoundAudioReceiver()
+        let pong = try XCTUnwrap(Data(hex: "524D4E440104FFFF01000000010100000000000000"))
+        XCTAssertNil(await receiver.ingestAndPrepareReply(pong))
+        let control = try XCTUnwrap(Data(hex: "524D4E4401050100010000000000"))
+        XCTAssertNil(await receiver.ingestAndPrepareReply(control))
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 0)
+    }
+
     func testStaleAndMalformedPacketsCannotOpenOrContaminateAStream() async throws {
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_932, password: "phase1"))
@@ -54,6 +78,25 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.sampleRate, 48_000)
         XCTAssertEqual(snapshot.channelCount, 2)
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        await receiver.stop()
+    }
+
+    func testWrongPasswordFailsOnlyWhenFormatFingerprintIsValidated() async throws {
+        let bridge = BridgeClient(speech: SpeechOutput())
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_939, password: "wrong password"))
+
+        let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
+        XCTAssertNotNil(await receiver.ingestAndPrepareReply(ping))
+        var snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        XCTAssertNotEqual(snapshot.state, .failed("The sender password does not match."))
+
+        await receiver.ingest(try formatPacket())
+        snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .failed("The sender password does not match."))
+        XCTAssertEqual(snapshot.statistics.authenticationFailures, 1)
+        XCTAssertEqual(bridge.status, .idle)
         await receiver.stop()
     }
 
