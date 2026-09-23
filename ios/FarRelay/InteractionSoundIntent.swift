@@ -1,23 +1,147 @@
 import Foundation
 
-/// App-owned meanings map to filenames in one place. Native NVDA sounds are
-/// separate because they come from the remote protocol, not app inference.
-enum InteractionSoundIntent: Equatable, Hashable, Sendable {
-    case remoteConnected, disconnected, keyboardRemote, keyboardLocal, terminalOpen
-    case pushClipboard, receiveClipboard, nvdaStarted, nvdaStopped
-    case action, success, warning, error, copied, layerExit
+/// App-owned meanings map to default filenames in one place. Native NVDA
+/// sounds are separate because they come from the remote protocol, not app
+/// inference. Raw values are persisted as stable preference keys.
+enum InteractionSoundIntent: String, CaseIterable, Codable, Equatable, Hashable, Identifiable, Sendable {
+    case remoteConnected
+    case disconnected
+    case keyboardRemote
+    case keyboardLocal
+    case terminalOpen
+    case pushClipboard
+    case receiveClipboard
+    case nvdaStarted
+    case nvdaStopped
+    case action
+    case success
+    case warning
+    case error
+    case copied
+    case layerExit
 
-    var filename: String {
+    var id: String { rawValue }
+
+    var displayName: String {
         switch self {
-        case .remoteConnected: "connected.wav"; case .disconnected: "disconnected.wav"
-        case .keyboardRemote: "keyboard-remote.wav"; case .keyboardLocal: "keyboard-local.wav"
-        case .terminalOpen: "terminal-open.wav"; case .pushClipboard: "push_clipboard.wav"
-        case .receiveClipboard: "receive_clipboard.wav"; case .nvdaStarted: "nvda-started.wav"
-        case .nvdaStopped: "nvda-stopped.wav"; case .action: "action.wav"
-        case .success: "success.wav"; case .warning: "warning.wav"
-        case .error: "error.wav"; case .copied: "copied.wav"
-        case .layerExit: "exit.wav"
+        case .remoteConnected: "Remote connected"
+        case .disconnected: "Remote disconnected"
+        case .keyboardRemote: "Keyboard forwarding on"
+        case .keyboardLocal: "Keyboard forwarding off"
+        case .terminalOpen: "Terminal opened"
+        case .pushClipboard: "Clipboard sent"
+        case .receiveClipboard: "Clipboard received"
+        case .nvdaStarted: "NVDA started"
+        case .nvdaStopped: "NVDA stopped"
+        case .action: "Action accepted"
+        case .success: "Success"
+        case .warning: "Warning"
+        case .error: "Error"
+        case .copied: "Copied"
+        case .layerExit: "Action layer completed"
         }
+    }
+
+    var defaultFilename: String {
+        switch self {
+        case .remoteConnected: "connected.wav"
+        case .disconnected: "disconnected.wav"
+        case .keyboardRemote: "keyboard-remote.wav"
+        case .keyboardLocal: "keyboard-local.wav"
+        case .terminalOpen: "terminal-open.wav"
+        case .pushClipboard: "push_clipboard.wav"
+        case .receiveClipboard: "receive_clipboard.wav"
+        case .nvdaStarted: "nvda-started.wav"
+        case .nvdaStopped: "nvda-stopped.wav"
+        case .action: "action.wav"
+        case .success: "success.wav"
+        case .warning: "warning.wav"
+        case .error: "error.wav"
+        case .copied: "copied.wav"
+        // `exit.wav` is byte-for-byte the same asset as `nvda-stopped.wav` in
+        // the current sound pack. A layer returning to Base is not an NVDA
+        // shutdown, so default it to the ordinary action cue instead.
+        case .layerExit: "action.wav"
+        }
+    }
+
+    /// Backward-compatible spelling for callers that only need the default.
+    var filename: String { defaultFilename }
+}
+
+struct InteractionSoundPreference: Codable, Equatable, Sendable {
+    var isEnabled: Bool
+    var filename: String
+}
+
+struct InteractionSoundPreferences: Codable, Equatable, Sendable {
+    private var overrides: [String: InteractionSoundPreference] = [:]
+
+    func preference(for intent: InteractionSoundIntent) -> InteractionSoundPreference {
+        let stored = overrides[intent.rawValue]
+        let safeFilename = stored.flatMap { AppSoundCatalog.contains(filename: $0.filename) ? $0.filename : nil }
+        return InteractionSoundPreference(
+            isEnabled: stored?.isEnabled ?? true,
+            filename: safeFilename ?? intent.defaultFilename
+        )
+    }
+
+    mutating func setEnabled(_ enabled: Bool, for intent: InteractionSoundIntent) {
+        var preference = preference(for: intent)
+        preference.isEnabled = enabled
+        overrides[intent.rawValue] = preference
+    }
+
+    mutating func setFilename(_ filename: String, for intent: InteractionSoundIntent) {
+        guard AppSoundCatalog.contains(filename: filename) else { return }
+        var preference = preference(for: intent)
+        preference.filename = filename
+        overrides[intent.rawValue] = preference
+    }
+}
+
+struct AppSoundOption: Equatable, Hashable, Identifiable, Sendable {
+    let filename: String
+    let label: String
+    var id: String { filename }
+}
+
+enum AppSoundCatalog {
+    /// Existing WAV resources shipped by FarRelay. Alias files that contain
+    /// identical audio remain listed when their names carry a useful meaning;
+    /// preferences always store the filename, never file-system paths.
+    static let all: [AppSoundOption] = [
+        .init(filename: "action.wav", label: "Action"),
+        .init(filename: "browseMode.wav", label: "Browse mode"),
+        .init(filename: "clipboardPush.wav", label: "Clipboard push"),
+        .init(filename: "clipboardReceive.wav", label: "Clipboard receive"),
+        .init(filename: "connected.wav", label: "Connected"),
+        .init(filename: "controlled.wav", label: "Controlled"),
+        .init(filename: "controlling.wav", label: "Controlling"),
+        .init(filename: "copied.wav", label: "Copied"),
+        .init(filename: "disconnected.wav", label: "Disconnected"),
+        .init(filename: "error.wav", label: "Error"),
+        .init(filename: "exit.wav", label: "Exit"),
+        .init(filename: "focusMode.wav", label: "Focus mode"),
+        .init(filename: "keyboard-local.wav", label: "Keyboard local"),
+        .init(filename: "keyboard-remote.wav", label: "Keyboard remote"),
+        .init(filename: "nvda-started.wav", label: "NVDA started"),
+        .init(filename: "nvda-stopped.wav", label: "NVDA stopped"),
+        .init(filename: "push_clipboard.wav", label: "Push clipboard"),
+        .init(filename: "receive_clipboard.wav", label: "Receive clipboard"),
+        .init(filename: "screenCurtainOff.wav", label: "Screen curtain off"),
+        .init(filename: "screenCurtainOn.wav", label: "Screen curtain on"),
+        .init(filename: "start.wav", label: "Start"),
+        .init(filename: "success.wav", label: "Success"),
+        .init(filename: "suggestionsClosed.wav", label: "Suggestions closed"),
+        .init(filename: "suggestionsOpened.wav", label: "Suggestions opened"),
+        .init(filename: "terminal-open.wav", label: "Terminal opened"),
+        .init(filename: "textError.wav", label: "Text error"),
+        .init(filename: "warning.wav", label: "Warning")
+    ]
+
+    static func contains(filename: String) -> Bool {
+        all.contains { $0.filename == filename }
     }
 }
 
