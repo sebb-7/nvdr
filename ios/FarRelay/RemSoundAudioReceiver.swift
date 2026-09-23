@@ -22,6 +22,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var activeFormat: RemSoundFormat?
     private var expectedSequence: UInt32?
     private var heartbeatSequence: UInt32 = 0
+    private var heartbeatScheduler = RemSoundHeartbeatScheduler()
+    private var selectedPeerConnectionID: UUID?
     private var assembler = RemSoundPCMFrameAssembler()
     private var queuedPCM = BoundedPCMQueue()
     private var playbackArmed = false
@@ -29,6 +31,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var lastSenderActivity: Date?
     private var generation = 0
     private var senderWatchdog: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private var receiverSnapshot = AudioReceiverSnapshot()
     private var snapshotContinuations: [UUID: AsyncStream<AudioReceiverSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<AudioPCMFrame>.Continuation] = [:]
@@ -164,8 +167,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
     }
 
     /// Parses one datagram and returns an audio-local protocol reply when the
-    /// current RemSound contract requires one. Today only Heartbeat Ping has a
-    /// reply. Returning the bytes keeps socket mechanics out of protocol tests.
+    /// current RemSound contract requires one. Heartbeat Pings and relay
+    /// AddrCheck challenges are the only reply-producing packet types.
+    /// Returning the bytes keeps socket mechanics out of protocol tests.
     func ingestAndPrepareReply(_ datagram: Data) -> Data? {
         receiverSnapshot.statistics.packetsReceived += 1
         guard datagram.count <= Self.maximumDatagramBytes,
@@ -177,6 +181,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         let payload = Data(datagram.dropFirst(RemSoundPacketHeader.size))
         switch header.type {
         case .format:
+            receiverSnapshot.statistics.formatPacketsReceived += 1
             ingestFormat(payload, streamID: header.streamID)
             return nil
         case .audio:
@@ -188,18 +193,40 @@ actor RemSoundAudioReceiver: AudioReceiver {
                 dropPacket(malformed: true)
                 return nil
             }
-            guard heartbeat.kind == .ping else { return nil }
-            receiverSnapshot.statistics.heartbeatPingsReceived += 1
-            if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
-                receiverSnapshot.state = .waitingForAudio
+            switch heartbeat.kind {
+            case .ping:
+                receiverSnapshot.statistics.heartbeatPingsReceived += 1
+                if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
+                    receiverSnapshot.state = .waitingForAudio
+                }
+                heartbeatSequence &+= 1
+                let reply = RemSoundHeartbeat.pongResponse(to: datagram, sequence: heartbeatSequence)
+                if reply == nil { dropPacket(malformed: true) } else { publish() }
+                return reply
+            case .pong:
+                receiverSnapshot.statistics.heartbeatPongsReceived += 1
+                if let roundTrip = heartbeatScheduler.roundTripMilliseconds(
+                    forPong: datagram,
+                    now: monotonicMilliseconds
+                ) {
+                    receiverSnapshot.statistics.heartbeatRoundTripMilliseconds = roundTrip
+                }
+                publish()
+                return nil
             }
-            heartbeatSequence &+= 1
-            let reply = RemSoundHeartbeat.pongResponse(to: datagram, sequence: heartbeatSequence)
-            if reply == nil { dropPacket(malformed: true) } else { publish() }
-            return reply
-        case .keepAlive, .control, .addressCheck:
-            // Phase 1 does not implement remote RemSound controls. These packet
-            // types remain inert and cannot reach FarRelay control-plane state.
+        case .addressCheck:
+            // Current relay contract: prove this source address receives packets
+            // by echoing the exact challenge on the canonical audio transport.
+            receiverSnapshot.statistics.addrChecksReceived += 1
+            publish()
+            return datagram
+        case .control:
+            receiverSnapshot.statistics.controlPacketsReceived += 1
+            receiverSnapshot.statistics.unsupportedPackets += 1
+            publish()
+            return nil
+        case .keepAlive:
+            receiverSnapshot.statistics.keepAlivePacketsReceived += 1
             receiverSnapshot.statistics.unsupportedPackets += 1
             publish()
             return nil
@@ -249,6 +276,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
             self.listener = listener
             listener.start(queue: networkQueue)
             startSenderWatchdog(generation: activeGeneration)
+            startHeartbeatScheduler(generation: activeGeneration)
         } catch {
             fail("Unable to bind the audio UDP socket.")
         }
@@ -286,6 +314,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
         let id = UUID()
         inboundConnections[id] = connection
+        if isConfiguredPeer(connection) {
+            selectedPeerConnectionID = id
+        }
         connection.stateUpdateHandler = { [weak self] state in
             guard case .failed = state else { return }
             Task { await self?.removeConnection(id, generation: generation) }
@@ -302,9 +333,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
                 guard let self else { return }
                 guard await self.isCurrentGeneration(generation) else { return }
                 if let content {
-                    let reply = await self.ingestAndPrepareReply(content)
+                    let reply = await self.ingestNetworkDatagram(content, from: id)
                     if let reply {
-                        await self.sendHeartbeatReply(reply, on: id, generation: generation)
+                        await self.sendProtocolReply(reply, on: id, generation: generation)
                     }
                 }
                 if error == nil { await self.receiveNext(on: id, generation: generation) }
@@ -313,11 +344,15 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
     }
 
-    private func sendHeartbeatReply(_ reply: Data, on id: UUID, generation: Int) {
+    private func sendProtocolReply(_ reply: Data, on id: UUID, generation: Int) {
         guard generation == self.generation,
               let connection = inboundConnections[id]
         else { return }
-        receiverSnapshot.statistics.heartbeatPongsSent += 1
+        if RemSoundPacketHeader.parse(reply)?.type == .addressCheck {
+            receiverSnapshot.statistics.addrCheckRepliesSent += 1
+        } else {
+            receiverSnapshot.statistics.heartbeatPongsSent += 1
+        }
         publish()
         connection.send(content: reply, completion: .contentProcessed { [weak self] error in
             guard let error else { return }
@@ -332,11 +367,84 @@ actor RemSoundAudioReceiver: AudioReceiver {
         publish()
     }
 
+    /// Format and Audio are accepted only from the configured selected Windows
+    /// peer. Heartbeat and AddrCheck remain transport-level packets: the former
+    /// establishes a path we can use for reciprocal heartbeats and the latter
+    /// is a relay address proof that must echo to its source.
+    private func ingestNetworkDatagram(_ datagram: Data, from connectionID: UUID) -> Data? {
+        if let header = RemSoundPacketHeader.parse(datagram),
+           (header.type == .format || header.type == .audio),
+           connectionID != selectedPeerConnectionID {
+            receiverSnapshot.statistics.packetsReceived += 1
+            dropPacket()
+            return nil
+        }
+        return ingestAndPrepareReply(datagram)
+    }
+
+    /// Network.framework gives an accepted UDP connection for each remote path.
+    /// We deliberately retain the one from the configured peer and use *that*
+    /// connection for outbound pings, rather than opening an ephemeral UDP
+    /// connection with a different source port. The profile already expresses
+    /// FarRelay's one-peer selected state.
+    private func isConfiguredPeer(_ connection: NWConnection) -> Bool {
+        guard let endpoint,
+              case .hostPort(let remoteHost, _) = connection.endpoint
+        else { return false }
+        return remoteHost == NWEndpoint.Host(endpoint.host)
+    }
+
+    private var monotonicMilliseconds: Int64 {
+        Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
+    }
+
+    private func startHeartbeatScheduler(generation: Int) {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: RemSoundHeartbeatScheduler.cadence)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await self?.sendOutboundHeartbeat(generation: generation)
+            }
+        }
+    }
+
+    private func sendOutboundHeartbeat(generation: Int) {
+        guard generation == self.generation,
+              let selectedPeerConnectionID,
+              let connection = inboundConnections[selectedPeerConnectionID]
+        else { return }
+        let ping = heartbeatScheduler.makePing(monotonicMilliseconds: monotonicMilliseconds)
+        receiverSnapshot.statistics.heartbeatPingsSent += 1
+        publish()
+        connection.send(content: ping, completion: .contentProcessed { [weak self] error in
+            guard let error else { return }
+            Task { await self?.recordHeartbeatReplyFailure(error, generation: generation) }
+        })
+    }
+
     private func ingestFormat(_ payload: Data, streamID: UInt16) {
-        guard let format = RemSoundFormat.parse(payload),
-              let expectedFingerprint,
-              let fingerprint = format.fingerprint
-        else {
+        let format: RemSoundFormat
+        switch RemSoundFormat.classify(payload) {
+        case .supported(let supported):
+            format = supported
+        case .unsupported(let codec):
+            receiverSnapshot.statistics.unsupportedFormatPackets += 1
+            receiverSnapshot.statistics.lastError = "Unsupported RemSound format: \(codec == .opus ? \"Opus\" : \"PCM variant\")."
+            if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
+                receiverSnapshot.state = .waitingForAudio
+            }
+            publish()
+            return
+        case .malformed:
+            dropPacket(malformed: true)
+            return
+        }
+        guard let expectedFingerprint, let fingerprint = format.fingerprint else {
             dropPacket(malformed: true)
             return
         }
@@ -347,6 +455,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
             return
         }
         receiverSnapshot.statistics.authenticationSuccesses += 1
+        receiverSnapshot.statistics.compatibleFormatPacketsAccepted += 1
         activeStreamID = streamID
         activeFormat = format
         expectedSequence = nil
@@ -467,15 +576,20 @@ actor RemSoundAudioReceiver: AudioReceiver {
         lastSenderActivity = nil
         key = nil
         expectedFingerprint = nil
+        heartbeatScheduler = RemSoundHeartbeatScheduler()
+        selectedPeerConnectionID = nil
     }
 
     private func stopNetwork() {
         senderWatchdog?.cancel()
         senderWatchdog = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
         listener?.cancel()
         listener = nil
         for connection in inboundConnections.values { connection.cancel() }
         inboundConnections.removeAll()
+        selectedPeerConnectionID = nil
         receiverSnapshot.isListening = false
     }
 
@@ -486,6 +600,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private func removeConnection(_ id: UUID, generation: Int) {
         guard generation == self.generation else { return }
         inboundConnections.removeValue(forKey: id)
+        if selectedPeerConnectionID == id {
+            selectedPeerConnectionID = nil
+        }
     }
 
     private func removeSnapshotContinuation(_ id: UUID) {

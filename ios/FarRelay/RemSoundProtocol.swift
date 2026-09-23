@@ -59,6 +59,14 @@ struct RemSoundDiscoveryAnnouncement: Codable, Equatable, Sendable {
     func encoded() throws -> Data {
         try JSONEncoder().encode(self)
     }
+
+    static func decodeInbound(_ data: Data) -> Self? {
+        guard let announcement = try? JSONDecoder().decode(Self.self, from: data),
+              !announcement.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (1...65_535).contains(announcement.audioPort)
+        else { return nil }
+        return announcement
+    }
 }
 
 /// Current desktop RemSound determines whether a selected peer is online with
@@ -86,6 +94,19 @@ struct RemSoundHeartbeat: Equatable, Sendable {
         return Self(kind: kind, originatorTickMilliseconds: tick)
     }
 
+    static func ping(sequence: UInt32, originatorTickMilliseconds: Int64) -> Data {
+        var packet = Data()
+        packet.reserveCapacity(RemSoundPacketHeader.size + payloadSize)
+        packet.appendUInt32LE(RemSoundPacketHeader.magic)
+        packet.append(RemSoundPacketHeader.version)
+        packet.append(RemSoundPacketType.heartbeat.rawValue)
+        packet.appendUInt16LE(streamID)
+        packet.appendUInt32LE(sequence)
+        packet.append(RemSoundHeartbeatKind.ping.rawValue)
+        packet.appendInt64LE(originatorTickMilliseconds)
+        return packet
+    }
+
     /// Produces the exact Pong Windows RemSound expects for a Ping. Non-Ping
     /// datagrams return nil so unrelated packets can never manufacture replies.
     static func pongResponse(to datagram: Data, sequence: UInt32) -> Data? {
@@ -109,7 +130,40 @@ struct RemSoundHeartbeat: Equatable, Sendable {
     }
 }
 
-enum RemSoundCodec: Int, Sendable {
+/// Pure heartbeat state used by the receiver's one-second scheduler. The
+/// explicit tick input keeps wire and correlation invariants deterministic in
+/// tests while production supplies a process-monotonic clock.
+struct RemSoundHeartbeatScheduler: Sendable {
+    static let cadence: Duration = .seconds(1)
+    private static let maximumOutstandingPings = 8
+    private var sequence: UInt32 = 0
+    private var outstandingPings: [Int64: Int64] = [:]
+
+    mutating func makePing(monotonicMilliseconds: Int64) -> Data {
+        sequence &+= 1
+        outstandingPings[monotonicMilliseconds] = monotonicMilliseconds
+        if outstandingPings.count > Self.maximumOutstandingPings,
+           let oldest = outstandingPings.keys.min() {
+            outstandingPings.removeValue(forKey: oldest)
+        }
+        return RemSoundHeartbeat.ping(
+            sequence: sequence,
+            originatorTickMilliseconds: monotonicMilliseconds
+        )
+    }
+
+    mutating func roundTripMilliseconds(forPong datagram: Data, now: Int64) -> Int? {
+        guard let header = RemSoundPacketHeader.parse(datagram),
+              header.type == .heartbeat,
+              let heartbeat = RemSoundHeartbeat.parse(Data(datagram.dropFirst(RemSoundPacketHeader.size))),
+              heartbeat.kind == .pong,
+              outstandingPings.removeValue(forKey: heartbeat.originatorTickMilliseconds) != nil
+        else { return nil }
+        return Int(max(0, now - heartbeat.originatorTickMilliseconds))
+    }
+}
+
+enum RemSoundCodec: Int, Equatable, Sendable {
     case pcm = 1
     case opus = 2
 }
@@ -129,7 +183,18 @@ struct RemSoundFormat: Equatable, Sendable {
     let frameSamplesPerChannel: Int
     let fingerprint: Data?
 
+    enum ParseResult: Equatable, Sendable {
+        case supported(RemSoundFormat)
+        case unsupported(RemSoundCodec)
+        case malformed
+    }
+
     static func parse(_ payload: Data) -> RemSoundFormat? {
+        guard case .supported(let format) = classify(payload) else { return nil }
+        return format
+    }
+
+    static func classify(_ payload: Data) -> ParseResult {
         guard payload.count >= minimumPayloadSize,
               let codec = RemSoundCodec(rawValue: Int(payload.int32LE(at: 24) ?? -1)),
               let sampleRate = payload.int32LE(at: 0),
@@ -139,7 +204,7 @@ struct RemSoundFormat: Equatable, Sendable {
               let blockAlign = payload.int32LE(at: 16),
               let bytesPerSecond = payload.int32LE(at: 20),
               let frameSamples = payload.int32LE(at: 28)
-        else { return nil }
+        else { return .malformed }
 
         // Phase 1 intentionally accepts only the Windows sender's smallest
         // interoperable stream. Unknown or future formats fail closed.
@@ -151,12 +216,12 @@ struct RemSoundFormat: Equatable, Sendable {
               blockAlign == 6,
               bytesPerSecond == 288_000,
               (120...240).contains(frameSamples)
-        else { return nil }
+        else { return .unsupported(codec) }
 
         let fingerprint = payload.count >= fingerprintPayloadSize
             ? payload.subdata(in: 36..<44)
             : nil
-        return Self(
+        return .supported(Self(
             sampleRate: Int(sampleRate),
             channels: Int(channels),
             bitsPerSample: Int(bitsPerSample),
@@ -166,7 +231,7 @@ struct RemSoundFormat: Equatable, Sendable {
             codec: codec,
             frameSamplesPerChannel: Int(frameSamples),
             fingerprint: fingerprint
-        )
+        ))
     }
 }
 

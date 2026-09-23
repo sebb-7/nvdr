@@ -60,10 +60,20 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var authenticationSuccesses = 0
     var formatAuthenticationFailures = 0
     var encryptedAudioPacketsReceived = 0
+    var formatPacketsReceived = 0
+    var compatibleFormatPacketsAccepted = 0
+    var unsupportedFormatPackets = 0
     var encryptedAudioAuthenticationFailures = 0
     var heartbeatPingsReceived = 0
     var heartbeatPongsSent = 0
+    var heartbeatPingsSent = 0
+    var heartbeatPongsReceived = 0
     var heartbeatReplyFailures = 0
+    var heartbeatRoundTripMilliseconds: Int?
+    var addrChecksReceived = 0
+    var addrCheckRepliesSent = 0
+    var controlPacketsReceived = 0
+    var keepAlivePacketsReceived = 0
     var malformedPackets = 0
     var unsupportedPackets = 0
     var bufferDepthFrames = 0

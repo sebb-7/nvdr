@@ -51,6 +51,9 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertEqual(object["CanSend"] as? Bool, false)
         XCTAssertEqual(object["CanReceive"] as? Bool, true)
         XCTAssertEqual(Set(object.keys), Set(["InstanceId", "Name", "AudioPort", "CanSend", "CanReceive"]))
+        XCTAssertEqual(RemSoundDiscoveryAnnouncement.decodeInbound(try announcement.encoded()), announcement)
+        XCTAssertNil(RemSoundDiscoveryAnnouncement.decodeInbound(Data("{\"InstanceId\":\"01234567-89AB-CDEF-0123-456789ABCDEF\",\"Name\":\"PC\",\"AudioPort\":0,\"CanSend\":true,\"CanReceive\":true}".utf8)))
+        XCTAssertNil(RemSoundDiscoveryAnnouncement.decodeInbound(Data("not json".utf8)))
     }
 
     func testWindowsHeartbeatPingProducesExactCanonicalPong() throws {
@@ -77,6 +80,29 @@ final class RemSoundProtocolTests: XCTestCase {
         let format = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040001000000F00000000000000073182B124D200DD00700"))
         XCTAssertNil(RemSoundHeartbeat.pongResponse(to: format, sequence: 2))
         XCTAssertNil(RemSoundHeartbeat.parse(Data([0])))
+    }
+
+    func testOutboundHeartbeatUsesCanonicalWireFormatAndCorrelatesOnlyOurPong() throws {
+        var scheduler = RemSoundHeartbeatScheduler()
+        let first = scheduler.makePing(monotonicMilliseconds: 1_000)
+        let second = scheduler.makePing(monotonicMilliseconds: 2_000)
+
+        XCTAssertEqual(first, Data(hex: "524D4E440104FFFF0100000000E803000000000000"))
+        XCTAssertEqual(second, Data(hex: "524D4E440104FFFF0200000000D007000000000000"))
+
+        var matchedPong = try XCTUnwrap(RemSoundHeartbeat.pongResponse(to: first, sequence: 9))
+        XCTAssertEqual(scheduler.roundTripMilliseconds(forPong: matchedPong, now: 1_023), 23)
+        XCTAssertNil(scheduler.roundTripMilliseconds(forPong: matchedPong, now: 1_024))
+
+        matchedPong[13] = 0xFF // A valid Pong with an originator tick we never sent.
+        XCTAssertNil(scheduler.roundTripMilliseconds(forPong: matchedPong, now: 3_000))
+    }
+
+    func testSyntacticallyValidOpusFormatIsClassifiedSeparatelyFromMalformed() throws {
+        var opus = try XCTUnwrap(Data(hex: "80BB0000020000001800000001000000060000000065040002000000F00000000000000073182B124D200DD0"))
+        XCTAssertEqual(RemSoundFormat.classify(opus), .unsupported(.opus))
+        opus.removeLast(14)
+        XCTAssertEqual(RemSoundFormat.classify(opus), .malformed)
     }
 
     func testMalformedHeadersAndUnsupportedFormatsFailClosed() throws {

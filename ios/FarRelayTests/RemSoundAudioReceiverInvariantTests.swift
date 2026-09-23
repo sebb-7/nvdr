@@ -86,6 +86,35 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 0)
     }
 
+    func testAddressCheckEchoesOnlyTheExactChallengeAndNeverChangesAudioState() async throws {
+        let receiver = RemSoundAudioReceiver()
+        let challenge = try XCTUnwrap(Data(hex: "524D4E44010A010001000000AABBCC"))
+        let reply = await receiver.ingestAndPrepareReply(challenge)
+        XCTAssertEqual(reply, challenge)
+
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertEqual(snapshot.statistics.addrChecksReceived, 1)
+        XCTAssertEqual(snapshot.statistics.encryptedAudioPacketsReceived, 0)
+
+        let unrelated = try XCTUnwrap(Data(hex: "524D4E440105010001000000AABBCC"))
+        let unrelatedReply = await receiver.ingestAndPrepareReply(unrelated)
+        XCTAssertNil(unrelatedReply)
+    }
+
+    func testUnsupportedOpusFormatIsNotReportedAsMalformedOrPasswordFailure() async throws {
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_943, password: "phase1"))
+        let opus = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040002000000F00000000000000073182B124D200DD00700"))
+        await receiver.ingest(opus)
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.statistics.formatPacketsReceived, 1)
+        XCTAssertEqual(snapshot.statistics.unsupportedFormatPackets, 1)
+        XCTAssertEqual(snapshot.statistics.malformedPackets, 0)
+        XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        await receiver.stop()
+    }
+
     func testStaleAndMalformedPacketsCannotOpenOrContaminateAStream() async throws {
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_932, password: "phase1"))

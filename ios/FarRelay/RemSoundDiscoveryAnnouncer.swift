@@ -7,6 +7,9 @@ struct RemSoundDiscoveryDiagnostics: Equatable, Sendable {
     var announcementsAttempted = 0
     var announcementsCompleted = 0
     var announcementFailures = 0
+    var announcementsReceived = 0
+    var malformedAnnouncements = 0
+    var lastDiscoveredPeer: String?
     var lastError: String?
 }
 
@@ -23,6 +26,8 @@ final class RemSoundDiscoveryAnnouncer {
     private let queue = DispatchQueue(label: "com.sebb7.farrelay.remsound.discovery")
     private let instanceID = UUID()
     private var connection: NWConnection?
+    private var listener: NWListener?
+    private var inboundConnections: [UUID: NWConnection] = [:]
     private var announceTask: Task<Void, Never>?
     private var payload: Data?
     private var lastConfiguration: (host: String, audioPort: UInt16)?
@@ -62,6 +67,20 @@ final class RemSoundDiscoveryAnnouncer {
         )
         publishDiagnostics()
 
+        do {
+            let listener = try NWListener(using: .udp, on: discoveryPort)
+            listener.newConnectionHandler = { [weak self] connection in
+                Task { @MainActor in self?.accept(connection) }
+            }
+            self.listener = listener
+            listener.start(queue: queue)
+        } catch {
+            // A configured direct peer remains usable if the best-effort
+            // discovery listener cannot bind under the current network policy.
+            diagnostics.lastError = "Discovery listener unavailable: \(error.localizedDescription)"
+            publishDiagnostics()
+        }
+
         let connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: discoveryPort,
@@ -98,6 +117,10 @@ final class RemSoundDiscoveryAnnouncer {
         announceTask = nil
         connection?.cancel()
         connection = nil
+        listener?.cancel()
+        listener = nil
+        for connection in inboundConnections.values { connection.cancel() }
+        inboundConnections.removeAll()
         payload = nil
         diagnostics.isActive = false
         publishDiagnostics()
@@ -122,6 +145,49 @@ final class RemSoundDiscoveryAnnouncer {
                 self.publishDiagnostics()
             }
         })
+    }
+
+    private func accept(_ connection: NWConnection) {
+        guard inboundConnections.count < 4 else {
+            connection.cancel()
+            return
+        }
+        let id = UUID()
+        inboundConnections[id] = connection
+        connection.start(queue: queue)
+        receiveNext(on: id)
+    }
+
+    private func receiveNext(on id: UUID) {
+        guard let connection = inboundConnections[id] else { return }
+        connection.receiveMessage { [weak self] content, _, _, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let content { self.handleInboundAnnouncement(content, from: connection) }
+                if error == nil { self.receiveNext(on: id) }
+                else { self.inboundConnections.removeValue(forKey: id) }
+            }
+        }
+    }
+
+    private func handleInboundAnnouncement(_ data: Data, from connection: NWConnection) {
+        guard let announcement = RemSoundDiscoveryAnnouncement.decodeInbound(data) else {
+            diagnostics.malformedAnnouncements += 1
+            publishDiagnostics()
+            return
+        }
+        // iOS can receive its own local broadcast; instance identity is the
+        // stable self filter, while the configured profile remains selected.
+        guard announcement.instanceID != instanceID else { return }
+        diagnostics.announcementsReceived += 1
+        let source: String
+        if case .hostPort(let host, _) = connection.endpoint {
+            source = String(describing: host)
+        } else {
+            source = "unknown address"
+        }
+        diagnostics.lastDiscoveredPeer = "\(announcement.name) \(source):\(announcement.audioPort)"
+        publishDiagnostics()
     }
 
     private func publishDiagnostics() {
