@@ -76,7 +76,7 @@ struct FarRelayComputerStatus: Equatable {
 
     var primary: String {
         if let reportPrimary { return reportPrimary }
-        switch connection {
+        return switch connection {
         case .disconnected: "Disconnected"
         case .connecting, .authenticating: "Connecting"
         case .relayConnected, .ready: "Connected"
@@ -89,7 +89,7 @@ struct FarRelayComputerStatus: Equatable {
     var nvda: String {
         if let reportNVDA { return reportNVDA }
         if nvdaSummary == "NVDA Remote is not configured" { return "NVDA: unsupported" }
-        switch connection {
+        return switch connection {
         case .disconnected: "NVDA: not connected"
         case .connecting, .authenticating: "NVDA: waiting"
         case .relayConnected: "NVDA: relay connected"
