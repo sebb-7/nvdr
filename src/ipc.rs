@@ -4,7 +4,7 @@
 //!
 //! # Stdin commands (one per line)
 //!
-//! - `key <vk> <pressed>` — raw VK transition. `vk` is a decimal u16 Windows
+//! - `key <vk> <pressed> [event=<id>]` — raw VK transition. `vk` is a decimal u16 Windows
 //!   virtual key code; `pressed` is `0` (release) or `1` (press). This is the
 //!   path the NVDA add-on uses for passthrough — NVDA already hands us the VK
 //!   per keystroke, so there's no point reparsing chord strings.
@@ -57,7 +57,11 @@ use crate::vk;
 const BACKOFF_MAX_MS: u64 = 30_000;
 
 enum Cmd {
-    Key(u16, bool),
+    Key {
+        vk: u16,
+        pressed: bool,
+        event_id: Option<u64>,
+    },
     Combo(Vec<Transition>),
     Type(String),
     Sas,
@@ -336,12 +340,22 @@ async fn session(
                     break SessionOutcome::Quit;
                 };
                 match cmd {
-                    Cmd::Key(vk, pressed) => {
+                    Cmd::Key {
+                        vk,
+                        pressed,
+                        event_id,
+                    } => {
                         if !membership.is_forwarding_ready() {
-                            eprintln!("farrelay-ipc: key suppressed while waiting for NVDA");
+                            eprintln!(
+                                "farrelay-ipc: key suppressed while waiting for NVDA{}",
+                                event_suffix(event_id)
+                            );
                             continue;
                         }
-                        eprintln!("farrelay-ipc: relay key vk={vk} pressed={pressed}");
+                        eprintln!(
+                            "farrelay-ipc: relay key{} vk={vk} pressed={pressed}",
+                            event_suffix(event_id)
+                        );
                         let ts = [Transition { vk, pressed }];
                         crate::update_held(&mut held, &ts);
                         if let Err(e) = crate::send_keys(&writer, &ts).await {
@@ -469,7 +483,27 @@ fn parse_command(line: &str, nvda_vk: u16) -> Result<Cmd, String> {
                 "1" => true,
                 _ => return Err(format!("key: pressed must be 0 or 1, got {pr_s:?}")),
             };
-            Ok(Cmd::Key(vk, pressed))
+            let event_id = match it.next() {
+                None => None,
+                Some(token) => {
+                    let value = token
+                        .strip_prefix("event=")
+                        .ok_or_else(|| format!("key: unexpected trailing field {token:?}"))?;
+                    Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("key: bad event id {value:?}"))?,
+                    )
+                }
+            };
+            if let Some(token) = it.next() {
+                return Err(format!("key: unexpected trailing field {token:?}"));
+            }
+            Ok(Cmd::Key {
+                vk,
+                pressed,
+                event_id,
+            })
         }
         "combo" => {
             if rest.is_empty() {
@@ -484,6 +518,12 @@ fn parse_command(line: &str, nvda_vk: u16) -> Result<Cmd, String> {
         "quit" => Ok(Cmd::Quit),
         _ => Err(format!("unknown command {head:?}")),
     }
+}
+
+fn event_suffix(event_id: Option<u64>) -> String {
+    event_id
+        .map(|id| format!(" event={id}"))
+        .unwrap_or_default()
 }
 
 fn unescape(s: &str) -> String {
@@ -714,5 +754,31 @@ mod tests {
         );
         assert_eq!(safe_wave_basename("../../outside.wav"), None);
         assert_eq!(safe_wave_basename("not-a-wave.mp3"), None);
+    }
+
+    #[test]
+    fn key_correlation_is_optional_and_strictly_framed() {
+        let legacy = parse_command("key 116 1", 0).expect("legacy key should parse");
+        assert!(matches!(
+            legacy,
+            Cmd::Key {
+                vk: 116,
+                pressed: true,
+                event_id: None
+            }
+        ));
+
+        let correlated =
+            parse_command("key 117 0 event=419", 0).expect("correlated key should parse");
+        assert!(matches!(
+            correlated,
+            Cmd::Key {
+                vk: 117,
+                pressed: false,
+                event_id: Some(419)
+            }
+        ));
+        assert!(parse_command("key 116 1 event=418 extra", 0).is_err());
+        assert!(parse_command("key 116 1 trace=418", 0).is_err());
     }
 }

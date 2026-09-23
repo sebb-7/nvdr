@@ -1,6 +1,35 @@
 import Foundation
 import Observation
 
+/// Frames byte-stream output from the SSH exec transport. A transport event
+/// is not a line: it can end in the middle of UTF-8, CRLF, or a host log
+/// record. Keep the suffix until a real newline or stream close.
+struct BridgeOutputLineFramer: Sendable {
+    private var pending = Data()
+
+    mutating func append(_ bytes: Data) -> [String] {
+        pending.append(bytes)
+        var lines: [String] = []
+        while let newline = pending.firstIndex(of: 0x0A) {
+            let line = Data(pending[..<newline])
+            pending.removeSubrange(...newline)
+            lines.append(Self.decode(line))
+        }
+        return lines
+    }
+
+    mutating func finish() -> String? {
+        guard !pending.isEmpty else { return nil }
+        defer { pending.removeAll(keepingCapacity: true) }
+        return Self.decode(pending)
+    }
+
+    private static func decode(_ bytes: Data) -> String {
+        let content = bytes.last == 0x0D ? bytes.dropLast() : bytes[...]
+        return String(decoding: content, as: UTF8.self)
+    }
+}
+
 private actor SSHOperationCompletionBox {
     private var stored = SSHConnectedOperationCompletion.unexpectedlyEnded
 
@@ -61,6 +90,9 @@ final class BridgeClient {
     private var commandChannelID: UUID?
     private var inputReady = false
     private var inputState = SSHInputState()
+    /// A process-lifetime sequence used only for key-transition diagnostics.
+    /// It does not encode typed content or alter the relay key semantics.
+    private var nextInputEventID: UInt64 = 1
     /// Set only after a live Ready session falls back to an NVDA-unavailable
     /// state. This prevents initial Waiting-for-NVDA -> Ready from being
     /// misclassified as an NVDA restart.
@@ -212,19 +244,29 @@ final class BridgeClient {
         guard inputReady, let commandContinuation else {
             return .rejected("input channel is not ready")
         }
-        guard let command = inputState.command(forKey: vk, pressed: pressed) else {
+        let eventID = nextInputEventID
+        guard let command = inputState.command(forKey: vk, pressed: pressed, eventID: eventID) else {
             return .rejected("unpaired key-up")
         }
+        nextInputEventID &+= 1
+        let result: InputForwardingResult
         switch commandContinuation.yield(command) {
         case .enqueued:
-            return .accepted
+            result = .accepted
         case .dropped:
-            return .rejected("transmission queue is full")
+            result = .rejected("transmission queue is full")
         case .terminated:
-            return .rejected("transmission channel ended")
+            result = .rejected("transmission channel ended")
         @unknown default:
-            return .rejected("unknown transmission state")
+            result = .rejected("unknown transmission state")
         }
+        switch result {
+        case .accepted:
+            appendLog("input event=\(eventID) client queued")
+        case .rejected:
+            break
+        }
+        return result
     }
 
     /// For a physical GameController F-key, add only Control/Alt/Shift that
@@ -576,21 +618,23 @@ final class BridgeClient {
             ) { group in
                 group.addTask {
                     for await command in commandStream {
+                        if let eventID = command.keyEventID {
+                            await self.appendLogAsync("input event=\(eventID) SSH write-start")
+                        }
                         try await transport.write(Data((command.line + "\n").utf8))
+                        if let eventID = command.keyEventID {
+                            await self.appendLogAsync("input event=\(eventID) SSH write-complete")
+                        }
                     }
                     return SSHConnectedOperationCompletion.unexpectedlyEnded
                 }
                 group.addTask {
-                    // stdout chunks arrive at arbitrary boundaries — split
-                    // by newline and feed each line to the IPC parser.
-                    var pending = ""
+                    var stdout = BridgeOutputLineFramer()
+                    var stderr = BridgeOutputLineFramer()
                     for try await event in transport.events() {
                         switch event {
                         case .stdout(let data):
-                            pending += String(decoding: data, as: UTF8.self)
-                            while let newline = pending.firstIndex(of: "\n") {
-                                let line = String(pending[..<newline])
-                                pending.removeSubrange(...newline)
+                            for line in stdout.append(data) {
                                 let parsed = IPCParser.parse(line)
                                 await self.handle(parsed, from: channelID)
                                 if case .state(.quit) = parsed {
@@ -598,21 +642,22 @@ final class BridgeClient {
                                 }
                             }
                         case .stderr(let data):
-                            for chunk in String(decoding: data, as: UTF8.self)
-                                .split(separator: "\n", omittingEmptySubsequences: false) {
-                                let line = String(chunk)
+                            for line in stderr.append(data) {
                                 if !line.isEmpty {
                                     await self.appendLogAsync("farrelay: \(line)")
                                 }
                             }
                         }
                     }
-                    if !pending.isEmpty {
-                        let parsed = IPCParser.parse(pending)
+                    if let line = stdout.finish() {
+                        let parsed = IPCParser.parse(line)
                         await self.handle(parsed, from: channelID)
                         if case .state(.quit) = parsed {
                             return SSHConnectedOperationCompletion.completedIntentionally
                         }
+                    }
+                    if let line = stderr.finish(), !line.isEmpty {
+                        await self.appendLogAsync("farrelay: \(line)")
                     }
                     return SSHConnectedOperationCompletion.unexpectedlyEnded
                 }
@@ -764,8 +809,9 @@ final class BridgeClient {
     /// and relay enqueue when available; they do not claim NVDA execution.
     var inputTransportDiagnostics: [String] {
         log.filter {
+            $0.contains("input event=") ||
             $0.contains("farrelay-ipc: stdin got: key ") ||
-            $0.contains("farrelay-ipc: relay key vk=") ||
+            $0.contains("farrelay-ipc: relay key") ||
             $0.contains("farrelay-ipc: key suppressed")
         }.suffix(20).map { $0 }
     }

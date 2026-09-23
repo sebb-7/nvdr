@@ -177,6 +177,19 @@ final class SSHConnectionSupervisorTests: XCTestCase {
         XCTAssertEqual(input.command(forKey: 0x08, pressed: false)?.line, "key 8 0")
     }
 
+    func testInputStateSerializesOptionalCorrelationIDWithoutChangingKeySemantics() {
+        var input = SSHInputState()
+
+        XCTAssertEqual(
+            input.command(forKey: VK.f5, pressed: true, eventID: 418)?.line,
+            "key 116 1 event=418"
+        )
+        XCTAssertEqual(
+            input.command(forKey: VK.f5, pressed: false, eventID: 419)?.line,
+            "key 116 0 event=419"
+        )
+    }
+
     func testInputStateDropsStaleAndDuplicateKeyUpEvents() {
         var input = SSHInputState()
 

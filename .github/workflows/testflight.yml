@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: testflight-${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +23,24 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Require successful iOS CI for this exact source revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          validation_url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ios-ci.yml/runs?head_sha=$GITHUB_SHA&status=completed&per_page=100"
+          validation_run_id="$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "$validation_url" | jq -r --arg sha "$GITHUB_SHA" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success") | .id] | first // empty')"
+          if [ -z "$validation_run_id" ]; then
+            echo "No successful iOS CI validation exists for exact SHA $GITHUB_SHA." >&2
+            echo "Run iOS CI for this revision first; TestFlight will not validate or ship a different SHA." >&2
+            exit 1
+          fi
+          echo "Validated exact SHA $GITHUB_SHA with iOS CI run $validation_run_id."
 
       - name: Configure temporary paths
         run: |
@@ -41,27 +60,11 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
-      - name: Resolve Swift packages
-        working-directory: ios
-        run: xcodebuild -resolvePackageDependencies -project FarRelay.xcodeproj -scheme FarRelay
-
-      # Keep distribution independent from the normal push/PR workflow while
-      # still proving this exact source revision passes the existing test suite.
-      - name: Select an available iPhone simulator
-        id: simulator
-        run: |
-          udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for devices in data["devices"].values() for device in devices if device["isAvailable"] and device["name"].startswith("iPhone")))')"
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-
-      - name: Run existing iOS tests before signing
-        working-directory: ios
-        run: >-
-          xcodebuild test
-          -project FarRelay.xcodeproj
-          -scheme FarRelayTests
-          -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
-          CODE_SIGNING_ALLOWED=NO
-          CODE_SIGNING_REQUIRED=NO
+      - name: Restore pinned Swift package sources
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/FarRelaySourcePackages
+          key: ios-source-packages-macos-26-${{ hashFiles('ios/project.yml', 'ios/FarRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Install distribution certificate and App Store profile
         id: signing
@@ -114,6 +117,7 @@ jobs:
           -configuration Release
           -destination 'generic/platform=iOS'
           -archivePath "$ARCHIVE_PATH"
+          -clonedSourcePackagesDirPath "$RUNNER_TEMP/FarRelaySourcePackages"
           FARRELAY_TEAM_ID="$APPLE_TEAM_ID"
           FARRELAY_PROFILE_NAME="$PROFILE_NAME"
           FARRELAY_OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"

@@ -60,6 +60,40 @@ final class FunctionKeyCapturePolicyTests: XCTestCase {
         XCTAssertNil(GameControllerFunctionKeyMapping.virtualKey(for: .F13))
     }
 
+    func testEveryPhysicalFKeyHasOneBalancedTransitionPairAndCrossSourceDeduplication() {
+        let firstUsage = Int(UIKeyboardHIDUsage.keyboardF1.rawValue)
+        for offset in 0..<12 {
+            let virtualKey = VK.f1 + UInt16(offset)
+            XCTAssertEqual(HIDToVK.functionVK(forKeyboardUsage: firstUsage + offset), virtualKey)
+            XCTAssertEqual(
+                FunctionKeyTransmissionPlan(
+                    virtualKey: virtualKey,
+                    modifiers: [],
+                    alreadyPressed: []
+                ).transitions.map { "\($0.vk):\($0.pressed)" },
+                ["\(virtualKey):true", "\(virtualKey):false"],
+                "F\(offset + 1) must produce exactly one down/up pair."
+            )
+
+            var gate = FunctionKeyDuplicateGate()
+            let now = Date(timeIntervalSince1970: Double(offset))
+            XCTAssertFalse(gate.suppresses(
+                virtualKey: virtualKey,
+                pressed: true,
+                source: .rawPress,
+                originUsage: firstUsage + offset,
+                now: now
+            ))
+            XCTAssertTrue(gate.suppresses(
+                virtualKey: virtualKey,
+                pressed: true,
+                source: .gameController,
+                originUsage: firstUsage + offset,
+                now: now.addingTimeInterval(0.01)
+            ))
+        }
+    }
+
     func testModifierFingerprintMatchesUIKitAndGameControllerRepresentations() {
         let ui = FunctionKeyModifierFingerprint.fromUIKit([.command, .control, .alternate, .shift, .alphaShift])
         let gameController = FunctionKeyModifierFingerprint.fromRemoteModifiers([

@@ -3,16 +3,13 @@ name: iOS CI
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "ios/**"
-      - ".github/workflows/ios-ci.yml"
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ios-ci-${{ github.workflow }}-${{ github.ref }}
+  group: ios-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,21 +38,11 @@ jobs:
       - name: Print XcodeGen version
         run: xcodegen version
 
-      - name: Resolve Swift packages
-        working-directory: ios
-        run: xcodebuild -resolvePackageDependencies -project FarRelay.xcodeproj -scheme FarRelay
-
-      - name: Build app for iOS Simulator
-        working-directory: ios
-        run: >-
-          xcodebuild
-          -project FarRelay.xcodeproj
-          -scheme FarRelay
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          CODE_SIGNING_ALLOWED=NO
-          CODE_SIGNING_REQUIRED=NO
-          build
+      - name: Restore pinned Swift package sources
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/FarRelaySourcePackages
+          key: ios-source-packages-macos-26-${{ hashFiles('ios/project.yml', 'ios/FarRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Select an available iPhone simulator
         id: simulator
@@ -64,13 +51,14 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "Selected simulator: $udid"
 
-      - name: Run SSH foundation unit tests
+      - name: Run authoritative iOS validation
         working-directory: ios
         run: >-
           xcodebuild test
           -project FarRelay.xcodeproj
           -scheme FarRelayTests
           -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
+          -clonedSourcePackagesDirPath "$RUNNER_TEMP/FarRelaySourcePackages"
           -resultBundlePath "$RUNNER_TEMP/FarRelayTests.xcresult"
           CODE_SIGNING_ALLOWED=NO
           CODE_SIGNING_REQUIRED=NO
