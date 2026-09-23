@@ -10,6 +10,15 @@ enum InteractionSoundCue {
 
     static func play(_ intent: InteractionSoundIntent) { playBundled(filename: intent.filename) }
 
+    /// Plays one of FarRelay's bundled WAV resources. Preference UI and
+    /// app-owned semantic feedback use this path; remote NVDA waves remain a
+    /// separate protocol-driven path below.
+    static func playBundled(filename: String) {
+        guard AppSoundCatalog.contains(filename: filename),
+              let url = SoundResourceResolver.bundledURL(for: filename) else { return }
+        play(url: url, key: filename.lowercased(), cache: &bundledIDs)
+    }
+
     static func playRemoteWave(filename: String) {
         guard let url = SoundResourceResolver.bundledURL(for: filename) else { return }
         play(url: url, key: url.lastPathComponent.lowercased(), cache: &bundledIDs)
@@ -19,11 +28,6 @@ enum InteractionSoundCue {
         if let identifier = toneIDs[tone] { AudioServicesPlaySystemSound(identifier); return }
         guard let url = RemoteNVDAToneWAV.url(for: tone) else { return }
         play(url: url, key: tone, cache: &toneIDs)
-    }
-
-    private static func playBundled(filename: String) {
-        guard let url = SoundResourceResolver.bundledURL(for: filename) else { return }
-        play(url: url, key: filename.lowercased(), cache: &bundledIDs)
     }
 
     private static func play<Key: Hashable>(url: URL, key: Key, cache: inout [Key: SystemSoundID]) {
