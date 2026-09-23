@@ -121,9 +121,7 @@ final class CaptureView: UIView {
         // delay. Control, Option, Shift, and Caps Lock remain raw remote
         // modifiers and are therefore never globally intercepted.
         for key in keys where CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
-            if CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
-                claimed = handleCommand(key, pressed: pressed, bridge: bridge) || claimed
-            }
+            claimed = handleCommand(key, pressed: pressed, bridge: bridge) || claimed
         }
 
         for key in keys where !CommandFunctionKeyFallback.isCommandKey(key.keyCode) {
@@ -231,6 +229,22 @@ final class CaptureView: UIView {
         reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
         consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
         pendingCommandKeys.removeAll()
+        if functionDuplicateGate.suppresses(
+            virtualKey: mapping.virtualKey,
+            pressed: true,
+            source: .rawFallback,
+            modifierFlags: FunctionKeyModifierFingerprint.fromUIKit(key.modifierFlags),
+            originUsage: mapping.hidUsage.rawValue
+        ) {
+            diagnostics?.observe(
+                source: .commandFallback,
+                hidUsage: mapping.hidUsage.rawValue,
+                modifiers: key.modifierFlags.rawValue,
+                virtualKey: mapping.virtualKey,
+                result: "deduplicated raw Command fallback"
+            )
+            return true
+        }
         let results = bridge.forwardFunctionKeyTap(
             vk: mapping.virtualKey,
             modifiers: CommandFunctionKeyFallback.preservedModifiers(for: key.modifierFlags)
@@ -248,10 +262,7 @@ final class CaptureView: UIView {
     override var keyCommands: [UIKeyCommand]? {
         guard bridge?.forwardingEnabled == true else { return [] }
 
-        // Keep the exact priority surface: arrows, Escape, and F1-F12 with
-        // their modifier combinations. Command-number fallback remains on the
-        // raw UIKit path and does not add another priority registration layer.
-        return PhysicalFunctionRowCapturePolicy.priorityRegistrations.map { registration in
+        let reserved = PhysicalFunctionRowCapturePolicy.priorityRegistrations.map { registration in
             let command = UIKeyCommand(
                 input: registration.input,
                 modifierFlags: ReservedKeyForwardingPolicy.modifierFlags(for: registration.modifiers),
@@ -260,10 +271,60 @@ final class CaptureView: UIView {
             command.wantsPriorityOverSystemBehavior = true
             return command
         }
+        // Build 29 proved that some iOS/keyboard combinations expose only part
+        // of the physical F-row and never publish a GCKeyboard. Restore the
+        // public Command+1...= shortcut surface as a deterministic F1-F12
+        // fallback without replacing any direct F-key route.
+        let fallbacks = CommandFunctionKeyFallback.keyCommandRegistrations.map { registration in
+            let command = UIKeyCommand(
+                input: registration.input,
+                modifierFlags: registration.modifiers,
+                action: #selector(handleReservedKeyCommand(_:))
+            )
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        return reserved + fallbacks
     }
 
     @objc private func handleReservedKeyCommand(_ command: UIKeyCommand) {
         guard let bridge, bridge.forwardingEnabled, let input = command.input else { return }
+
+        if command.modifierFlags.contains(.command),
+           let mapping = CommandFunctionKeyFallback.mapping(forInput: input) {
+            if functionDuplicateGate.suppresses(
+                virtualKey: mapping.virtualKey,
+                pressed: true,
+                source: .keyCommandFallback,
+                modifierFlags: FunctionKeyModifierFingerprint.fromUIKit(command.modifierFlags),
+                originUsage: mapping.hidUsage.rawValue
+            ) {
+                diagnostics?.observe(
+                    source: .commandFallback,
+                    hidUsage: mapping.hidUsage.rawValue,
+                    modifiers: command.modifierFlags.rawValue,
+                    virtualKey: mapping.virtualKey,
+                    result: "deduplicated priority Command fallback"
+                )
+                return
+            }
+            reservedFallbackUsages.insert(mapping.hidUsage.rawValue)
+            consumedFallbackCommandUsages.formUnion(pendingCommandKeys.keys)
+            pendingCommandKeys.removeAll()
+            let results = bridge.forwardFunctionKeyTap(
+                vk: mapping.virtualKey,
+                modifiers: CommandFunctionKeyFallback.preservedModifiers(for: command.modifierFlags)
+            )
+            diagnostics?.observe(
+                source: .commandFallback,
+                hidUsage: mapping.hidUsage.rawValue,
+                modifiers: command.modifierFlags.rawValue,
+                virtualKey: mapping.virtualKey,
+                result: fallbackDiagnosticResult(flags: command.modifierFlags, results: results)
+            )
+            return
+        }
+
         guard let transitions = ReservedKeyForwardingPolicy.transitions(
             for: input,
             modifierFlags: command.modifierFlags,
@@ -327,6 +388,13 @@ final class CaptureView: UIView {
 
     func gameControllerKeyboardConnected() {
         diagnostics?.observe(source: .gameController, result: "keyboard connected; F1-F12 fallback active")
+    }
+
+    func gameControllerKeyboardUnavailable() {
+        diagnostics?.observe(
+            source: .gameController,
+            result: "GCKeyboard unavailable; UIKit direct F-row and Command-number fallback remain active"
+        )
     }
 
     func gameControllerKeyboardDisconnected(releasing virtualKeys: [UInt16]) {
