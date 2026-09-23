@@ -10,6 +10,7 @@ final class AudioReceiverModel {
     private var updatesTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private(set) var snapshot = AudioReceiverSnapshot()
+    private(set) var discoveryDiagnostics = RemSoundDiscoveryDiagnostics()
 
     init(receiver: RemSoundAudioReceiver = RemSoundAudioReceiver()) {
         self.receiver = receiver
@@ -18,6 +19,10 @@ final class AudioReceiverModel {
         } onDroppedFrame: { [receiver] frameCount in
             Task { await receiver.playbackDropped(frameCount: frameCount) }
         }
+        discovery.onDiagnosticsChanged = { [weak self] diagnostics in
+            self?.discoveryDiagnostics = diagnostics
+        }
+        discoveryDiagnostics = discovery.diagnostics
         updatesTask = Task { [weak self, receiver] in
             let updates = await receiver.updates()
             for await snapshot in updates {
@@ -64,6 +69,64 @@ final class AudioReceiverModel {
 
     func setMuted(_ muted: Bool) { Task { await receiver.setMuted(muted) } }
     func setVolume(_ volume: Float) { Task { await receiver.setVolume(volume) } }
+
+    /// A concise state intended for the Remote tab. Heartbeats prove the
+    /// Windows app can reach this device but do not imply password success.
+    var compactStatusLabel: String {
+        if snapshot.state == .authenticating,
+           snapshot.statistics.heartbeatPingsReceived > 0 {
+            return "Windows online — waiting for audio"
+        }
+        switch snapshot.state {
+        case .idle: "Idle"
+        case .connecting: "Connecting"
+        case .authenticating: "Authenticating"
+        case .buffering: "Buffering"
+        case .playing: "Playing"
+        case .reconnecting: "Reconnecting"
+        case .stopped: "Stopped"
+        case .failed(let message): "Failed: \(message)"
+        }
+    }
+
+    /// Copy-safe diagnostics deliberately exclude the shared password, derived
+    /// key/fingerprint, packet plaintext, and audio samples.
+    func diagnosticReport(profile: HostProfile) -> String {
+        let capability = profile.remSoundReceiver?.normalized()
+            ?? RemSoundReceiverCapability(senderHost: profile.address)
+        let statistics = snapshot.statistics
+        let discovery = discoveryDiagnostics
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        return [
+            "FarRelay RemSound diagnostic report",
+            "App version: \(version)",
+            "Build: \(build)",
+            "Computer: \(profile.displayName)",
+            "Windows RemSound address: \(capability.senderHost)",
+            "Audio UDP port: \(capability.senderPort)",
+            "Discovery UDP port: \(RemSoundDiscovery.defaultPort)",
+            "State: \(compactStatusLabel)",
+            "Receiver peer: \(snapshot.peer ?? "none")",
+            "Discovery active: \(discovery.isActive)",
+            "Discovery target: \(discovery.target ?? "none")",
+            "Discovery announcements attempted: \(discovery.announcementsAttempted)",
+            "Discovery sends completed locally: \(discovery.announcementsCompleted)",
+            "Discovery send failures: \(discovery.announcementFailures)",
+            "Heartbeat pings received: \(statistics.heartbeatPingsReceived)",
+            "Heartbeat pongs sent: \(statistics.heartbeatPongsSent)",
+            "Heartbeat reply failures: \(statistics.heartbeatReplyFailures)",
+            "Packets received: \(statistics.packetsReceived)",
+            "Packets dropped: \(statistics.packetsDropped)",
+            "Packets lost: \(statistics.packetsLost)",
+            "Packets reordered: \(statistics.packetsReordered)",
+            "Authentication failures: \(statistics.authenticationFailures)",
+            "Buffer depth frames: \(statistics.bufferDepthFrames)",
+            "Last audio error: \(statistics.lastError ?? "none")",
+            "Last discovery error: \(discovery.lastError ?? "none")",
+            "Sensitive data: passwords, keys, fingerprints, packet plaintext, and audio content are not recorded."
+        ].joined(separator: "\n")
+    }
 }
 
 @MainActor
