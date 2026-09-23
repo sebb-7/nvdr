@@ -58,7 +58,7 @@ final class InteractionFeedback {
     private let soundSettings: InteractionSoundSettings
     private(set) var lastRequest: InteractionFeedbackRequest?
 
-    init(settings: AppSettings, soundSettings: InteractionSoundSettings) {
+    init(settings: AppSettings, soundSettings: InteractionSoundSettings = InteractionSoundSettings()) {
         self.settings = settings
         self.soundSettings = soundSettings
     }
@@ -74,10 +74,17 @@ final class InteractionFeedback {
     }
 
     private func playConfiguredSound(_ intent: InteractionSoundIntent) {
-        guard settings.soundCuesEnabled else { return }
+        guard canPlayConfiguredSound(intent) else { return }
         let preference = soundSettings.preference(for: intent)
-        guard preference.isEnabled else { return }
         InteractionSoundCue.playBundled(filename: preference.filename)
+    }
+
+    /// The master setting applies to FarRelay-owned cues; a per-event choice
+    /// can only further suppress its own semantic event. Remote NVDA waves and
+    /// tones bypass the per-event portion of this policy because they are
+    /// protocol events, not app cues.
+    func canPlayConfiguredSound(_ intent: InteractionSoundIntent) -> Bool {
+        settings.soundCuesEnabled && soundSettings.preference(for: intent).isEnabled
     }
 
     private func soundIntent(for kind: InteractionFeedbackKind) -> InteractionSoundIntent {

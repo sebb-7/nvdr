@@ -479,6 +479,39 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
+    func testMappedRemoteEscapePreemptsQuickNavigationAndRoutesEveryPressExactlyOnce() async {
+        let (mappings, adapter, sink, _, diagnostics) = makeAdapter()
+        mappings.setAction(.keyboard(.init(key: .escape)), for: .circle)
+        mappings.setAction(.keyboard(.init(key: .tab)), for: .triangle)
+        mappings.saveDraft()
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.1)
+        adapter.receiveForTesting(input: .circle, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .circle, pressed: false, at: 1.3)
+        await settle()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.escape, true), .init(VK.escape, false),
+                .init(VK.escape, true), .init(VK.escape, false)
+            ]
+        )
+        XCTAssertEqual(
+            diagnostics.entries.filter { $0.result.contains("Mapped remote Escape preempted") }.count,
+            2
+        )
+
+        // A non-Escape mapping continues to use its normal remote route.
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1.4)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.5)
+        await settle()
+        XCTAssertEqual(Array(sink.transitions.suffix(2)), [.init(VK.tab, true), .init(VK.tab, false)])
+    }
+
     func testOneFingerTouchpadSwipeMovesExactlyOneRotorSectionPerContact() async {
         let (_, adapter, sink, _, _) = makeAdapter()
 

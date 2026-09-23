@@ -33,7 +33,7 @@ final class AudioReceiverModel {
                 switch snapshot.state {
                 case .reconnecting, .stopped, .failed:
                     self?.playback.stop()
-                case .idle, .connecting, .authenticating, .buffering, .playing:
+                case .idle, .connecting, .authenticating, .waitingForAudio, .buffering, .playing:
                     break
                 }
             }
@@ -73,14 +73,11 @@ final class AudioReceiverModel {
     /// A concise state intended for the Remote tab. Heartbeats prove the
     /// Windows app can reach this device but do not imply password success.
     var compactStatusLabel: String {
-        if snapshot.state == .authenticating,
-           snapshot.statistics.heartbeatPingsReceived > 0 {
-            return "Windows online — waiting for audio"
-        }
-        switch snapshot.state {
+        return switch snapshot.state {
         case .idle: "Idle"
         case .connecting: "Connecting"
         case .authenticating: "Authenticating"
+        case .waitingForAudio: "Windows online — waiting for audio"
         case .buffering: "Buffering"
         case .playing: "Playing"
         case .reconnecting: "Reconnecting"
@@ -107,6 +104,7 @@ final class AudioReceiverModel {
             "Audio UDP port: \(capability.senderPort)",
             "Discovery UDP port: \(RemSoundDiscovery.defaultPort)",
             "State: \(compactStatusLabel)",
+            "Receiver listening: \(snapshot.isListening)",
             "Receiver peer: \(snapshot.peer ?? "none")",
             "Discovery active: \(discovery.isActive)",
             "Discovery target: \(discovery.target ?? "none")",
@@ -116,11 +114,17 @@ final class AudioReceiverModel {
             "Heartbeat pings received: \(statistics.heartbeatPingsReceived)",
             "Heartbeat pongs sent: \(statistics.heartbeatPongsSent)",
             "Heartbeat reply failures: \(statistics.heartbeatReplyFailures)",
-            "Packets received: \(statistics.packetsReceived)",
+            "Audio UDP packets received: \(statistics.packetsReceived)",
+            "Encrypted audio packets received: \(statistics.encryptedAudioPacketsReceived)",
             "Packets dropped: \(statistics.packetsDropped)",
             "Packets lost: \(statistics.packetsLost)",
             "Packets reordered: \(statistics.packetsReordered)",
+            "Authentication successes: \(statistics.authenticationSuccesses)",
             "Authentication failures: \(statistics.authenticationFailures)",
+            "Format authentication failures: \(statistics.formatAuthenticationFailures)",
+            "Encrypted audio authentication failures: \(statistics.encryptedAudioAuthenticationFailures)",
+            "Malformed packets: \(statistics.malformedPackets)",
+            "Unsupported packets: \(statistics.unsupportedPackets)",
             "Buffer depth frames: \(statistics.bufferDepthFrames)",
             "Last audio error: \(statistics.lastError ?? "none")",
             "Last discovery error: \(discovery.lastError ?? "none")",

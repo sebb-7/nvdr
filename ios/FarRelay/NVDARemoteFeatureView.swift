@@ -62,7 +62,7 @@ struct NVDARemoteFeatureView: View {
                                 port: remSoundCapability.senderPort,
                                 password: settings.credentials(for: profile)?.remSoundPassword ?? ""
                             )
-                        case .connecting, .authenticating, .buffering, .playing, .reconnecting:
+                        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
                             audioReceiver.stop()
                         }
                     }
@@ -245,14 +245,14 @@ struct NVDARemoteFeatureView: View {
     private var remSoundActionTitle: String {
         switch audioReceiver.snapshot.state {
         case .idle, .stopped, .failed: "Start RemSound"
-        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "Stop RemSound"
+        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "Stop RemSound"
         }
     }
 
     private var remSoundActionSymbol: String {
         switch audioReceiver.snapshot.state {
         case .idle, .stopped, .failed: "play.fill"
-        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "stop.fill"
+        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "stop.fill"
         }
     }
 

@@ -450,11 +450,29 @@ final class DualSenseControllerAdapter {
                 // steal Cross/Circle/right-stick controls from a held or
                 // one-shot layer. Once the layer returns to Base, Navigation
                 // resumes without needing to be toggled back on.
+                let action = resolvedAction(for: input)
+                // A profile's remote Escape mapping must never be interpreted
+                // as Circle's local "leave this mode" behavior. Resolve it
+                // before the local-mode dispatcher so every press is routed
+                // once to the original remote target and consumed here.
+                if let action, action.sendsRemoteEscape {
+                    diagnostics.observeController(
+                        eventID: eventID,
+                        input: input,
+                        pressed: true,
+                        stage: "Mapped remote Escape preempted local controller mode"
+                    )
+                    let started = start(action: action, input: input, eventID: eventID)
+                    if started, let stateChange = layerEngine.consumeOneShotAfterResolvedAction() {
+                        present(stateChange)
+                    }
+                    continue
+                }
                 if layerEngine.layerForAction() == nil,
                    handleModeInput(input, pressed: true, eventID: eventID) {
                     continue
                 }
-                guard let action = resolvedAction(for: input) else {
+                guard let action else {
                     diagnostics.observeController(eventID: eventID, input: input, pressed: true, stage: "Binding lookup: no saved mapping")
                     continue
                 }

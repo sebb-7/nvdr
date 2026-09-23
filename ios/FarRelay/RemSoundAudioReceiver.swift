@@ -103,6 +103,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     /// state into a useful diagnostic when no RemSound traffic reaches iOS.
     func checkSenderLiveness(now: Date = .now) {
         guard receiverSnapshot.state == .authenticating
+                || receiverSnapshot.state == .waitingForAudio
                 || receiverSnapshot.state == .buffering
                 || receiverSnapshot.state == .playing
         else { return }
@@ -170,7 +171,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         guard datagram.count <= Self.maximumDatagramBytes,
               let header = RemSoundPacketHeader.parse(datagram)
         else {
-            dropPacket()
+            dropPacket(malformed: true)
             return nil
         }
         let payload = Data(datagram.dropFirst(RemSoundPacketHeader.size))
@@ -179,22 +180,28 @@ actor RemSoundAudioReceiver: AudioReceiver {
             ingestFormat(payload, streamID: header.streamID)
             return nil
         case .audio:
+            receiverSnapshot.statistics.encryptedAudioPacketsReceived += 1
             ingestAudio(payload, streamID: header.streamID, sequence: header.sequence)
             return nil
         case .heartbeat:
             guard let heartbeat = RemSoundHeartbeat.parse(payload) else {
-                dropPacket()
+                dropPacket(malformed: true)
                 return nil
             }
             guard heartbeat.kind == .ping else { return nil }
             receiverSnapshot.statistics.heartbeatPingsReceived += 1
+            if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
+                receiverSnapshot.state = .waitingForAudio
+            }
             heartbeatSequence &+= 1
             let reply = RemSoundHeartbeat.pongResponse(to: datagram, sequence: heartbeatSequence)
-            if reply == nil { dropPacket() } else { publish() }
+            if reply == nil { dropPacket(malformed: true) } else { publish() }
             return reply
         case .keepAlive, .control, .addressCheck:
             // Phase 1 does not implement remote RemSound controls. These packet
             // types remain inert and cannot reach FarRelay control-plane state.
+            receiverSnapshot.statistics.unsupportedPackets += 1
+            publish()
             return nil
         }
     }
@@ -252,11 +259,13 @@ actor RemSoundAudioReceiver: AudioReceiver {
         switch state {
         case .ready:
             listenerReadyAt = .now
+            receiverSnapshot.isListening = true
             if receiverSnapshot.state == .connecting || receiverSnapshot.state == .reconnecting {
                 receiverSnapshot.state = .authenticating
-                publish()
             }
+            publish()
         case .failed:
+            receiverSnapshot.isListening = false
             fail("The audio UDP listener failed.")
         case .cancelled:
             break
@@ -328,14 +337,16 @@ actor RemSoundAudioReceiver: AudioReceiver {
               let expectedFingerprint,
               let fingerprint = format.fingerprint
         else {
-            dropPacket()
+            dropPacket(malformed: true)
             return
         }
         guard RemSoundCrypto.fingerprintsMatch(fingerprint, expectedFingerprint) else {
             receiverSnapshot.statistics.authenticationFailures += 1
+            receiverSnapshot.statistics.formatAuthenticationFailures += 1
             fail("The sender password does not match.")
             return
         }
+        receiverSnapshot.statistics.authenticationSuccesses += 1
         activeStreamID = streamID
         activeFormat = format
         expectedSequence = nil
@@ -354,12 +365,23 @@ actor RemSoundAudioReceiver: AudioReceiver {
             return
         }
         guard acceptSequence(sequence) else { return }
-        guard let part = RemSoundPCMPart.parse(payload),
-              let encryptedFrame = assembler.append(part),
-              let plaintext = RemSoundCrypto.decrypt(encryptedFrame, using: key),
-              plaintext.count.isMultiple(of: 3)
-        else {
+        guard let part = RemSoundPCMPart.parse(payload) else {
+            dropPacket(malformed: true)
+            return
+        }
+        guard let encryptedFrame = assembler.append(part) else {
             dropPacket()
+            return
+        }
+        guard let plaintext = RemSoundCrypto.decrypt(encryptedFrame, using: key) else {
+            receiverSnapshot.statistics.authenticationFailures += 1
+            receiverSnapshot.statistics.encryptedAudioAuthenticationFailures += 1
+            receiverSnapshot.statistics.lastError = "Encrypted audio authentication failed."
+            dropPacket()
+            return
+        }
+        guard plaintext.count.isMultiple(of: 3) else {
+            dropPacket(malformed: true)
             return
         }
 
@@ -422,8 +444,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
         return AudioPCMFrame(samples: samples, sampleRate: sampleRate, channels: channels)
     }
 
-    private func dropPacket() {
+    private func dropPacket(malformed: Bool = false) {
         receiverSnapshot.statistics.packetsDropped += 1
+        if malformed { receiverSnapshot.statistics.malformedPackets += 1 }
         publish()
     }
 
@@ -453,6 +476,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         listener = nil
         for connection in inboundConnections.values { connection.cancel() }
         inboundConnections.removeAll()
+        receiverSnapshot.isListening = false
     }
 
     private func publish() {

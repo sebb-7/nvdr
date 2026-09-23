@@ -31,7 +31,7 @@ struct RemSoundAudioFeatureView: View {
                     switch audioReceiver.snapshot.state {
                     case .idle, .stopped, .failed:
                         audioReceiver.start(host: host, port: port, password: password)
-                    case .connecting, .authenticating, .buffering, .playing, .reconnecting:
+                    case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
                         audioReceiver.stop()
                     }
                 }
@@ -63,9 +63,10 @@ struct RemSoundAudioFeatureView: View {
             Section("Audio diagnostics") {
                 Text("Discovery: \(audioReceiver.discoveryDiagnostics.isActive ? "active" : "inactive"), attempts \(audioReceiver.discoveryDiagnostics.announcementsAttempted), local completions \(audioReceiver.discoveryDiagnostics.announcementsCompleted), failures \(audioReceiver.discoveryDiagnostics.announcementFailures)")
                 Text("Windows heartbeat: pings received \(audioReceiver.snapshot.statistics.heartbeatPingsReceived), pongs sent \(audioReceiver.snapshot.statistics.heartbeatPongsSent), reply failures \(audioReceiver.snapshot.statistics.heartbeatReplyFailures)")
-                Text("Packets received: \(audioReceiver.snapshot.statistics.packetsReceived)")
+                Text("Receiver listening: \(audioReceiver.snapshot.isListening ? \"yes\" : \"no\"), audio UDP packets received: \(audioReceiver.snapshot.statistics.packetsReceived)")
+                Text("Encrypted audio packets: \(audioReceiver.snapshot.statistics.encryptedAudioPacketsReceived), malformed: \(audioReceiver.snapshot.statistics.malformedPackets), unsupported: \(audioReceiver.snapshot.statistics.unsupportedPackets)")
                 Text("Dropped: \(audioReceiver.snapshot.statistics.packetsDropped), lost: \(audioReceiver.snapshot.statistics.packetsLost), reordered: \(audioReceiver.snapshot.statistics.packetsReordered)")
-                Text("Authentication failures: \(audioReceiver.snapshot.statistics.authenticationFailures), buffer frames: \(audioReceiver.snapshot.statistics.bufferDepthFrames), underruns: \(audioReceiver.snapshot.statistics.underruns)")
+                Text("Authentication successes: \(audioReceiver.snapshot.statistics.authenticationSuccesses), failures: \(audioReceiver.snapshot.statistics.authenticationFailures), encrypted-frame failures: \(audioReceiver.snapshot.statistics.encryptedAudioAuthenticationFailures), buffer frames: \(audioReceiver.snapshot.statistics.bufferDepthFrames), underruns: \(audioReceiver.snapshot.statistics.underruns)")
                 if let sampleRate = audioReceiver.snapshot.sampleRate,
                    let channels = audioReceiver.snapshot.channelCount {
                     Text("Format: \(sampleRate) Hz, \(channels) channels, PCM")
@@ -101,14 +102,14 @@ struct RemSoundAudioFeatureView: View {
     private var actionTitle: String {
         switch audioReceiver.snapshot.state {
         case .idle, .stopped, .failed: "Start audio"
-        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "Stop audio"
+        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "Stop audio"
         }
     }
 
     private var actionSymbol: String {
         switch audioReceiver.snapshot.state {
         case .idle, .stopped, .failed: "play.fill"
-        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "stop.fill"
+        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "stop.fill"
         }
     }
 }

@@ -191,6 +191,14 @@ enum FarRelayControllerAction: String, Codable, Hashable, Sendable {
 }
 
 extension ControllerAction {
+    /// A mapped remote Escape is a control-plane command, even when a local
+    /// controller mode is active. It must be claimed before Quick Navigation,
+    /// text entry, or command mode can reinterpret the physical button.
+    var sendsRemoteEscape: Bool {
+        guard case .keyboard(let keyboard) = self else { return false }
+        return keyboard.key == .escape
+    }
+
     var isRepeatableQuickBarAction: Bool {
         if case .keyboard = self { return true }
         return false

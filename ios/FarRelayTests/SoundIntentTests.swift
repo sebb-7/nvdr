@@ -20,6 +20,45 @@ final class SoundIntentTests: XCTestCase {
         }
     }
 
+    func testDisablingOneAppSoundEventDoesNotSuppressOtherEvents() {
+        var preferences = InteractionSoundPreferences()
+        preferences.setEnabled(false, for: .action)
+
+        XCTAssertFalse(preferences.preference(for: .action).isEnabled)
+        XCTAssertTrue(preferences.preference(for: .success).isEnabled)
+        XCTAssertEqual(preferences.preference(for: .success).filename, .success.defaultFilename)
+    }
+
+    func testSelectingAnAppSoundChangesOnlyThatSemanticEvent() {
+        var preferences = InteractionSoundPreferences()
+        let originalSuccess = preferences.preference(for: .success)
+        preferences.setFilename("warning.wav", for: .action)
+
+        XCTAssertEqual(preferences.preference(for: .action).filename, "warning.wav")
+        XCTAssertEqual(preferences.preference(for: .success), originalSuccess)
+    }
+
+    func testGlobalSoundCuesIsTheMasterForAppOwnedEventsOnly() throws {
+        let suiteName = "SoundIntentTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults, credentialStore: SoundIntentCredentialStore())
+        let soundSettings = InteractionSoundSettings(defaults: defaults, storageKey: "sound-intents")
+        let feedback = InteractionFeedback(settings: settings, soundSettings: soundSettings)
+
+        settings.soundCuesEnabled = false
+        XCTAssertFalse(feedback.canPlayConfiguredSound(.action))
+        settings.soundCuesEnabled = true
+        XCTAssertTrue(feedback.canPlayConfiguredSound(.action))
+        soundSettings.setEnabled(false, for: .action)
+        XCTAssertFalse(feedback.canPlayConfiguredSound(.action))
+
+        // NVDA wave/tone events originate in IPC and are intentionally absent
+        // from this app-owned preference catalog.
+        XCTAssertFalse(InteractionSoundIntent.allCases.map(\.rawValue).contains("wave"))
+        XCTAssertFalse(InteractionSoundIntent.allCases.map(\.rawValue).contains("tone"))
+    }
+
     func testCanonicalSoundResourcesResolveFromBuiltAppBundle() {
         let filenames = [
             "connected.wav", "disconnected.wav",
@@ -83,4 +122,10 @@ final class SoundIntentTests: XCTestCase {
         XCTAssertNil(BridgeClient.soundIntent(from: .failed(message: "no"), to: .disconnected(reason: "relay")))
         XCTAssertNotEqual(InteractionSoundIntent.keyboardRemote, .keyboardLocal)
     }
+}
+
+private final class SoundIntentCredentialStore: CredentialStore {
+    func string(for account: String) throws -> String? { nil }
+    func store(_ value: String, for account: String) throws {}
+    func removeValue(for account: String) throws {}
 }

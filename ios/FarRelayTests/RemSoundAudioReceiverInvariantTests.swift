@@ -35,6 +35,41 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
         XCTAssertNil(snapshot.sampleRate)
         XCTAssertNil(snapshot.channelCount)
+        XCTAssertEqual(snapshot.statistics.encryptedAudioPacketsReceived, 0)
+        XCTAssertEqual(snapshot.statistics.bufferDepthFrames, 0)
+    }
+
+    func testValidHeartbeatsOnlyEstablishWaitingForAudioAndEachGetsOnePong() async throws {
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_940, password: "phase1"))
+        let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
+
+        let first = await receiver.ingestAndPrepareReply(ping)
+        let second = await receiver.ingestAndPrepareReply(ping)
+        let snapshot = await receiver.snapshot()
+
+        XCTAssertEqual(first, Data(hex: "524D4E440104FFFF010000000110A4000000000000"))
+        XCTAssertEqual(second, Data(hex: "524D4E440104FFFF020000000110A4000000000000"))
+        XCTAssertEqual(snapshot.state, .waitingForAudio)
+        XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 2)
+        XCTAssertEqual(snapshot.statistics.authenticationSuccesses, 0)
+        XCTAssertEqual(snapshot.statistics.encryptedAudioPacketsReceived, 0)
+        XCTAssertEqual(snapshot.statistics.bufferDepthFrames, 0)
+        await receiver.stop()
+    }
+
+    func testMalformedHeartbeatFailsClosedWithoutChangingControlOrAudioState() async throws {
+        let bridge = BridgeClient(speech: SpeechOutput())
+        let receiver = RemSoundAudioReceiver()
+        let malformedPing = try XCTUnwrap(Data(hex: "524D4E440104FFFF0100000000"))
+
+        XCTAssertNil(await receiver.ingestAndPrepareReply(malformedPing))
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .idle)
+        XCTAssertEqual(snapshot.statistics.heartbeatPingsReceived, 0)
+        XCTAssertEqual(snapshot.statistics.malformedPackets, 1)
+        XCTAssertEqual(snapshot.statistics.bufferDepthFrames, 0)
+        XCTAssertEqual(bridge.status, .idle)
     }
 
     func testHeartbeatPongAndControlPacketsCannotManufactureReplies() async throws {
@@ -97,6 +132,24 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.state, .failed("The sender password does not match."))
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 1)
         XCTAssertEqual(bridge.status, .idle)
+        await receiver.stop()
+    }
+
+    func testBadEncryptedAudioTagIsAccountedSeparatelyFromWrongPassword() async throws {
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_941, password: "phase1"))
+        await receiver.ingest(try formatPacket())
+        var encryptedAudio = try makeAudioPacket(sequence: 1, frameID: 1)
+        encryptedAudio[30] ^= 0xFF
+        await receiver.ingest(encryptedAudio)
+
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.statistics.authenticationSuccesses, 1)
+        XCTAssertEqual(snapshot.statistics.encryptedAudioPacketsReceived, 1)
+        XCTAssertEqual(snapshot.statistics.formatAuthenticationFailures, 0)
+        XCTAssertEqual(snapshot.statistics.encryptedAudioAuthenticationFailures, 1)
+        XCTAssertEqual(snapshot.statistics.bufferDepthFrames, 0)
+        XCTAssertEqual(snapshot.statistics.lastError, "Encrypted audio authentication failed.")
         await receiver.stop()
     }
 

@@ -28,6 +28,7 @@ enum AudioReceiverState: Equatable, Sendable {
     case idle
     case connecting
     case authenticating
+    case waitingForAudio
     case buffering
     case playing
     case reconnecting
@@ -39,6 +40,7 @@ enum AudioReceiverState: Equatable, Sendable {
         case .idle: "Audio idle"
         case .connecting: "Audio connecting"
         case .authenticating: "Audio authenticating"
+        case .waitingForAudio: "Windows online, waiting for audio"
         case .buffering: "Audio buffering"
         case .playing: "Audio playing"
         case .reconnecting: "Audio reconnecting"
@@ -55,9 +57,15 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var packetsReordered = 0
     var packetsDuplicated = 0
     var authenticationFailures = 0
+    var authenticationSuccesses = 0
+    var formatAuthenticationFailures = 0
+    var encryptedAudioPacketsReceived = 0
+    var encryptedAudioAuthenticationFailures = 0
     var heartbeatPingsReceived = 0
     var heartbeatPongsSent = 0
     var heartbeatReplyFailures = 0
+    var malformedPackets = 0
+    var unsupportedPackets = 0
     var bufferDepthFrames = 0
     var bufferDroppedFrames = 0
     var underruns = 0
@@ -70,6 +78,7 @@ struct AudioReceiverSnapshot: Equatable, Sendable {
     var muted = false
     var volume: Float = 1
     var peer: String?
+    var isListening = false
     var sampleRate: Int?
     var channelCount: Int?
     var statistics = AudioReceiverStatistics()

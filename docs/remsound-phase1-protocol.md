@@ -6,19 +6,19 @@ Research authority: [`Ednunp/RemSound`](https://github.com/Ednunp/RemSound), `ma
 
 FarRelay implements only direct, authenticated **PCM 48 kHz, stereo, signed 24-bit little-endian** receive/playback from a configured RemSound Windows sender. PCM frames announced by current sender code are 120 or 240 samples per channel (2.5 or 5 ms); the Windows default non-tight PCM sender uses 240 samples (5 ms).
 
-The target deliberately excludes discovery, relay operation, remote-control packets, sending audio, microphone capture, Opus decoding, FEC, and control of the Windows sender. The FarRelay receiver is an app-owned UDP capability; it does not use SSH, `farrelay --ipc`, controller transport, BSI, or command mode.
+The target deliberately excludes relay operation, remote-control packets, sending audio, microphone capture, Opus decoding, FEC, and control of the Windows sender. FarRelay does make the current best-effort discovery announcement and answers the health heartbeat so Windows can discover and mark the iOS peer reachable. The FarRelay receiver is an app-owned UDP capability; it does not use SSH, `farrelay --ipc`, controller transport, BSI, or command mode.
 
 ## Transport
 
 - The RemSound packet header is 12 bytes and every integer is little-endian: `uint32 magic` (`0x444E4D52`, bytes `RMND`), `uint8 version` (1), `uint8 type`, `uint16 streamID` (zero is treated as 1), `uint32 sequence`.
 - The canonical audio, peer-dial, and relay port is UDP **47830**. The Windows sender documents an Ethernet-safe maximum audio payload of 1454 bytes, excluding the 12-byte RemSound header and six-byte PCM subheader.
-- LAN discovery is a separate optional UDP mechanism on port 47831. Phase 1 does not advertise or consume discovery packets; the Windows sender is configured with the iPhone/iPad address and port.
+- LAN discovery is a separate optional UDP mechanism on port **47821**. FarRelay announces `FarRelay iOS` directly to the configured Windows peer every 1.5 seconds using the upstream `InstanceId`, `Name`, `AudioPort`, `CanSend`, and `CanReceive` JSON contract. It does not consume the peer list or treat discovery as authentication.
 - Upstream’s Windows receiver binds IPv4 `IPAddress.Any`. Phase 1’s tested interoperability target is direct IPv4. Network.framework accepts the system’s supported UDP families, but IPv6 and relay routes remain physical-test follow-up work.
 - Relay forwarding exists upstream, but Phase 1 uses no relay path and makes no relay compatibility claim.
 
 ## Session establishment and security
 
-There is no TCP-style audio handshake. A selected Windows sender periodically sends plaintext `Format` announcements while it has audio frames to send; an accepted format establishes/replaces the receiver’s active `(peer, streamID)` stream. A codec/rate restart rotates `streamID`. FarRelay rejects audio from any streamID other than the most recently authenticated Phase 1 format, which prevents stale session data from reaching a replacement stream.
+There is no TCP-style audio handshake or interactive pairing request. A selected Windows sender periodically sends plaintext `Format` announcements while it has audio frames to send; an accepted format establishes/replaces the receiver’s active `(peer, streamID)` stream. A codec/rate restart rotates `streamID`. FarRelay rejects audio from any streamID other than the most recently authenticated Phase 1 format, which prevents stale session data from reaching a replacement stream. Discovery and heartbeat mean only that the peer is reachable; they do not authenticate audio.
 
 - Format payload base is 32 bytes: `int32` sample rate, channel count, bits/sample, encoding, block alignment, average bytes/s, codec, and frame samples/channel. Current extensions append a lane byte at offset 32, an eight-byte password fingerprint at offset 36, and optional capture latency at offset 44.
 - Passwords are never sent. The key is PBKDF2-HMAC-SHA256 with UTF-8 password, salt `RemSound.v1.audio-key`, 100,000 iterations, and 32 output bytes. The fingerprint uses the same PBKDF2 parameters with salt `RemSound.v1.fingerprint` and eight output bytes.
@@ -32,7 +32,7 @@ There is no TCP-style audio handshake. A selected Windows sender periodically se
 
 The receiver tracks forward packet gaps, duplicates, and reordering. It rejects late/duplicate packet data from the current stream, and all packets from a former stream. Its local PCM queue is capped at two seconds (96,000 stereo frames); overflow discards old queued frames rather than growing memory. UDP datagrams are limited to 2048 bytes, partial encrypted frames to 8192 bytes, receiver connections to four, and each downstream PCM delivery stream to 16 pending frames. The AVAudioPlayerNode scheduling window is independently capped at 16 frames, with surplus playback frames dropped rather than accumulating.
 
-Upstream sends heartbeat packets with a one-byte ping/pong kind plus an eight-byte originator timestamp. Its desktop receiver uses a jitter/ring buffer and records underruns; Opus uses in-band FEC for a single missed packet. FarRelay Phase 1 safely ignores heartbeat/control/address-check traffic and does not claim Opus/FEC support. After an authenticated stream has no valid format/audio activity for five seconds, FarRelay reports a reconnectable, audio-local failure. Stalled sender or route failure never changes FarRelay control state.
+Upstream sends heartbeat packets with a one-byte ping/pong kind plus an eight-byte originator timestamp. FarRelay accepts only a well-formed Ping and replies on the originating UDP path with a Heartbeat Pong on stream `0xFFFF`, a local sequence, and the exact originator timestamp. A heartbeat moves the audio UI to `Waiting for audio`; it never authenticates, creates PCM, or changes NVDA/controller state. Pong, control, address-check, malformed, and unsupported packets cannot manufacture a reply. Its desktop receiver uses a jitter/ring buffer and records underruns; Opus uses in-band FEC for a single missed packet. FarRelay does not claim Opus/FEC support. After an authenticated stream has no valid format/audio activity for five seconds, FarRelay reports a reconnectable, audio-local failure. Stalled sender or route failure never changes FarRelay control state.
 
 ## Playback and audio session
 
@@ -40,7 +40,7 @@ FarRelay normalizes accepted PCM into its own float PCM frame type before `AVAud
 
 ## Diagnostics and non-secret policy
 
-The receiver exposes state, peer endpoint, PCM format, packet counts, loss/reorder/drop counts, authentication failures, bounded-buffer depth/drops, underruns, reconnect count, and sanitized last error. Passwords, PBKDF2 output, GCM keys/nonces/tags, and audio plaintext are not rendered or logged.
+The receiver exposes state, listener state, configured endpoint, discovery attempts/send failures, audio UDP and encrypted-audio packet counts, heartbeat Ping/Pong/reply-error counts, authentication successes/failures (including separate Format fingerprint and encrypted-frame failures), malformed/unsupported packet counts, loss/reorder/drop counts, bounded-buffer depth/drops, underruns, reconnect count, and sanitized last error. Passwords, PBKDF2 output, GCM keys/nonces/tags, fingerprints, and audio plaintext are not rendered or logged.
 
 ## Required physical interoperability checklist
 
