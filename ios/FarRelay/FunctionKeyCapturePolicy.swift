@@ -128,7 +128,8 @@ struct GameControllerFunctionKeyState: Equatable {
 }
 
 /// Maps only the physical F-row exposed by GameController. F13 and later are
-/// intentionally outside the Build 18 capture scope.
+/// intentionally outside the capture scope, so media/system keys cannot enter
+/// this route.
 enum GameControllerFunctionKeyMapping {
     static func virtualKey(for keyCode: GCKeyCode) -> UInt16? {
         switch keyCode {
@@ -158,6 +159,35 @@ enum GameControllerFunctionKeyMapping {
         if isPressed(.leftShift) || isPressed(.rightShift) { modifiers.append(VK.shift) }
         if isPressed(.capsLock) { modifiers.append(VK.capital) }
         return modifiers
+    }
+}
+
+/// Converts UIKit and Windows-style modifier representations into the same
+/// small semantic mask before cross-source F-key deduplication. Command/GUI is
+/// intentionally excluded: GCKeyboard's F-row callback does not own the
+/// Windows-key lifecycle, which remains on the UIKit raw path.
+enum FunctionKeyModifierFingerprint {
+    private static let control = 1 << 0
+    private static let alt = 1 << 1
+    private static let shift = 1 << 2
+    private static let capsLock = 1 << 3
+
+    static func fromUIKit(_ flags: UIKeyModifierFlags) -> Int {
+        var value = 0
+        if flags.contains(.control) { value |= control }
+        if flags.contains(.alternate) { value |= alt }
+        if flags.contains(.shift) { value |= shift }
+        if flags.contains(.alphaShift) { value |= capsLock }
+        return value
+    }
+
+    static func fromRemoteModifiers(_ modifiers: [UInt16]) -> Int {
+        var value = 0
+        if modifiers.contains(VK.control) { value |= control }
+        if modifiers.contains(VK.menu) { value |= alt }
+        if modifiers.contains(VK.shift) { value |= shift }
+        if modifiers.contains(VK.capital) { value |= capsLock }
+        return value
     }
 }
 
