@@ -7,7 +7,17 @@ final class SoundIntentTests: XCTestCase {
         XCTAssertEqual(InteractionSoundIntent.remoteConnected.filename, "connected.wav")
         XCTAssertEqual(InteractionSoundIntent.keyboardRemote.filename, "keyboard-remote.wav")
         XCTAssertEqual(InteractionSoundIntent.copied.filename, "copied.wav")
-        XCTAssertEqual(InteractionSoundIntent.layerExit.filename, "exit.wav")
+        XCTAssertEqual(InteractionSoundIntent.layerExit.filename, "action.wav")
+        XCTAssertNotEqual(InteractionSoundIntent.layerExit.filename, InteractionSoundIntent.nvdaStopped.filename)
+    }
+
+    func testEveryDefaultSoundIsInTheSelectableCatalog() {
+        for intent in InteractionSoundIntent.allCases {
+            XCTAssertTrue(
+                AppSoundCatalog.contains(filename: intent.defaultFilename),
+                "Default sound for \(intent.rawValue) is not selectable: \(intent.defaultFilename)"
+            )
+        }
     }
 
     func testCanonicalSoundResourcesResolveFromBuiltAppBundle() {
