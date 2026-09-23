@@ -61,6 +61,54 @@ struct RemSoundDiscoveryAnnouncement: Codable, Equatable, Sendable {
     }
 }
 
+/// Current desktop RemSound determines whether a selected peer is online with
+/// a one-second heartbeat on the same UDP port as audio. A Ping contains an
+/// originator-owned monotonic timestamp; the peer must echo that exact value in
+/// a Pong. The timestamp is not authentication and must never advance FarRelay
+/// audio state by itself.
+enum RemSoundHeartbeatKind: UInt8, Sendable {
+    case ping = 0
+    case pong = 1
+}
+
+struct RemSoundHeartbeat: Equatable, Sendable {
+    static let payloadSize = 9
+    static let streamID: UInt16 = 0xFFFF
+
+    let kind: RemSoundHeartbeatKind
+    let originatorTickMilliseconds: Int64
+
+    static func parse(_ payload: Data) -> Self? {
+        guard payload.count >= payloadSize,
+              let kind = RemSoundHeartbeatKind(rawValue: payload[0]),
+              let tick = payload.int64LE(at: 1)
+        else { return nil }
+        return Self(kind: kind, originatorTickMilliseconds: tick)
+    }
+
+    /// Produces the exact Pong Windows RemSound expects for a Ping. Non-Ping
+    /// datagrams return nil so unrelated packets can never manufacture replies.
+    static func pongResponse(to datagram: Data, sequence: UInt32) -> Data? {
+        guard datagram.count >= RemSoundPacketHeader.size + payloadSize,
+              let header = RemSoundPacketHeader.parse(datagram),
+              header.type == .heartbeat,
+              let heartbeat = parse(Data(datagram.dropFirst(RemSoundPacketHeader.size))),
+              heartbeat.kind == .ping
+        else { return nil }
+
+        var response = Data()
+        response.reserveCapacity(RemSoundPacketHeader.size + payloadSize)
+        response.appendUInt32LE(RemSoundPacketHeader.magic)
+        response.append(RemSoundPacketHeader.version)
+        response.append(RemSoundPacketType.heartbeat.rawValue)
+        response.appendUInt16LE(streamID)
+        response.appendUInt32LE(sequence)
+        response.append(RemSoundHeartbeatKind.pong.rawValue)
+        response.appendInt64LE(heartbeat.originatorTickMilliseconds)
+        return response
+    }
+}
+
 enum RemSoundCodec: Int, Sendable {
     case pcm = 1
     case opus = 2
@@ -209,5 +257,33 @@ private extension Data {
 
     func int32LE(at offset: Int) -> Int32? {
         uint32LE(at: offset).map { Int32(bitPattern: $0) }
+    }
+
+    func int64LE(at offset: Int) -> Int64? {
+        guard offset >= 0, offset + 8 <= count else { return nil }
+        var value: UInt64 = 0
+        for byteOffset in 0..<8 {
+            value |= UInt64(self[offset + byteOffset]) << UInt64(byteOffset * 8)
+        }
+        return Int64(bitPattern: value)
+    }
+
+    mutating func appendUInt16LE(_ value: UInt16) {
+        append(UInt8(truncatingIfNeeded: value))
+        append(UInt8(truncatingIfNeeded: value >> 8))
+    }
+
+    mutating func appendUInt32LE(_ value: UInt32) {
+        append(UInt8(truncatingIfNeeded: value))
+        append(UInt8(truncatingIfNeeded: value >> 8))
+        append(UInt8(truncatingIfNeeded: value >> 16))
+        append(UInt8(truncatingIfNeeded: value >> 24))
+    }
+
+    mutating func appendInt64LE(_ value: Int64) {
+        let bits = UInt64(bitPattern: value)
+        for byteOffset in 0..<8 {
+            append(UInt8(truncatingIfNeeded: bits >> UInt64(byteOffset * 8)))
+        }
     }
 }
