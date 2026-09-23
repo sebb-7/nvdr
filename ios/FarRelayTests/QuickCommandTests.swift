@@ -78,6 +78,50 @@ final class QuickCommandTests: XCTestCase {
         )
     }
 
+    func testModifierOnlyChordsAreCompleteOneShotOperations() throws {
+        let command = try QuickCommandParser.parse("ctrl+shift,ctrl+alt,ctrl+shift+alt+win")
+
+        XCTAssertEqual(
+            command.steps,
+            [
+                .chord(.init(keys: [
+                    .modifier(.control),
+                    .modifier(.shift),
+                ])),
+                .chord(.init(keys: [
+                    .modifier(.control),
+                    .modifier(.alt),
+                ])),
+                .chord(.init(keys: [
+                    .modifier(.control),
+                    .modifier(.shift),
+                    .modifier(.alt),
+                    .modifier(.windows),
+                ])),
+            ]
+        )
+        XCTAssertEqual(
+            command.spokenDescription,
+            "Control plus Shift. Then Control plus Alt. Then Control plus Shift plus Alt plus Windows"
+        )
+    }
+
+    func testModifierOnlyStepIsSeparateFromFollowingTargetStep() throws {
+        let command = try QuickCommandParser.parse("ctrl+shift,tab")
+
+        XCTAssertEqual(
+            command.steps,
+            [
+                .chord(.init(keys: [
+                    .modifier(.control),
+                    .modifier(.shift),
+                ])),
+                .chord(.init(keys: [.key(.named(.tab))])),
+            ]
+        )
+        XCTAssertEqual(command.spokenDescription, "Control plus Shift. Then Tab")
+    }
+
     func testMultipleTargetKeysFailClosed() {
         XCTAssertThrowsError(
             try QuickCommandParser.parse("ctrl+shift+delete+escape")
@@ -169,13 +213,13 @@ final class QuickCommandTests: XCTestCase {
         }
     }
 
-    func testModifierOnlyChordIsRejected() {
+    func testDuplicateModifierOnlyChordStillFailsClosed() {
         XCTAssertThrowsError(
-            try QuickCommandParser.parse("ctrl+shift")
+            try QuickCommandParser.parse("ctrl+control")
         ) { error in
             XCTAssertEqual(
                 error as? QuickCommandParseError,
-                .modifierOnlyChord(position: 1)
+                .duplicateChordKey("control", position: 1)
             )
         }
     }
