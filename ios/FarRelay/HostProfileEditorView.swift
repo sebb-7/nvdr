@@ -128,18 +128,18 @@ struct HostProfileEditorView: View {
                             get: { draft.remSoundReceiver?.isEnabled ?? false },
                             set: { draft.remSoundReceiver?.isEnabled = $0 }
                         ))
-                        TextField("RemSound sender address", text: Binding(
+                        TextField("Windows RemSound address", text: Binding(
                             get: { draft.remSoundReceiver?.senderHost ?? "" },
                             set: { draft.remSoundReceiver?.senderHost = $0 }
                         ))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        TextField("RemSound UDP port", value: Binding(
+                        TextField("RemSound audio UDP port", value: Binding(
                             get: { Int(draft.remSoundReceiver?.senderPort ?? 47_830) },
                             set: { draft.remSoundReceiver?.senderPort = UInt16(clamping: $0) }
                         ), format: .number.grouping(.never))
                         .keyboardType(.numberPad)
                         SecureField("RemSound shared password", text: $credentials.remSoundPassword)
-                        Text("Audio travels directly over encrypted UDP. It does not use SSH, NVDA Remote, or FarRelay control traffic.")
+                        Text("Enter the Windows PC's LAN or Tailscale address. When audio starts, FarRelay announces this iPhone or iPad directly to the Windows RemSound app, then receives encrypted audio on the configured UDP port. The shared password must match the Windows RemSound profile.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
