@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Hosts the UIKit responder path for an attached physical keyboard. Direct
-/// F1-F12 priority commands are authoritative because that path is physically
-/// validated. The view is intentionally non-interactive and inaccessible.
+/// Hosts the UIKit responder path plus an additive GCKeyboard F1-F12 fallback
+/// for an attached physical keyboard. The view is intentionally non-interactive
+/// and inaccessible.
 struct KeyboardCapture: UIViewRepresentable {
     let bridge: BridgeClient
     let settings: AppSettings
@@ -76,10 +76,6 @@ final class CaptureView: UIView {
         keyboardCaptureActive = active
 
         if active {
-            // Keep the physically validated UIKit responder + priority
-            // UIKeyCommand path authoritative. Do not install GCKeyboard in
-            // front of it; that later layer has not been physically validated
-            // against the media-key regression.
             if PhysicalFunctionRowCapturePolicy.installsGameControllerCapture {
                 let capture = GameControllerKeyboardCapture(owner: self)
                 gameControllerCapture = capture
@@ -87,7 +83,7 @@ final class CaptureView: UIView {
             }
             diagnostics?.observe(
                 source: .responder,
-                result: "direct priority F1-F12 capture armed"
+                result: "UIKit priority + GCKeyboard F1-F12 fallback armed"
             )
         } else {
             gameControllerCapture?.stop()
@@ -142,10 +138,26 @@ final class CaptureView: UIView {
                 }
             }
             flushPendingCommand(bridge)
-            // Match the physically validated direct path: raw F1-F12 are
-            // forwarded immediately. Priority UIKeyCommand duplication is
-            // handled by PriorityRawDuplicateGate, not by a timed cross-source
-            // gate.
+            if let functionVK = remoteVK(for: key), isFunctionVirtualKey(functionVK) {
+                if functionDuplicateGate.suppresses(
+                    virtualKey: functionVK,
+                    pressed: pressed,
+                    source: .rawPress,
+                    modifierFlags: FunctionKeyModifierFingerprint.fromUIKit(key.modifierFlags),
+                    originUsage: key.keyCode.rawValue
+                ) {
+                    diagnostics?.observe(
+                        source: .rawPress,
+                        hidUsage: key.keyCode.rawValue,
+                        modifiers: key.modifierFlags.rawValue,
+                        pressed: pressed,
+                        virtualKey: functionVK,
+                        result: "deduplicated against another F-key capture path"
+                    )
+                    claimed = true
+                    continue
+                }
+            }
             claimed = forwardRawKey(key, pressed: pressed, bridge: bridge) || claimed
         }
         return claimed
@@ -236,11 +248,9 @@ final class CaptureView: UIView {
     override var keyCommands: [UIKeyCommand]? {
         guard bridge?.forwardingEnabled == true else { return [] }
 
-        // Keep the exact physically validated priority surface: arrows,
-        // Escape, and F1-F12 with their modifier combinations. Command-number
-        // fallback still exists in raw presses, but its 96 additional
-        // UIKeyCommands are intentionally not installed in front of the
-        // direct function row.
+        // Keep the exact priority surface: arrows, Escape, and F1-F12 with
+        // their modifier combinations. Command-number fallback remains on the
+        // raw UIKit path and does not add another priority registration layer.
         return PhysicalFunctionRowCapturePolicy.priorityRegistrations.map { registration in
             let command = UIKeyCommand(
                 input: registration.input,
@@ -268,6 +278,24 @@ final class CaptureView: UIView {
             return
         }
 
+        if let functionVK = ReservedKeyForwardingPolicy.vk(forInput: input),
+           isFunctionVirtualKey(functionVK),
+           functionDuplicateGate.suppresses(
+                virtualKey: functionVK,
+                pressed: true,
+                source: .keyCommand,
+                modifierFlags: FunctionKeyModifierFingerprint.fromUIKit(command.modifierFlags),
+                originUsage: functionHIDUsage(for: functionVK)
+           ) {
+            diagnostics?.observe(
+                source: .keyCommand,
+                modifiers: command.modifierFlags.rawValue,
+                virtualKey: functionVK,
+                result: "deduplicated against another F-key capture path"
+            )
+            return
+        }
+
         priorityDuplicateGate.recordPriorityTransitions(transitions)
         for transition in transitions {
             let result = bridge.forwardKey(vk: transition.vk, pressed: transition.pressed)
@@ -287,10 +315,10 @@ final class CaptureView: UIView {
             virtualKey: vk,
             pressed: pressed,
             source: .gameController,
-            modifierFlags: modifierFlags(for: modifiers),
+            modifierFlags: FunctionKeyModifierFingerprint.fromRemoteModifiers(modifiers),
             originUsage: functionHIDUsage(for: vk)
         ) {
-            diagnostics?.observe(source: .gameController, pressed: pressed, virtualKey: vk, result: "deduplicated against another capture path")
+            diagnostics?.observe(source: .gameController, pressed: pressed, virtualKey: vk, result: "deduplicated against another F-key capture path")
             return
         }
         let results = bridge.forwardFunctionKey(vk: vk, pressed: pressed, modifiers: modifiers)
@@ -298,7 +326,7 @@ final class CaptureView: UIView {
     }
 
     func gameControllerKeyboardConnected() {
-        diagnostics?.observe(source: .gameController, result: "keyboard connected")
+        diagnostics?.observe(source: .gameController, result: "keyboard connected; F1-F12 fallback active")
     }
 
     func gameControllerKeyboardDisconnected(releasing virtualKeys: [UInt16]) {
@@ -319,10 +347,6 @@ final class CaptureView: UIView {
 
     private func functionHIDUsage(for virtualKey: UInt16) -> Int {
         Int(UIKeyboardHIDUsage.keyboardF1.rawValue) + Int(virtualKey - VK.f1)
-    }
-
-    private func modifierFlags(for modifiers: [UInt16]) -> Int {
-        modifiers.reduce(0) { $0 | Int($1) }
     }
 
     private func isFunctionVirtualKey(_ vk: UInt16) -> Bool {
