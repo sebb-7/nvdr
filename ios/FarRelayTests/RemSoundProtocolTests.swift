@@ -33,6 +33,7 @@ final class RemSoundProtocolTests: XCTestCase {
 
     func testDiscoveryAnnouncementMatchesCurrentWindowsRemSoundContract() throws {
         XCTAssertEqual(RemSoundDiscovery.defaultPort, 47_821)
+        XCTAssertEqual(AudioReceiverConfiguration(host: "pc", password: "x").port, 47_830)
         let id = try XCTUnwrap(UUID(uuidString: "01234567-89AB-CDEF-0123-456789ABCDEF"))
         let announcement = RemSoundDiscoveryAnnouncement(
             instanceID: id,
@@ -50,6 +51,32 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertEqual(object["CanSend"] as? Bool, false)
         XCTAssertEqual(object["CanReceive"] as? Bool, true)
         XCTAssertEqual(Set(object.keys), Set(["InstanceId", "Name", "AudioPort", "CanSend", "CanReceive"]))
+    }
+
+    func testWindowsHeartbeatPingProducesExactCanonicalPong() throws {
+        // Upstream RemSound self-tests use stream 0xFFFF and an Int64 little-
+        // endian originator tick. This vector uses tick=42000 and sequence=9.
+        let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
+        let header = try XCTUnwrap(RemSoundPacketHeader.parse(ping))
+        XCTAssertEqual(header.type, .heartbeat)
+        XCTAssertEqual(header.streamID, 0xFFFF)
+        let heartbeat = try XCTUnwrap(RemSoundHeartbeat.parse(Data(ping.dropFirst(RemSoundPacketHeader.size))))
+        XCTAssertEqual(heartbeat.kind, .ping)
+        XCTAssertEqual(heartbeat.originatorTickMilliseconds, 42_000)
+
+        let pong = try XCTUnwrap(RemSoundHeartbeat.pongResponse(to: ping, sequence: 7))
+        XCTAssertEqual(pong, Data(hex: "524D4E440104FFFF070000000110A4000000000000"))
+        let pongPayload = try XCTUnwrap(RemSoundHeartbeat.parse(Data(pong.dropFirst(RemSoundPacketHeader.size))))
+        XCTAssertEqual(pongPayload.kind, .pong)
+        XCTAssertEqual(pongPayload.originatorTickMilliseconds, 42_000)
+    }
+
+    func testHeartbeatResponderFailsClosedForPongAndNonHeartbeatPackets() throws {
+        let pong = try XCTUnwrap(Data(hex: "524D4E440104FFFF01000000010100000000000000"))
+        XCTAssertNil(RemSoundHeartbeat.pongResponse(to: pong, sequence: 2))
+        let format = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040001000000F00000000000000073182B124D200DD00700"))
+        XCTAssertNil(RemSoundHeartbeat.pongResponse(to: format, sequence: 2))
+        XCTAssertNil(RemSoundHeartbeat.parse(Data([0])))
     }
 
     func testMalformedHeadersAndUnsupportedFormatsFailClosed() throws {
