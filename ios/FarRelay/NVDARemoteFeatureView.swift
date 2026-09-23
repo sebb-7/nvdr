@@ -7,6 +7,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(InputDiagnosticStore.self) private var inputDiagnostics
     @Environment(RemoteIntentRouter.self) private var router
     @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
+    @Environment(AudioReceiverModel.self) private var audioReceiver
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
@@ -39,6 +40,23 @@ struct NVDARemoteFeatureView: View {
                             .multilineTextAlignment(.trailing)
                             .accessibilityLabel("Controller. \(controllerStatus.compactLabel)")
                     }
+                }
+
+                if profile.isRemSoundReceiverEnabled {
+                    NavigationLink {
+                        RemSoundAudioFeatureView(profile: profile)
+                    } label: {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("RemSound")
+                            Spacer()
+                            Text(remSoundStatusLabel)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
+                    .accessibilityHint("Opens RemSound audio controls for this computer.")
                 }
             }
             Section("Status") { Text(statusLabel) }
@@ -167,6 +185,27 @@ struct NVDARemoteFeatureView: View {
     private var statusLabel: String {
         return switch bridge.status {
         case .idle: "Idle"; case .connecting: "Connecting"; case .authenticating: "Authenticating"; case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))"; case .relayConnected: "Relay connected"; case .waitingForNVDA, .nvdaNotConnected: "Waiting for NVDA"; case .ready: "NVDA connected"; case .disconnected(let reason): "Disconnected (\(reason))"; case .failed(let message): "Failed: \(message)"
+        }
+    }
+
+    private var remSoundStatusLabel: String {
+        let state = audioReceiver.snapshot.state
+        if let peer = audioReceiver.snapshot.peer,
+           let capability = profile.remSoundReceiver?.normalized(),
+           peer != "\(capability.senderHost):\(capability.senderPort)",
+           state != .idle,
+           state != .stopped {
+            return "Another peer active"
+        }
+        return switch state {
+        case .idle: "Idle"
+        case .connecting: "Connecting"
+        case .authenticating: "Authenticating"
+        case .buffering: "Buffering"
+        case .playing: "Playing"
+        case .reconnecting: "Reconnecting"
+        case .stopped: "Stopped"
+        case .failed(let message): "Failed: \(message)"
         }
     }
 
