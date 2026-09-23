@@ -8,7 +8,7 @@ struct HostCapabilities: Codable, Sendable, Equatable {
     let operations: [String]
     /// Missing on an older v1 host. New optional features therefore do not
     /// make old hosts undecodable or falsely supported.
-    let features: [String]? = nil
+    let features: [String]?
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
