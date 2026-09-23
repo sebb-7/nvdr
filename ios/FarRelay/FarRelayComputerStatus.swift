@@ -41,6 +41,64 @@ struct FarRelayComputerStatus: Equatable {
     let nvdaSummary: String
     let terminalSummary: String
     let detail: String
+    let controller: String
+
+    private let reportPrimary: String?
+    private let reportNVDA: String?
+
+    init(
+        connection: Connection,
+        nvdaSummary: String,
+        terminalSummary: String,
+        detail: String,
+        controller: String = "Remote Control: \(ControllerLeaseState.legacyUnleased.statusLabel)"
+    ) {
+        self.connection = connection
+        self.nvdaSummary = nvdaSummary
+        self.terminalSummary = terminalSummary
+        self.detail = detail
+        self.controller = controller
+        reportPrimary = nil
+        reportNVDA = nil
+    }
+
+    /// Retains the status-report fixture API while the application uses the
+    /// profile-scoped connection model above as its single source of truth.
+    init(primary: String, detail: String, nvda: String, terminalSummary: String, controller: String) {
+        connection = .disconnected
+        nvdaSummary = nvda
+        self.terminalSummary = terminalSummary
+        self.detail = detail
+        self.controller = controller
+        reportPrimary = primary
+        reportNVDA = nvda
+    }
+
+    var primary: String {
+        if let reportPrimary { return reportPrimary }
+        switch connection {
+        case .disconnected: "Disconnected"
+        case .connecting, .authenticating: "Connecting"
+        case .relayConnected, .ready: "Connected"
+        case .waitingForNVDA: "Waiting for NVDA"
+        case .reconnecting: "Connection lost"
+        case .failed: "Connection failed"
+        }
+    }
+
+    var nvda: String {
+        if let reportNVDA { return reportNVDA }
+        if nvdaSummary == "NVDA Remote is not configured" { return "NVDA: unsupported" }
+        switch connection {
+        case .disconnected: "NVDA: not connected"
+        case .connecting, .authenticating: "NVDA: waiting"
+        case .relayConnected: "NVDA: relay connected"
+        case .waitingForNVDA: "NVDA: waiting for NVDA"
+        case .ready: "NVDA: ready"
+        case .reconnecting: "NVDA: reconnecting"
+        case .failed: "NVDA: unavailable"
+        }
+    }
 
     var accessibilityLabel: String {
         "\(connection.label). \(nvdaSummary). \(terminalSummary). \(detail)"

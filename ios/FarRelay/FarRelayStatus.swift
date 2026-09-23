@@ -205,51 +205,6 @@ final class FarRelayEventStore {
 }
 
 @MainActor
-struct FarRelayComputerStatus: Equatable {
-    let primary: String
-    let detail: String
-    let nvda: String
-    let terminalSummary: String
-    let controller: String
-
-    static func derive(
-        profile: HostProfile,
-        bridge: BridgeClient,
-        terminals: TerminalSessionManager
-    ) -> Self {
-        let terminalCount = terminals.activeSessionCount(for: profile.id)
-        let terminalSummary = terminalCount == 1 ? "1 terminal active" : "\(terminalCount) terminals active"
-        guard bridge.activeProfileID == profile.id else {
-            return Self(
-                primary: terminals.hasActiveConnection(for: profile.id) ? "Connected" : "Disconnected",
-                detail: terminals.hasActiveConnection(for: profile.id) ? "Terminal transport available" : "No active transport",
-                nvda: profile.isNVDARemoteEnabled ? "NVDA: not connected" : "NVDA: unsupported",
-                terminalSummary: terminalSummary,
-                controller: "Remote Control: \(ControllerLeaseState.unavailable.statusLabel)"
-            )
-        }
-
-        let (primary, detail, nvda): (String, String, String) = switch bridge.status {
-        case .idle: ("Disconnected", "No active transport", "NVDA: not connected")
-        case .connecting, .authenticating: ("Connecting", "SSH connection in progress", "NVDA: waiting")
-        case .reconnecting: ("Connection lost", "Reconnecting", "NVDA: reconnecting")
-        case .relayConnected: ("Connected", "SSH connected", "NVDA: relay connected")
-        case .waitingForNVDA, .nvdaNotConnected: ("Waiting for NVDA", "SSH connected", "NVDA: waiting for NVDA")
-        case .ready: ("Connected", "SSH connected", "NVDA: ready")
-        case .disconnected: ("Disconnected", "Transport stopped", "NVDA: not connected")
-        case .failed: ("Connection failed", "Open Diagnostics", "NVDA: unavailable")
-        }
-        return Self(
-            primary: primary,
-            detail: detail,
-            nvda: nvda,
-            terminalSummary: terminalSummary,
-            controller: "Remote Control: \(ControllerLeaseState.legacyUnleased.statusLabel)"
-        )
-    }
-}
-
-@MainActor
 enum FarRelayStatusReport {
     static func make(profile: HostProfile, status: FarRelayComputerStatus, events: [FarRelayEvent]) -> String {
         let codes = events.prefix(5).map(\.code.rawValue).joined(separator: ", ")
