@@ -1,6 +1,15 @@
 import Foundation
 import Network
 
+struct RemSoundDiscoveryDiagnostics: Equatable, Sendable {
+    var isActive = false
+    var target: String?
+    var announcementsAttempted = 0
+    var announcementsCompleted = 0
+    var announcementFailures = 0
+    var lastError: String?
+}
+
 /// Best-effort compatibility presence for the desktop RemSound peer list.
 ///
 /// RemSound LAN broadcasts do not need to reach iOS for this to work. FarRelay
@@ -17,6 +26,8 @@ final class RemSoundDiscoveryAnnouncer {
     private var announceTask: Task<Void, Never>?
     private var payload: Data?
     private var lastConfiguration: (host: String, audioPort: UInt16)?
+    private(set) var diagnostics = RemSoundDiscoveryDiagnostics()
+    var onDiagnosticsChanged: ((RemSoundDiscoveryDiagnostics) -> Void)?
 
     func start(peerHost: String, audioPort: UInt16) {
         stop(clearConfiguration: false)
@@ -24,7 +35,11 @@ final class RemSoundDiscoveryAnnouncer {
         let host = peerHost.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty,
               let discoveryPort = NWEndpoint.Port(rawValue: RemSoundDiscovery.defaultPort)
-        else { return }
+        else {
+            diagnostics.lastError = "A Windows RemSound address is required for discovery."
+            publishDiagnostics()
+            return
+        }
 
         let announcement = RemSoundDiscoveryAnnouncement(
             instanceID: instanceID,
@@ -33,10 +48,20 @@ final class RemSoundDiscoveryAnnouncer {
             canSend: false,
             canReceive: true
         )
-        guard let encoded = try? announcement.encoded() else { return }
+        guard let encoded = try? announcement.encoded() else {
+            diagnostics.lastError = "FarRelay could not encode the RemSound discovery announcement."
+            publishDiagnostics()
+            return
+        }
 
         lastConfiguration = (host, audioPort)
         payload = encoded
+        diagnostics = RemSoundDiscoveryDiagnostics(
+            isActive: true,
+            target: "\(host):\(RemSoundDiscovery.defaultPort)"
+        )
+        publishDiagnostics()
+
         let connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: discoveryPort,
@@ -74,14 +99,32 @@ final class RemSoundDiscoveryAnnouncer {
         connection?.cancel()
         connection = nil
         payload = nil
+        diagnostics.isActive = false
+        publishDiagnostics()
         if clearConfiguration { lastConfiguration = nil }
     }
 
     private func sendAnnouncement() {
         guard let connection, let payload else { return }
-        connection.send(content: payload, completion: .contentProcessed { _ in
-            // Discovery is convenience. The audio UDP listener remains the
-            // source of truth and must stay independent of discovery errors.
+        diagnostics.announcementsAttempted += 1
+        publishDiagnostics()
+        connection.send(content: payload, completion: .contentProcessed { [weak self] error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.diagnostics.announcementFailures += 1
+                    self.diagnostics.lastError = "Discovery send failed: \(error.localizedDescription)"
+                } else {
+                    // UDP completion means the local network stack accepted the
+                    // datagram; it is not an acknowledgement from Windows.
+                    self.diagnostics.announcementsCompleted += 1
+                }
+                self.publishDiagnostics()
+            }
         })
+    }
+
+    private func publishDiagnostics() {
+        onDiagnosticsChanged?(diagnostics)
     }
 }
