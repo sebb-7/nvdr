@@ -55,6 +55,9 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var packetsReordered = 0
     var packetsDuplicated = 0
     var authenticationFailures = 0
+    var heartbeatPingsReceived = 0
+    var heartbeatPongsSent = 0
+    var heartbeatReplyFailures = 0
     var bufferDepthFrames = 0
     var bufferDroppedFrames = 0
     var underruns = 0
