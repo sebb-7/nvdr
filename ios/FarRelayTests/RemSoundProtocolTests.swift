@@ -31,6 +31,27 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertNil(RemSoundCrypto.decrypt(encrypted, using: RemSoundCrypto.key(password: "wrong password")))
     }
 
+    func testDiscoveryAnnouncementMatchesCurrentWindowsRemSoundContract() throws {
+        XCTAssertEqual(RemSoundDiscovery.defaultPort, 47_821)
+        let id = try XCTUnwrap(UUID(uuidString: "01234567-89AB-CDEF-0123-456789ABCDEF"))
+        let announcement = RemSoundDiscoveryAnnouncement(
+            instanceID: id,
+            name: "FarRelay iOS",
+            audioPort: 47_830,
+            canSend: false,
+            canReceive: true
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: announcement.encoded()) as? [String: Any]
+        )
+        XCTAssertEqual(object["InstanceId"] as? String, id.uuidString)
+        XCTAssertEqual(object["Name"] as? String, "FarRelay iOS")
+        XCTAssertEqual(object["AudioPort"] as? Int, 47_830)
+        XCTAssertEqual(object["CanSend"] as? Bool, false)
+        XCTAssertEqual(object["CanReceive"] as? Bool, true)
+        XCTAssertEqual(Set(object.keys), Set(["InstanceId", "Name", "AudioPort", "CanSend", "CanReceive"]))
+    }
+
     func testMalformedHeadersAndUnsupportedFormatsFailClosed() throws {
         XCTAssertNil(RemSoundPacketHeader.parse(Data([0x52, 0x4D])))
         var wrongVersion = try XCTUnwrap(Data(hex: "524D4E440201010001000000"))
