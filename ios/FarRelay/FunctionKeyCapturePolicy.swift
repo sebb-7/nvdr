@@ -2,13 +2,13 @@ import Foundation
 import GameController
 import UIKit
 
-/// Physical validation on source revision e5cdf6c established the UIKit raw
-/// responder + priority UIKeyCommand path as the authoritative F1-F12 route.
-/// Later GCKeyboard and Command-number priority layers remain available as
-/// implementation helpers, but are deliberately not installed in the normal
-/// remote keyboard capture path until they are separately validated on device.
+/// Build 28 diagnostics proved that UIKit can arm the priority F1-F12 surface
+/// without delivering a physical function-row event on every keyboard/device
+/// path. Keep the validated UIKit raw + UIKeyCommand routes and install the
+/// additive GCKeyboard fallback, which is intentionally restricted to F1-F12.
+/// Cross-source duplicates are suppressed before they reach the transport.
 enum PhysicalFunctionRowCapturePolicy {
-    static let installsGameControllerCapture = false
+    static let installsGameControllerCapture = true
 
     static var priorityRegistrations: [ReservedKeyForwardingPolicy.Registration] {
         ReservedKeyForwardingPolicy.registrations
