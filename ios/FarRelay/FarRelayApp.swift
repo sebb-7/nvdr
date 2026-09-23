@@ -25,6 +25,7 @@ struct FarRelayApp: App {
     @State private var terminals: TerminalSessionManager
     @State private var remoteIntentRouter: RemoteIntentRouter
     @State private var interactionFeedback: InteractionFeedback
+    @State private var interactionSoundSettings: InteractionSoundSettings
     @State private var inputDiagnostics: InputDiagnosticStore
     @State private var macRemoteSession: MacRemoteSession
     @State private var events: FarRelayEventStore
@@ -48,7 +49,9 @@ struct FarRelayApp: App {
         remoteIntentRouter.register(MacRemoteIntentTarget(controller: macRemoteSession))
         _terminals = State(initialValue: terminals)
         _remoteIntentRouter = State(initialValue: remoteIntentRouter)
-        let interactionFeedback = InteractionFeedback(settings: s)
+        let interactionSoundSettings = InteractionSoundSettings()
+        _interactionSoundSettings = State(initialValue: interactionSoundSettings)
+        let interactionFeedback = InteractionFeedback(settings: s, soundSettings: interactionSoundSettings)
         _interactionFeedback = State(initialValue: interactionFeedback)
         _inputDiagnostics = State(initialValue: inputDiagnostics)
         _macRemoteSession = State(initialValue: macRemoteSession)
@@ -73,6 +76,7 @@ struct FarRelayApp: App {
                 .environment(terminals)
                 .environment(remoteIntentRouter)
                 .environment(interactionFeedback)
+                .environment(interactionSoundSettings)
                 .environment(inputDiagnostics)
                 .environment(macRemoteSession)
                 .environment(events)
