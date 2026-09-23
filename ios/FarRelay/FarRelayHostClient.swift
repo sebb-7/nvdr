@@ -18,6 +18,29 @@ struct HostCapabilities: Codable, Sendable, Equatable {
         case features
     }
 
+    init(
+        protocolVersion: Int,
+        hostImplementation: String,
+        hostVersion: String,
+        operations: [String],
+        features: [String]? = nil
+    ) {
+        self.protocolVersion = protocolVersion
+        self.hostImplementation = hostImplementation
+        self.hostVersion = hostVersion
+        self.operations = operations
+        self.features = features
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
+        hostImplementation = try values.decode(String.self, forKey: .hostImplementation)
+        hostVersion = try values.decode(String.self, forKey: .hostVersion)
+        operations = try values.decode([String].self, forKey: .operations)
+        features = try values.decodeIfPresent([String].self, forKey: .features)
+    }
+
     var advertisedFeatures: Set<FarRelayCapability> {
         Set((features ?? []).map(FarRelayCapability.init(rawValue:)))
     }
