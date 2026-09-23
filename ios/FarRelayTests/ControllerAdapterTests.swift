@@ -796,7 +796,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(
             sink.transitions,
             [
-                .init(VK.a, true), .init(VK.a, false),
+                .init(0x41, true), .init(0x41, false),
                 .init(VK.back, true), .init(VK.back, false)
             ]
         )
@@ -824,9 +824,9 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(
             sink.transitions,
             [
-                .init(VK.a, true), .init(VK.a, false),
-                .init(VK.b, true), .init(VK.b, false),
-                .init(VK.c, true), .init(VK.c, false)
+                .init(0x41, true), .init(0x41, false),
+                .init(0x42, true), .init(0x42, false),
+                .init(0x43, true), .init(0x43, false)
             ]
         )
         _ = adapter.applyTextModeEditorValue("abcSECRET_SENTINEL_123")
@@ -860,8 +860,8 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(
             sink.transitions,
             [
-                .init(VK.o, true), .init(VK.o, false),
-                .init(VK.k, true), .init(VK.k, false),
+                .init(0x4F, true), .init(0x4F, false),
+                .init(0x4B, true), .init(0x4B, false),
                 .init(VK.return, true), .init(VK.return, false)
             ]
         )
