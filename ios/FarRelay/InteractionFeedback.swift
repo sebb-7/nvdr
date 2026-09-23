@@ -55,22 +55,29 @@ struct InteractionFeedbackRequest: Equatable, Identifiable, Sendable {
 @MainActor
 final class InteractionFeedback {
     private let settings: AppSettings
+    private let soundSettings: InteractionSoundSettings
     private(set) var lastRequest: InteractionFeedbackRequest?
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, soundSettings: InteractionSoundSettings) {
         self.settings = settings
+        self.soundSettings = soundSettings
     }
 
     func play(_ kind: InteractionFeedbackKind) {
         lastRequest = InteractionFeedbackRequest(kind: kind)
-        if settings.soundCuesEnabled {
-            InteractionSoundCue.play(soundIntent(for: kind))
-        }
+        playConfiguredSound(soundIntent(for: kind))
     }
 
     func play(_ intent: InteractionSoundIntent, haptic: InteractionFeedbackKind? = nil) {
         if let haptic { lastRequest = InteractionFeedbackRequest(kind: haptic) }
-        if settings.soundCuesEnabled { InteractionSoundCue.play(intent) }
+        playConfiguredSound(intent)
+    }
+
+    private func playConfiguredSound(_ intent: InteractionSoundIntent) {
+        guard settings.soundCuesEnabled else { return }
+        let preference = soundSettings.preference(for: intent)
+        guard preference.isEnabled else { return }
+        InteractionSoundCue.playBundled(filename: preference.filename)
     }
 
     private func soundIntent(for kind: InteractionFeedbackKind) -> InteractionSoundIntent {
