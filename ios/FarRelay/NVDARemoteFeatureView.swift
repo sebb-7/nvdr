@@ -43,20 +43,59 @@ struct NVDARemoteFeatureView: View {
                 }
 
                 if profile.isRemSoundReceiverEnabled {
-                    NavigationLink {
-                        RemSoundAudioFeatureView(profile: profile)
-                    } label: {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("RemSound")
-                            Spacer()
-                            Text(remSoundStatusLabel)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("RemSound")
+                        Spacer()
+                        Text(remSoundStatusLabel)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
+
+                    Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
+                        switch audioReceiver.snapshot.state {
+                        case .idle, .stopped, .failed:
+                            audioReceiver.start(
+                                host: remSoundCapability.senderHost,
+                                port: remSoundCapability.senderPort,
+                                password: settings.credentials(for: profile)?.remSoundPassword ?? ""
+                            )
+                        case .connecting, .authenticating, .buffering, .playing, .reconnecting:
+                            audioReceiver.stop()
                         }
                     }
-                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
-                    .accessibilityHint("Opens RemSound audio controls for this computer.")
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
+                        audioReceiver.reconnect()
+                    }
+                    .disabled(!canReconnectRemSound)
+
+                    Toggle("Mute RemSound audio", isOn: Binding(
+                        get: { audioReceiver.snapshot.muted },
+                        set: { audioReceiver.setMuted($0) }
+                    ))
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(audioReceiver.snapshot.volume) },
+                            set: { audioReceiver.setVolume(Float($0)) }
+                        ),
+                        in: 0...1
+                    ) {
+                        Text("RemSound playback volume")
+                    }
+                    .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
+
+                    NavigationLink("RemSound details and diagnostics") {
+                        RemSoundAudioFeatureView(profile: profile)
+                    }
+
+                    Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
+                        AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                    }
                 }
             }
             Section("Status") { Text(statusLabel) }
@@ -188,24 +227,39 @@ struct NVDARemoteFeatureView: View {
         }
     }
 
+    private var remSoundCapability: RemSoundReceiverCapability {
+        profile.remSoundReceiver?.normalized() ?? RemSoundReceiverCapability(senderHost: profile.address)
+    }
+
     private var remSoundStatusLabel: String {
         let state = audioReceiver.snapshot.state
         if let peer = audioReceiver.snapshot.peer,
-           let capability = profile.remSoundReceiver?.normalized(),
-           peer != "\(capability.senderHost):\(capability.senderPort)",
+           peer != "\(remSoundCapability.senderHost):\(remSoundCapability.senderPort)",
            state != .idle,
            state != .stopped {
             return "Another peer active"
         }
-        return switch state {
-        case .idle: "Idle"
-        case .connecting: "Connecting"
-        case .authenticating: "Authenticating"
-        case .buffering: "Buffering"
-        case .playing: "Playing"
-        case .reconnecting: "Reconnecting"
-        case .stopped: "Stopped"
-        case .failed(let message): "Failed: \(message)"
+        return audioReceiver.compactStatusLabel
+    }
+
+    private var remSoundActionTitle: String {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped, .failed: "Start RemSound"
+        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "Stop RemSound"
+        }
+    }
+
+    private var remSoundActionSymbol: String {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped, .failed: "play.fill"
+        case .connecting, .authenticating, .buffering, .playing, .reconnecting: "stop.fill"
+        }
+    }
+
+    private var canReconnectRemSound: Bool {
+        switch audioReceiver.snapshot.state {
+        case .idle, .stopped: false
+        default: true
         }
     }
 
