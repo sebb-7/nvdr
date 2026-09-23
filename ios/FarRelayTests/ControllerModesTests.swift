@@ -237,6 +237,15 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(session.deleteSuffix(count: 1), 1)
     }
 
+    func testTextMirrorSessionMarksAnEntryOnlyAfterItsExactTransportCompletes() {
+        var session = TextModeMirrorSession()
+        let entryID = session.append("a", mirrored: false)
+
+        XCTAssertTrue(session.markMirrored(entryID: entryID))
+        XCTAssertEqual(session.deleteSuffix(count: 1), 1)
+        XCTAssertFalse(session.markMirrored(entryID: entryID))
+    }
+
     func testRemoteBackspaceMarksKnownRemoteCharacterToPreventADuplicateDelete() {
         var session = TextModeMirrorSession()
         session.append("a", mirrored: true)

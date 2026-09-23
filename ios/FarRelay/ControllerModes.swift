@@ -109,12 +109,25 @@ enum LayerFeedback: Equatable, Sendable {
 /// unsupported text can never delete unrelated remote text later.
 struct TextModeMirrorSession: Sendable {
     private enum Status: Sendable { case mirrored, localOnly, remotelyDeleted }
-    private var entries: [(character: Character, status: Status)] = []
+    private var entries: [(id: UUID, character: Character, status: Status)] = []
 
     var text: String { String(entries.map(\.character)) }
 
-    mutating func append(_ character: Character, mirrored: Bool) {
-        entries.append((character, mirrored ? .mirrored : .localOnly))
+    @discardableResult
+    mutating func append(_ character: Character, mirrored: Bool) -> UUID {
+        let id = UUID()
+        entries.append((id, character, mirrored ? .mirrored : .localOnly))
+        return id
+    }
+
+    /// Records that the exact queued transport for an entry completed. Entries
+    /// are initially local-only because a local editor update is not evidence
+    /// that the remote target received the character.
+    mutating func markMirrored(entryID: UUID) -> Bool {
+        guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return false }
+        guard entries[index].status == .localOnly else { return false }
+        entries[index].status = .mirrored
+        return true
     }
 
     mutating func deleteSuffix(count: Int) -> Int {

@@ -784,7 +784,7 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
-    func testResolvedUnicodeTextUsesLayoutIndependentTransport() async {
+    func testUnsupportedUnicodeUsesTheExplicitClipboardFallbackAndKeepsLedgerOwnership() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
         _ = adapter.applyTextModeEditorValue("aé")
@@ -792,7 +792,14 @@ final class ControllerAdapterTests: XCTestCase {
         _ = adapter.applyTextModeEditorValue("a")
         await adapter.waitForTextOperationsForTesting()
         XCTAssertEqual(adapter.textModeBuffer, "a")
-        XCTAssertEqual(sink.texts, ["aé"])
+        XCTAssertEqual(sink.texts, ["é"])
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.a, true), .init(VK.a, false),
+                .init(VK.back, true), .init(VK.back, false)
+            ]
+        )
     }
 
     func testRemoteBackspaceDoesNotCauseLaterDuplicateLocalDeletion() async {
@@ -813,10 +820,34 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
         _ = adapter.applyTextModeEditorValue("abc")
         await adapter.waitForTextOperationsForTesting()
-        XCTAssertEqual(sink.texts, ["abc"])
-        _ = adapter.applyTextModeEditorValue("SECRET_SENTINEL_123")
+        XCTAssertEqual(sink.texts, [])
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.a, true), .init(VK.a, false),
+                .init(VK.b, true), .init(VK.b, false),
+                .init(VK.c, true), .init(VK.c, false)
+            ]
+        )
+        _ = adapter.applyTextModeEditorValue("abcSECRET_SENTINEL_123")
         await adapter.waitForTextOperationsForTesting()
         XCTAssertFalse(diagnostics.entries.contains { $0.result.contains("SECRET_SENTINEL_123") })
+    }
+
+    func testTextModeSlashAndQuestionMarkUseBalancedRawKeyboardTransitions() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        _ = adapter.applyTextModeEditorValue("/?")
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(sink.texts, [])
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.oem2, true), .init(VK.oem2, false),
+                .init(VK.shift, true), .init(VK.oem2, true), .init(VK.oem2, false), .init(VK.shift, false)
+            ]
+        )
     }
 
     func testTextModeSubmitSendsEnterAfterLiveTextThenExits() async {
@@ -829,10 +860,12 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(
             sink.transitions,
             [
+                .init(VK.o, true), .init(VK.o, false),
+                .init(VK.k, true), .init(VK.k, false),
                 .init(VK.return, true), .init(VK.return, false)
             ]
         )
-        XCTAssertEqual(sink.texts, ["ok"])
+        XCTAssertEqual(sink.texts, [])
         XCTAssertFalse(adapter.isTextModeActive)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
         XCTAssertEqual(adapter.textModeBuffer, "")
@@ -988,8 +1021,10 @@ final class ControllerAdapterTests: XCTestCase {
         _ = adapter.applyTextModeEditorValue(punctuation)
         await adapter.waitForTextOperationsForTesting()
 
-        XCTAssertEqual(sink.texts, [punctuation])
-        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertEqual(sink.texts, [])
+        XCTAssertFalse(sink.transitions.isEmpty)
+        XCTAssertTrue(sink.transitions.contains(.init(VK.oem2, true)))
+        XCTAssertTrue(sink.transitions.contains(.init(VK.shift, true)))
     }
 
     func testQuickCommandMultiModifierChordsKeepEveryModifierHeldForTarget() async {

@@ -64,9 +64,9 @@ struct ControllerMappingView: View {
                 Button("Save Mappings") {
                     mappings.saveDraft()
                     dismiss()
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         AccessibilityNotification.Announcement(
-                            "Controller mappings saved. Settings."
+                            "Controller mappings saved."
                         ).post()
                     }
                 }

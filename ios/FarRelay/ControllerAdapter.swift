@@ -1692,9 +1692,11 @@ final class DualSenseControllerAdapter {
     func mirrorTextInsertion(_ characters: [Character]) {
         guard isTextModeActive else { return }
         guard !characters.isEmpty else { return }
-        for character in characters { textMirrorSession.append(character, mirrored: true) }
+        for character in characters {
+            let entryID = textMirrorSession.append(character, mirrored: false)
+            enqueueTextInsertion(character, entryID: entryID)
+        }
         textModeBuffer = textMirrorSession.text
-        enqueueTextInsertion(String(characters), diagnostic: "Text Mode: text transmitted")
     }
 
     func mirrorTextBackspace(count: Int = 1) {
@@ -1730,13 +1732,27 @@ final class DualSenseControllerAdapter {
         }
     }
 
-    private func enqueueTextInsertion(_ text: String, diagnostic: String) {
+    private func enqueueTextInsertion(_ character: Character, entryID: UUID) {
         let previous = textOperationTail
         let generation = textOperationGeneration
         textOperationTail = Task { @MainActor [weak self, previous] in
             _ = await previous?.value
             guard let self, generation == self.textOperationGeneration, !Task.isCancelled else { return }
-            await self.routeTextInsertion(text, diagnostic: diagnostic)
+            let result = await self.routeTextInsertion(character)
+            guard generation == self.textOperationGeneration,
+                  !Task.isCancelled,
+                  self.isTextModeActive,
+                  result == .performed else { return }
+
+            // A suffix deletion can remove a local-only entry while its
+            // transport is in flight. If it did reach the remote target, undo
+            // that exact late insertion without deleting unrelated text.
+            if !self.textMirrorSession.markMirrored(entryID: entryID) {
+                _ = await self.routeTextTap(
+                    .init(key: .backspace),
+                    diagnostic: "Text Mode: remote backspace transmitted"
+                )
+            }
         }
     }
 
@@ -1746,10 +1762,11 @@ final class DualSenseControllerAdapter {
         textOperationTail = nil
     }
 
-    private func routeTextTap(_ action: KeyboardAction, diagnostic: String) async {
+    @discardableResult
+    private func routeTextTap(_ action: KeyboardAction, diagnostic: String) async -> RemoteIntentResult {
         guard let targetID = router.activeTargetID else {
             diagnostics.observe(source: .controller, result: "\(diagnostic); no active target")
-            return
+            return .unavailable("No remote target is active.")
         }
         let key = RemoteKey.windowsVirtualKey(action.key.virtualKey)
         let modifiers = resolvedModifiers(action.modifiers)
@@ -1757,16 +1774,22 @@ final class DualSenseControllerAdapter {
             ? .sendKey(key)
             : .sendChord(.init(modifiers: modifiers, key: key))
         diagnostics.observe(source: .controller, result: diagnostic)
-        _ = await router.route(intent, to: targetID)
+        return await router.route(intent, to: targetID)
     }
 
-    private func routeTextInsertion(_ text: String, diagnostic: String) async {
-        guard let targetID = router.activeTargetID else {
-            diagnostics.observe(source: .controller, result: "\(diagnostic); no active target")
-            return
+    private func routeTextInsertion(_ character: Character) async -> RemoteIntentResult {
+        if let action = ControllerTextCharacterMapper.action(for: character) {
+            return await routeTextTap(action, diagnostic: "Text Mode: key transmitted")
         }
-        diagnostics.observe(source: .controller, result: diagnostic)
-        _ = await router.route(.sendText(text), to: targetID)
+
+        guard let targetID = router.activeTargetID else {
+            diagnostics.observe(source: .controller, result: "Text Mode: unsupported text; no active target")
+            return .unavailable("No remote target is active.")
+        }
+        // The Windows bridge intentionally implements sendText using the
+        // slave clipboard. Use it only where there is no safe raw VK mapping.
+        diagnostics.observe(source: .controller, result: "Text Mode: unsupported text transmitted")
+        return await router.route(.sendText(String(character)), to: targetID)
     }
 
     private func present(_ stateChange: LayerFeedback) {

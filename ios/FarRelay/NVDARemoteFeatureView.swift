@@ -13,6 +13,8 @@ struct NVDARemoteFeatureView: View {
     let profile: HostProfile
     @State private var presentedIssue: UserFacingIssue?
     @State private var keyboardCaptureRefreshGeneration = 0
+    @State private var isRemSoundExpanded = false
+    @State private var isControllerMappingPresented = false
 
     var body: some View {
         @Bindable var diagnostics = inputDiagnostics
@@ -33,69 +35,77 @@ struct NVDARemoteFeatureView: View {
 
                     Spacer()
 
-                    if let controllerStatus = controllerAdapter.controllerStatus {
-                        Text(controllerStatus.compactLabel)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(controllerStatusLabel)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Controller. \(controllerStatus.compactLabel)")
+                            .accessibilityLabel("Controller. \(controllerStatusLabel)")
+                            .accessibilityHint("Controller Mapping is available.")
+                            .accessibilityAction(named: Text("Controller Mapping")) {
+                                isControllerMappingPresented = true
+                            }
+
+                        NavigationLink("Controller Mapping") {
+                            ControllerMappingView()
+                        }
+                        .font(.footnote)
                     }
                 }
 
                 if profile.isRemSoundReceiverEnabled {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("RemSound")
-                        Spacer()
-                        Text(remSoundStatusLabel)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
-
-                    Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
-                        switch audioReceiver.snapshot.state {
-                        case .idle, .stopped, .failed:
-                            audioReceiver.start(
-                                host: remSoundCapability.senderHost,
-                                port: remSoundCapability.senderPort,
-                                password: settings.credentials(for: profile)?.remSoundPassword ?? ""
-                            )
-                        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
-                            audioReceiver.stop()
+                    DisclosureGroup(isExpanded: $isRemSoundExpanded) {
+                        Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
+                            switch audioReceiver.snapshot.state {
+                            case .idle, .stopped, .failed:
+                                audioReceiver.start(
+                                    host: remSoundCapability.senderHost,
+                                    port: remSoundCapability.senderPort,
+                                    password: settings.credentials(for: profile)?.remSoundPassword ?? ""
+                                )
+                            case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
+                                audioReceiver.stop()
+                            }
                         }
-                    }
-                    .buttonStyle(.borderedProminent)
+                        .buttonStyle(.borderedProminent)
 
-                    Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
-                        audioReceiver.reconnect()
-                    }
-                    .disabled(!canReconnectRemSound)
+                        Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
+                            audioReceiver.reconnect()
+                        }
+                        .disabled(!canReconnectRemSound)
 
-                    Toggle("Mute RemSound audio", isOn: Binding(
-                        get: { audioReceiver.snapshot.muted },
-                        set: { audioReceiver.setMuted($0) }
-                    ))
+                        Toggle("Mute RemSound audio", isOn: Binding(
+                            get: { audioReceiver.snapshot.muted },
+                            set: { audioReceiver.setMuted($0) }
+                        ))
 
-                    Slider(
-                        value: Binding(
-                            get: { Double(audioReceiver.snapshot.volume) },
-                            set: { audioReceiver.setVolume(Float($0)) }
-                        ),
-                        in: 0...1
-                    ) {
-                        Text("RemSound playback volume")
-                    }
-                    .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
+                        Slider(
+                            value: Binding(
+                                get: { Double(audioReceiver.snapshot.volume) },
+                                set: { audioReceiver.setVolume(Float($0)) }
+                            ),
+                            in: 0...1
+                        ) {
+                            Text("RemSound playback volume")
+                        }
+                        .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
 
-                    NavigationLink("RemSound details and diagnostics") {
-                        RemSoundAudioFeatureView(profile: profile)
-                    }
+                        NavigationLink("RemSound details and diagnostics") {
+                            RemSoundAudioFeatureView(profile: profile)
+                        }
 
-                    Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
-                        AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                        Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
+                            AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                        }
+                    } label: {
+                        Text("RemSound — \(remSoundStatusLabel)")
                     }
+                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
+                    .accessibilityHint(
+                        isRemSoundExpanded
+                            ? "Double-tap to collapse RemSound controls."
+                            : "Double-tap to expand RemSound controls."
+                    )
                 }
             }
             Section("Status") { Text(statusLabel) }
@@ -130,6 +140,9 @@ struct NVDARemoteFeatureView: View {
             Section("Log") { ForEach(bridge.log.indices, id: \.self) { Text(bridge.log[$0]).font(.caption.monospaced()) } }
         }
         .navigationTitle("NVDA Remote")
+        .navigationDestination(isPresented: $isControllerMappingPresented) {
+            ControllerMappingView()
+        }
         // The old zero-height overlay could not reliably retain responder
         // ownership on physical keyboards. Keep a real, non-interactive view
         // in the hierarchy while leaving it unavailable to touch and VoiceOver.
@@ -220,6 +233,9 @@ struct NVDARemoteFeatureView: View {
     }
     private var isForwardingAvailable: Bool {
         return switch bridge.status { case .ready: true; default: false }
+    }
+    private var controllerStatusLabel: String {
+        controllerAdapter.controllerStatus?.compactLabel ?? "No controller connected"
     }
     private var statusLabel: String {
         return switch bridge.status {
