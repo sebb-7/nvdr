@@ -11,6 +11,7 @@ import Foundation
 ///
 /// Examples:
 ///   ctrl+v
+///   ctrl+shift
 ///   win+r,powershell,enter
 ///   ctrl+l,github.com,enter
 struct QuickCommand: Equatable, Sendable {
@@ -176,7 +177,6 @@ enum QuickCommandParseError: Error, Equatable, Sendable {
     case emptyChordKey(position: Int)
     case unknownChordKey(String, position: Int)
     case duplicateChordKey(String, position: Int)
-    case modifierOnlyChord(position: Int)
     case multipleChordTargets(position: Int)
     case modifierAfterTarget(position: Int)
     case literalTextTooLong(position: Int, maximum: Int)
@@ -197,10 +197,8 @@ enum QuickCommandParseError: Error, Equatable, Sendable {
             "Step \(position) contains an unknown key: \(token)."
         case .duplicateChordKey(let token, let position):
             "Step \(position) repeats the same key: \(token)."
-        case .modifierOnlyChord(let position):
-            "Step \(position) needs at least one non-modifier key."
         case .multipleChordTargets(let position):
-            "Step \(position) must have exactly one non-modifier target key."
+            "Step \(position) must have at most one non-modifier target key."
         case .modifierAfterTarget(let position):
             "Step \(position) must put modifier keys before its target key."
         case .literalTextTooLong(let position, let maximum):
@@ -218,8 +216,8 @@ enum QuickCommandExecutionPolicy {
 
 struct QuickCommandParser: Sendable {
     static let maximumSteps = 5
-    /// A Command Mode chord supports all four Windows modifier families plus
-    /// exactly one target key.
+    /// A Command Mode chord supports modifier-only combinations or up to four
+    /// Windows modifier families plus exactly one target key.
     static let maximumChordKeys = 5
     static let maximumLiteralCharacters = 256
 
@@ -308,13 +306,11 @@ struct QuickCommandParser: Sendable {
             )
         }
         let targetIndexes = keys.indices.filter { !keys[$0].isModifier }
-        guard !targetIndexes.isEmpty else {
-            throw QuickCommandParseError.modifierOnlyChord(position: position)
-        }
-        guard targetIndexes.count == 1 else {
+        guard targetIndexes.count <= 1 else {
             throw QuickCommandParseError.multipleChordTargets(position: position)
         }
-        guard targetIndexes[0] == keys.index(before: keys.endIndex) else {
+        if let targetIndex = targetIndexes.first,
+           targetIndex != keys.index(before: keys.endIndex) {
             throw QuickCommandParseError.modifierAfterTarget(position: position)
         }
         return QuickCommandChord(keys: keys)
