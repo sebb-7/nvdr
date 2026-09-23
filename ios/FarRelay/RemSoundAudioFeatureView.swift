@@ -11,9 +11,9 @@ struct RemSoundAudioFeatureView: View {
 
     var body: some View {
         Form {
-            Section("Sender") {
+            Section("Windows RemSound peer") {
                 Text(senderDescription)
-                Text("Configure the Windows sender to send to this iPhone or iPad on UDP port \(port).")
+                Text("This is the Windows PC address, not the iPhone address. Start audio to announce FarRelay iOS directly to that RemSound app. Then select FarRelay iOS in RemSound's discovered peers and send PCM audio to it on UDP port \(port).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -82,7 +82,7 @@ struct RemSoundAudioFeatureView: View {
 
     private var host: String { capability.senderHost }
     private var port: UInt16 { capability.senderPort }
-    private var senderDescription: String { "\(host):\(port)" }
+    private var senderDescription: String { "Windows peer: \(host), audio port \(port)" }
     private var canReconnect: Bool {
         switch audioReceiver.snapshot.state {
         case .idle, .stopped: false
