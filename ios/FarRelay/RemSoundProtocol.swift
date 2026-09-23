@@ -31,6 +31,36 @@ struct RemSoundPacketHeader: Equatable, Sendable {
     }
 }
 
+/// Cross-port peer-discovery contract used by the current Windows RemSound app.
+/// Audio remains on 47830; discovery is a separate best-effort UDP announcement
+/// channel on 47821. Direct unicast is sufficient for both LAN and Tailscale:
+/// once Windows receives our announcement it learns the source address and
+/// starts announcing back to it as a known peer.
+enum RemSoundDiscovery {
+    static let defaultPort: UInt16 = 47_821
+    static let announcementInterval: Duration = .milliseconds(1_500)
+}
+
+struct RemSoundDiscoveryAnnouncement: Codable, Equatable, Sendable {
+    let instanceID: UUID
+    let name: String
+    let audioPort: Int
+    let canSend: Bool
+    let canReceive: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case instanceID = "InstanceId"
+        case name = "Name"
+        case audioPort = "AudioPort"
+        case canSend = "CanSend"
+        case canReceive = "CanReceive"
+    }
+
+    func encoded() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+}
+
 enum RemSoundCodec: Int, Sendable {
     case pcm = 1
     case opus = 2
