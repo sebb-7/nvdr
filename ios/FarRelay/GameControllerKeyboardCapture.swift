@@ -39,12 +39,20 @@ final class GameControllerKeyboardCapture {
         ]
         if let keyboard = GCKeyboard.coalesced {
             install(keyboard)
+        } else {
+            // Some iOS hardware-keyboard combinations never surface through
+            // GCKeyboard even though UIKit continues to deliver raw presses.
+            // Report that explicitly so a device diagnostic can distinguish a
+            // missing fallback source from an F-key mapping/transport failure.
+            owner?.gameControllerKeyboardUnavailable()
         }
     }
 
     private func installCurrentKeyboard() {
         if let keyboard = GCKeyboard.coalesced {
             install(keyboard)
+        } else {
+            owner?.gameControllerKeyboardUnavailable()
         }
     }
 
