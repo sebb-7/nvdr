@@ -6,6 +6,7 @@ import Observation
 final class AudioReceiverModel {
     private let receiver: RemSoundAudioReceiver
     private let playback: AudioPlayback
+    private let discovery = RemSoundDiscoveryAnnouncer()
     private var updatesTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private(set) var snapshot = AudioReceiverSnapshot()
@@ -47,11 +48,20 @@ final class AudioReceiverModel {
     }
 
     func start(host: String, port: UInt16 = 47_830, password: String) {
+        discovery.start(peerHost: host, audioPort: port)
         Task { await receiver.start(configuration: .init(host: host, port: port, password: password)) }
     }
 
-    func stop() { Task { await receiver.stop() } }
-    func reconnect() { Task { await receiver.reconnect() } }
+    func stop() {
+        discovery.stop()
+        Task { await receiver.stop() }
+    }
+
+    func reconnect() {
+        discovery.reconnect()
+        Task { await receiver.reconnect() }
+    }
+
     func setMuted(_ muted: Bool) { Task { await receiver.setMuted(muted) } }
     func setVolume(_ volume: Float) { Task { await receiver.setVolume(volume) } }
 }
