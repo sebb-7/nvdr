@@ -73,10 +73,7 @@ mod tests {
             ["host.info", "process.list", "process.info"]
         );
         if std::env::consts::OS == "macos" {
-            assert_eq!(
-                caps.features,
-                ["macRemote", "voiceOverSemanticFeedback"]
-            );
+            assert_eq!(caps.features, ["macRemote", "voiceOverSemanticFeedback"]);
         } else {
             assert!(caps.features.is_empty());
         }
