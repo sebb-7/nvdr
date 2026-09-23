@@ -11,6 +11,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private static let maximumInboundConnections = 4
     private static let maximumPendingFrameDeliveries = 16
     private static let senderLivenessTimeout: TimeInterval = 5
+    private static let initialTrafficTimeout: TimeInterval = 8
     private let networkQueue = DispatchQueue(label: "com.sebb7.farrelay.remsound")
     private var listener: NWListener?
     private var inboundConnections: [UUID: NWConnection] = [:]
@@ -20,9 +21,11 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var activeStreamID: UInt16?
     private var activeFormat: RemSoundFormat?
     private var expectedSequence: UInt32?
+    private var heartbeatSequence: UInt32 = 0
     private var assembler = RemSoundPCMFrameAssembler()
     private var queuedPCM = BoundedPCMQueue()
     private var playbackArmed = false
+    private var listenerReadyAt: Date?
     private var lastSenderActivity: Date?
     private var generation = 0
     private var senderWatchdog: Task<Void, Never>?
@@ -95,12 +98,34 @@ actor RemSoundAudioReceiver: AudioReceiver {
 
     /// Exposed for deterministic tests as well as the bounded watchdog. It
     /// makes a disappearing sender an audio-local failure rather than leaving a
-    /// misleading playing state indefinitely.
+    /// misleading playing state indefinitely. Before the first compatible
+    /// Format packet, it also turns an otherwise permanent "Authenticating"
+    /// state into a useful diagnostic when no RemSound traffic reaches iOS.
     func checkSenderLiveness(now: Date = .now) {
         guard receiverSnapshot.state == .authenticating
                 || receiverSnapshot.state == .buffering
-                || receiverSnapshot.state == .playing,
-              let lastSenderActivity,
+                || receiverSnapshot.state == .playing
+        else { return }
+
+        if receiverSnapshot.state == .authenticating,
+           lastSenderActivity == nil,
+           let listenerReadyAt,
+           now.timeIntervalSince(listenerReadyAt) > Self.initialTrafficTimeout {
+            if receiverSnapshot.statistics.heartbeatPingsReceived == 0,
+               receiverSnapshot.statistics.packetsReceived == 0 {
+                fail("No RemSound traffic reached this device. Check that FarRelay iOS is selected in Windows RemSound, Local Network access is allowed, and UDP 47830 is reachable.")
+                return
+            }
+            if receiverSnapshot.statistics.heartbeatPingsReceived == 0 {
+                fail("RemSound traffic reached this device, but no compatible heartbeat or audio format was received.")
+                return
+            }
+            // Heartbeats prove Windows can reach us. Remaining in authenticating
+            // here means Windows is online but has not begun an audio stream yet.
+            return
+        }
+
+        guard let lastSenderActivity,
               now.timeIntervalSince(lastSenderActivity) > Self.senderLivenessTimeout
         else { return }
         fail("The audio sender stopped or became unreachable. Reconnect audio to try again.")
@@ -131,25 +156,46 @@ actor RemSoundAudioReceiver: AudioReceiver {
     }
 
     /// Deterministic test seam. Production datagrams and fixtures travel through
-    /// this same parser, without any controller or UI reference.
+    /// this same parser, without any controller or UI reference. Tests that need
+    /// to inspect a generated Heartbeat Pong use ingestAndPrepareReply instead.
     func ingest(_ datagram: Data) {
+        _ = ingestAndPrepareReply(datagram)
+    }
+
+    /// Parses one datagram and returns an audio-local protocol reply when the
+    /// current RemSound contract requires one. Today only Heartbeat Ping has a
+    /// reply. Returning the bytes keeps socket mechanics out of protocol tests.
+    func ingestAndPrepareReply(_ datagram: Data) -> Data? {
         receiverSnapshot.statistics.packetsReceived += 1
         guard datagram.count <= Self.maximumDatagramBytes,
               let header = RemSoundPacketHeader.parse(datagram)
         else {
             dropPacket()
-            return
+            return nil
         }
         let payload = Data(datagram.dropFirst(RemSoundPacketHeader.size))
         switch header.type {
         case .format:
             ingestFormat(payload, streamID: header.streamID)
+            return nil
         case .audio:
             ingestAudio(payload, streamID: header.streamID, sequence: header.sequence)
-        case .keepAlive, .heartbeat, .control, .addressCheck:
-            // Phase 1 neither sends control commands nor couples them to FarRelay
-            // control. These packet types are safely inert at this boundary.
-            break
+            return nil
+        case .heartbeat:
+            guard let heartbeat = RemSoundHeartbeat.parse(payload) else {
+                dropPacket()
+                return nil
+            }
+            guard heartbeat.kind == .ping else { return nil }
+            receiverSnapshot.statistics.heartbeatPingsReceived += 1
+            heartbeatSequence &+= 1
+            let reply = RemSoundHeartbeat.pongResponse(to: datagram, sequence: heartbeatSequence)
+            if reply == nil { dropPacket() } else { publish() }
+            return reply
+        case .keepAlive, .control, .addressCheck:
+            // Phase 1 does not implement remote RemSound controls. These packet
+            // types remain inert and cannot reach FarRelay control-plane state.
+            return nil
         }
     }
 
@@ -205,6 +251,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         guard generation == self.generation else { return }
         switch state {
         case .ready:
+            listenerReadyAt = .now
             if receiverSnapshot.state == .connecting || receiverSnapshot.state == .reconnecting {
                 receiverSnapshot.state = .authenticating
                 publish()
@@ -245,11 +292,35 @@ actor RemSoundAudioReceiver: AudioReceiver {
             Task {
                 guard let self else { return }
                 guard await self.isCurrentGeneration(generation) else { return }
-                if let content { await self.ingest(content) }
+                if let content {
+                    let reply = await self.ingestAndPrepareReply(content)
+                    if let reply {
+                        await self.sendHeartbeatReply(reply, on: id, generation: generation)
+                    }
+                }
                 if error == nil { await self.receiveNext(on: id, generation: generation) }
                 else { await self.removeConnection(id, generation: generation) }
             }
         }
+    }
+
+    private func sendHeartbeatReply(_ reply: Data, on id: UUID, generation: Int) {
+        guard generation == self.generation,
+              let connection = inboundConnections[id]
+        else { return }
+        receiverSnapshot.statistics.heartbeatPongsSent += 1
+        publish()
+        connection.send(content: reply, completion: .contentProcessed { [weak self] error in
+            guard let error else { return }
+            Task { await self?.recordHeartbeatReplyFailure(error, generation: generation) }
+        })
+    }
+
+    private func recordHeartbeatReplyFailure(_ error: NWError, generation: Int) {
+        guard generation == self.generation else { return }
+        receiverSnapshot.statistics.heartbeatReplyFailures += 1
+        receiverSnapshot.statistics.lastError = "Heartbeat reply failed: \(error.localizedDescription)"
+        publish()
     }
 
     private func ingestFormat(_ payload: Data, streamID: UInt16) {
@@ -369,6 +440,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         assembler.reset()
         queuedPCM = BoundedPCMQueue()
         playbackArmed = false
+        listenerReadyAt = nil
         lastSenderActivity = nil
         key = nil
         expectedFingerprint = nil
