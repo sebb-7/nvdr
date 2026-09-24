@@ -6,9 +6,6 @@ import Network
 /// Its mutable state is actor-isolated and it owns no SSH, NVDA, controller,
 /// keyboard, or RemoteIntent references.
 actor RemSoundAudioReceiver: AudioReceiver {
-    private static let pcmStartupBufferFrames = 960 // Preserve the proven PCM 20 ms baseline.
-    private static let liveStartupBufferFrames = 960
-    private static let broadcastStartupBufferFrames = 5_760 // 120 ms at 48 kHz.
     private static let maximumConcealedFramesPerGap = 8
     private static let maximumDatagramBytes = 2_048
     private static let maximumInboundConnections = 4
@@ -323,6 +320,13 @@ actor RemSoundAudioReceiver: AudioReceiver {
             volume: volume,
             peer: "\(endpoint.host):\(endpoint.port)"
         )
+        let configuredFrames = targetFrames(for: nil)
+        receiverSnapshot.statistics.initialJitterTargetFrames = configuredFrames
+        receiverSnapshot.statistics.jitterTargetFrames = configuredFrames
+        receiverSnapshot.statistics.autoTuneEnabled = autoTuneLatencyEnabled
+        receiverSnapshot.statistics.lastAutoTuneDecision = autoTuneLatencyEnabled
+            ? "waiting for measurements"
+            : "fixed \(configuredTargetLatencyMilliseconds) ms"
         publish()
 
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
@@ -474,13 +478,28 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private func shouldHandover(to candidateID: UUID, now: Date) -> Bool {
         guard candidateID != selectedPeerConnectionID else { return true }
         guard let selectedPeerConnectionID else { return true }
-        guard inboundConnections[selectedPeerConnectionID] != nil else { return true }
-        if let lastAudio = selectedPeerLastAudioActivity {
-            return now.timeIntervalSince(lastAudio) > Self.pathHandoverSilence
-        }
-        if let selectedAt = selectedPeerConnectionSelectedAt {
-            return now.timeIntervalSince(selectedAt) > Self.pathHandoverSilence
-        }
+        let currentPathExists = inboundConnections[selectedPeerConnectionID] != nil
+        let lastAudioAge = selectedPeerLastAudioActivity.map { now.timeIntervalSince($0) }
+        let selectedAge = selectedPeerConnectionSelectedAt.map { now.timeIntervalSince($0) }
+        return Self.shouldHandoverPeerPath(
+            currentPathExists: currentPathExists,
+            lastAudioAge: lastAudioAge,
+            selectedAge: selectedAge
+        )
+    }
+
+    /// Pure equivalent of RemSoundApple's one-live-path rule, adapted to
+    /// FarRelay's single selected Windows peer. A second source-port/path may
+    /// not steal playback while the current path has delivered audio within
+    /// the handover silence window.
+    nonisolated static func shouldHandoverPeerPath(
+        currentPathExists: Bool,
+        lastAudioAge: TimeInterval?,
+        selectedAge: TimeInterval?
+    ) -> Bool {
+        guard currentPathExists else { return true }
+        if let lastAudioAge { return lastAudioAge > pathHandoverSilence }
+        if let selectedAge { return selectedAge > pathHandoverSilence }
         return false
     }
 
