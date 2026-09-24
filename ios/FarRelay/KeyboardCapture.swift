@@ -114,6 +114,25 @@ final class CaptureView: UIView {
     @discardableResult
     private func forward(_ presses: Set<UIPress>, pressed: Bool) -> Bool {
         guard let bridge, bridge.forwardingEnabled else { return false }
+
+        // Record the outer UIKit press even when iPadOS does not attach a
+        // UIKey. This is diagnostic-only and intentionally does not claim or
+        // alter system handling. A missing UIKey is exactly the evidence we
+        // need for top-row keys consumed or transformed before raw forwarding.
+        for press in presses {
+            let key = press.key
+            diagnostics?.observe(
+                source: .uikitEnvelope,
+                hidUsage: key?.keyCode.rawValue,
+                pressType: press.type.rawValue,
+                modifiers: key?.modifierFlags.rawValue ?? 0,
+                pressed: pressed,
+                result: key == nil
+                    ? "UIKit delivered UIPress without UIKey"
+                    : "UIKit delivered UIPress with UIKey"
+            )
+        }
+
         let keys = presses.compactMap(\.key)
         var claimed = false
 
@@ -368,6 +387,24 @@ final class CaptureView: UIView {
                 result: result.diagnosticText
             )
         }
+    }
+
+    func observeGameControllerKeyboardEvent(
+        rawCode: Int,
+        virtualKey: UInt16?,
+        pressed: Bool,
+        modifiers: [UInt16]
+    ) {
+        diagnostics?.observe(
+            source: .gameControllerRaw,
+            platformCode: rawCode,
+            modifiers: FunctionKeyModifierFingerprint.fromRemoteModifiers(modifiers),
+            pressed: pressed,
+            virtualKey: virtualKey,
+            result: virtualKey == nil
+                ? "GCKeyboard delivered non-F1-F12 key code; observed only"
+                : "GCKeyboard delivered F1-F12 key code"
+        )
     }
 
     func receiveGameControllerFunctionKey(vk: UInt16, pressed: Bool, modifiers: [UInt16]) {
