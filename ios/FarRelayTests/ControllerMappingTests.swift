@@ -77,6 +77,21 @@ final class ControllerMappingTests: XCTestCase {
         XCTAssertEqual(Set(grouped), Set(WindowsKeyboardKey.allCases))
     }
 
+    func testKeyboardPickerVoiceOverLabelsBelongToKeysNotCategoryContainers() {
+        XCTAssertFalse(
+            WindowsKeyboardKeyPickerAccessibilityPolicy
+                .overridesDisclosureGroupAccessibilityLabel
+        )
+        for group in WindowsKeyboardKeyGroup.allCases {
+            for key in group.keys {
+                let label = WindowsKeyboardKeyPickerAccessibilityPolicy.label(for: key)
+                XCTAssertEqual(label, key.label)
+                XCTAssertFalse(label.isEmpty)
+                XCTAssertNotEqual(label, group.rawValue)
+            }
+        }
+    }
+
     func testEveryDualSenseInputHasAnIndependentBindingSlot() {
         var profile = ControllerProfile()
         XCTAssertEqual(Set(profile.bindings.map(\.sourceInput)), Set(ControllerInput.allCases))
@@ -491,6 +506,7 @@ final class ControllerMappingTests: XCTestCase {
             FarRelayControllerAction.textMode,
             .quickCommandMode,
             .repeatLastQuickBar,
+            .repeatLastQuickCommand,
             .nextProfile,
             .previousProfile
         ] {
