@@ -134,6 +134,7 @@ final class AudioReceiverModel {
             "Audio UDP packets received: \(statistics.packetsReceived)",
             "Encrypted audio packets received: \(statistics.encryptedAudioPacketsReceived)",
             "Packets dropped: \(statistics.packetsDropped)",
+            "Playback buffer dropped frames: \(statistics.bufferDroppedFrames)",
             "Packets lost: \(statistics.packetsLost)",
             "Packets reordered: \(statistics.packetsReordered)",
             "Authentication successes: \(statistics.authenticationSuccesses)",

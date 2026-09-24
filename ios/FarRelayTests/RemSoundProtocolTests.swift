@@ -120,15 +120,24 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertNil(RemSoundPCMPart.parse(Data([0, 0, 0, 0, 2, 2])))
     }
 
-    func testPCMAssemblyRejectsOutOfOrderAndBoundsMemory() {
+    func testPCMAssemblyDistinguishesPendingFromRejectedAndBoundsMemory() {
         var assembler = RemSoundPCMFrameAssembler()
-        XCTAssertNil(assembler.append(.init(frameID: 4, index: 1, count: 2, encryptedBytes: Data([2]))))
-        XCTAssertNil(assembler.append(.init(frameID: 4, index: 0, count: 2, encryptedBytes: Data([1]))))
         XCTAssertEqual(
             assembler.append(.init(frameID: 4, index: 1, count: 2, encryptedBytes: Data([2]))),
-            Data([1, 2])
+            .rejected
         )
-        XCTAssertNil(assembler.append(.init(frameID: 5, index: 0, count: 1, encryptedBytes: Data(repeating: 1, count: 8_193))))
+        XCTAssertEqual(
+            assembler.append(.init(frameID: 4, index: 0, count: 2, encryptedBytes: Data([1]))),
+            .pending
+        )
+        XCTAssertEqual(
+            assembler.append(.init(frameID: 4, index: 1, count: 2, encryptedBytes: Data([2]))),
+            .complete(Data([1, 2]))
+        )
+        XCTAssertEqual(
+            assembler.append(.init(frameID: 5, index: 0, count: 1, encryptedBytes: Data(repeating: 1, count: 8_193))),
+            .rejected
+        )
     }
 
     func testBoundedPCMQueueCannotGrowWithoutLimit() {

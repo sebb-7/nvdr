@@ -12,6 +12,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private static let maximumPendingFrameDeliveries = 16
     private static let senderLivenessTimeout: TimeInterval = 5
     private static let initialTrafficTimeout: TimeInterval = 8
+    private static let telemetryPublishIntervalNanoseconds: UInt64 = 250_000_000
     private let networkQueue = DispatchQueue(label: "com.sebb7.farrelay.remsound")
     private var listener: NWListener?
     private var inboundConnections: [UUID: NWConnection] = [:]
@@ -28,6 +29,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var queuedPCM = BoundedPCMQueue()
     private var playbackArmed = false
     private var playbackFailureMessage: String?
+    private var lastTelemetryPublishNanoseconds: UInt64 = 0
     private var listenerReadyAt: Date?
     private var lastSenderActivity: Date?
     private var generation = 0
@@ -99,7 +101,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
 
     func playbackDropped(frameCount: Int) {
         receiverSnapshot.statistics.bufferDroppedFrames += frameCount
-        publish()
+        publishTelemetryIfDue()
     }
 
     /// Exposed for deterministic tests as well as the bounded watchdog. It
@@ -486,9 +488,15 @@ actor RemSoundAudioReceiver: AudioReceiver {
             dropPacket(malformed: true)
             return
         }
-        guard let encryptedFrame = assembler.append(part) else {
+        let encryptedFrame: Data
+        switch assembler.append(part) {
+        case .pending:
+            return
+        case .rejected:
             dropPacket()
             return
+        case .complete(let completed):
+            encryptedFrame = completed
         }
         guard let plaintext = RemSoundCrypto.decrypt(encryptedFrame, using: key) else {
             receiverSnapshot.statistics.authenticationFailures += 1
@@ -518,8 +526,13 @@ actor RemSoundAudioReceiver: AudioReceiver {
             return
         }
         drainQueuedFrames()
+        let wasPlaying = receiverSnapshot.state == .playing
         receiverSnapshot.state = .playing
-        publish()
+        if wasPlaying {
+            publishTelemetryIfDue()
+        } else {
+            publish()
+        }
     }
 
     private func acceptSequence(_ sequence: UInt32) -> Bool {
@@ -581,6 +594,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         queuedPCM = BoundedPCMQueue()
         playbackArmed = false
         playbackFailureMessage = nil
+        lastTelemetryPublishNanoseconds = 0
         listenerReadyAt = nil
         lastSenderActivity = nil
         key = nil
@@ -600,6 +614,15 @@ actor RemSoundAudioReceiver: AudioReceiver {
         inboundConnections.removeAll()
         selectedPeerConnectionID = nil
         receiverSnapshot.isListening = false
+    }
+
+    private func publishTelemetryIfDue() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard lastTelemetryPublishNanoseconds == 0
+                || now - lastTelemetryPublishNanoseconds >= Self.telemetryPublishIntervalNanoseconds
+        else { return }
+        lastTelemetryPublishNanoseconds = now
+        publish()
     }
 
     private func publish() {

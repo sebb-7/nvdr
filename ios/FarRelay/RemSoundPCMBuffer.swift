@@ -1,5 +1,11 @@
 import Foundation
 
+enum RemSoundPCMAssemblyResult: Equatable, Sendable {
+    case pending
+    case complete(Data)
+    case rejected
+}
+
 struct RemSoundPCMFrameAssembler: Sendable {
     private static let maximumEncryptedFrameBytes = 8_192
     private var pendingID: UInt32?
@@ -7,7 +13,7 @@ struct RemSoundPCMFrameAssembler: Sendable {
     private var partCount: UInt8 = 0
     private var bytes = Data()
 
-    mutating func append(_ part: RemSoundPCMPart) -> Data? {
+    mutating func append(_ part: RemSoundPCMPart) -> RemSoundPCMAssemblyResult {
         if part.index == 0 {
             pendingID = part.frameID
             expectedIndex = 0
@@ -20,14 +26,14 @@ struct RemSoundPCMFrameAssembler: Sendable {
               bytes.count + part.encryptedBytes.count <= Self.maximumEncryptedFrameBytes
         else {
             reset()
-            return nil
+            return .rejected
         }
         bytes.append(part.encryptedBytes)
         expectedIndex &+= 1
-        guard expectedIndex == partCount else { return nil }
+        guard expectedIndex == partCount else { return .pending }
         let completed = bytes
         reset()
-        return completed
+        return .complete(completed)
     }
 
     mutating func reset() {
