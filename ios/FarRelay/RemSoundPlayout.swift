@@ -223,6 +223,102 @@ final class RemSoundPlayoutBuffer: @unchecked Sendable {
         }
     }
 
+    /// AVAudioEngine standard Float32 stereo is non-interleaved. Keep the
+    /// ring interleaved for compact producer writes, but deinterleave directly
+    /// into the engine's two channel buffers without allocating on the render path.
+    func render(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int
+    ) {
+        guard frames > 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+
+        for frame in 0..<frames {
+            left[frame] = 0
+            right[frame] = 0
+        }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+        if lastRenderNanoseconds != 0 {
+            let gap = Int((now &- lastRenderNanoseconds) / 1_000_000)
+            peakRenderGapMilliseconds = max(peakRenderGapMilliseconds, gap)
+        }
+        lastRenderNanoseconds = now
+        updateFilteredErrorLocked(now: now)
+
+        if !armed {
+            guard count >= targetFrames else { return }
+            armed = true
+            consecutiveEmptyReads = 0
+            fadeInPending = true
+        }
+
+        let available = min(count, frames)
+        if available < frames {
+            concealedFrames += frames - available
+            if available == 0 || filteredError <= -Double(Self.starvationThresholdFrames) {
+                tuneBlockingUnderruns += 1
+            } else {
+                deviceGulpUnderruns += 1
+            }
+            underruns += 1
+        }
+
+        guard available > 0 else {
+            consecutiveEmptyReads += 1
+            applyFadeOutLocked(
+                left: left,
+                right: right,
+                frames: min(frames, Self.fadeFrames)
+            )
+            if consecutiveEmptyReads >= Self.maximumEmptyReads { armed = false }
+            return
+        }
+
+        if consecutiveEmptyReads > 0 {
+            fadeInPending = true
+            consecutiveEmptyReads = 0
+        }
+
+        var produced = 0
+        var remaining = available
+        while remaining > 0 {
+            let chunk = min(remaining, capacityFrames - head)
+            let source = head * Self.channels
+            for frame in 0..<chunk {
+                left[produced + frame] = ring[source + frame * Self.channels]
+                right[produced + frame] = ring[source + frame * Self.channels + 1]
+            }
+            head = (head + chunk) % capacityFrames
+            produced += chunk
+            remaining -= chunk
+        }
+        count -= available
+
+        if fadeInPending {
+            applyFadeInLocked(
+                left: left,
+                right: right,
+                frames: min(available, Self.fadeFrames)
+            )
+            fadeInPending = false
+        }
+
+        lastLeft = left[available - 1]
+        lastRight = right[available - 1]
+
+        if available < frames {
+            applyFadeOutAtBoundaryLocked(
+                left: left,
+                right: right,
+                startFrame: available,
+                frames: min(available, Self.fadeFrames)
+            )
+            fadeInPending = true
+        }
+    }
+
     func metrics(resetPeakRenderGap: Bool = false) -> RemSoundPlayoutMetrics {
         lock.lock(); defer { lock.unlock() }
         let result = RemSoundPlayoutMetrics(bufferedFrames: count, targetFrames: targetFrames, isArmed: armed, underruns: underruns, tuneBlockingUnderruns: tuneBlockingUnderruns, deviceGulpUnderruns: deviceGulpUnderruns, concealedFrames: concealedFrames, trimEvents: trimEvents, droppedFrames: droppedFrames, peakRenderGapMilliseconds: peakRenderGapMilliseconds)
@@ -243,6 +339,48 @@ final class RemSoundPlayoutBuffer: @unchecked Sendable {
         let delta = Double(now &- lastErrorSampleNanoseconds) / 1_000_000_000
         let alpha = delta / (2 + delta)
         filteredError = (1 - alpha) * filteredError + alpha * Double(count - targetFrames)
+    }
+
+    private func applyFadeInLocked(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int
+    ) {
+        guard frames > 0 else { return }
+        for frame in 0..<frames {
+            let gain = Float(frame + 1) / Float(frames)
+            left[frame] *= gain
+            right[frame] *= gain
+        }
+    }
+
+    private func applyFadeOutAtBoundaryLocked(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        startFrame: Int,
+        frames: Int
+    ) {
+        guard frames > 0 else { return }
+        for offset in 0..<frames {
+            let frame = startFrame - frames + offset
+            guard frame >= 0 else { continue }
+            let gain = Float(frames - offset) / Float(frames)
+            left[frame] *= gain
+            right[frame] *= gain
+        }
+    }
+
+    private func applyFadeOutLocked(
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        frames: Int
+    ) {
+        guard frames > 0 else { return }
+        for frame in 0..<frames {
+            let gain = Float(frames - frame) / Float(frames)
+            left[frame] = lastLeft * gain
+            right[frame] = lastRight * gain
+        }
     }
 
     private func applyFadeInLocked(into output: UnsafeMutablePointer<Float>, frames: Int) {
