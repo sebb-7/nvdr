@@ -136,7 +136,11 @@ struct NVDARemoteFeatureView: View {
             Section("Remote speech") {
                 Toggle("Speak remote NVDA in FarRelay", isOn: Binding(
                     get: { settings.remoteSpeechOutputEnabled },
-                    set: { bridge.setLocalSpeechOutputEnabled($0) }
+                    set: { enabled in
+                        settings.remoteSpeechOutputEnabled = enabled
+                        settings.save()
+                        bridge.setLocalSpeechOutputEnabled(enabled)
+                    }
                 ))
                 Text("This controls only FarRelay's local NVDA voice. It does not send NVDA+S or change speech on the Windows computer. Turn it off when whole-system RemSound already contains NVDA audio.")
                     .font(.footnote)
