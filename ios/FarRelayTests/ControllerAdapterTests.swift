@@ -453,9 +453,12 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
 
-        // Quick Bar -> Profiles -> Editing -> Headings takes three horizontal
-        // swipes. Right-stick Down then moves to the next heading and Cross
-        // becomes Enter.
+        // Quick Bar -> Profiles -> Controller Mapping -> Editing -> Headings
+        // takes four horizontal swipes. Right-stick Down then moves to the next
+        // heading and Cross becomes Enter.
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
@@ -641,6 +644,25 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
     }
 
+    func testQuickCommandMappedKeyTogglesModeOffWithoutSendingRemoteInput() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        XCTAssertTrue(adapter.isQuickCommandModeActive)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1.2)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.3)
+        await settle()
+
+        XCTAssertFalse(adapter.isQuickCommandModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertTrue(sink.transitions.isEmpty)
+    }
+
     func testQuickNavigationExitClearsInFlightTouchpadContact() {
         let (mappings, adapter, _, _, _) = makeAdapter()
         mappings.setAction(nil, for: .circle)
@@ -679,15 +701,15 @@ final class ControllerAdapterTests: XCTestCase {
         )
     }
 
-    func testEditingRotorExecutesSelectedEditingChord() async {
+    func testEditingRotorExecutesSelectedEditingChordThenExitsQuickNavigation() async {
         let (_, adapter, sink, _, _) = makeAdapter()
 
-        adapter.beginTouchpadSwipeForTesting(x: -0.5)
-        adapter.moveTouchpadForTesting(x: 0.1)
-        adapter.endTouchpadSwipeForTesting()
-        adapter.beginTouchpadSwipeForTesting(x: -0.5)
-        adapter.moveTouchpadForTesting(x: 0.1)
-        adapter.endTouchpadSwipeForTesting()
+        for _ in 0..<3 {
+            adapter.beginTouchpadSwipeForTesting(x: -0.5)
+            adapter.moveTouchpadForTesting(x: 0.1)
+            adapter.endTouchpadSwipeForTesting()
+        }
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
 
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
@@ -701,6 +723,16 @@ final class ControllerAdapterTests: XCTestCase {
             ]
         )
         XCTAssertFalse(sink.transitions.contains { $0.key == VK.return })
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+
+        // The next Cross is the Base Enter mapping, not another Select All.
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1.3)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.4)
+        await settle()
+        XCTAssertEqual(
+            Array(sink.transitions.suffix(2)),
+            [.init(VK.return, true), .init(VK.return, false)]
+        )
     }
 
     func testProfilesRotorActivatesSelectedProfileWithoutSendingEnter() async {
@@ -726,8 +758,36 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
-        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.beginTouchpadSwipeForTesting(x: -0.5)
+        adapter.moveTouchpadForTesting(x: 0.1)
+        adapter.endTouchpadSwipeForTesting()
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
+    }
+
+    func testControllerMappingRotorRequestsPresentationWithoutSendingRemoteInput() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        for _ in 0..<2 {
+            adapter.beginTouchpadSwipeForTesting(x: -0.5)
+            adapter.moveTouchpadForTesting(x: 0.1)
+            adapter.endTouchpadSwipeForTesting()
+        }
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
+        XCTAssertEqual(adapter.controllerMappingRequestGeneration, 0)
+
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.1)
+        await settle()
+
+        XCTAssertEqual(adapter.controllerMappingRequestGeneration, 1)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertTrue(sink.transitions.isEmpty)
+
+        adapter.restoreQuickNavigationAfterControllerMapping()
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
     }
 
     func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
@@ -1014,6 +1074,41 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertFalse(sink.transitions.contains { $0.key == VK.oem6 })
     }
 
+    func testTextModeClipboardPasteUsesExistingMirrorPipeline() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .touchpadPress, pressed: false, at: 1.1)
+        XCTAssertTrue(adapter.isTextModeActive)
+
+        XCTAssertTrue(adapter.pasteTextIntoTextMode("clip"))
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(adapter.textModeBuffer, "clip")
+        XCTAssertEqual(sink.texts, [])
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(0x43, true), .init(0x43, false),
+                .init(0x4C, true), .init(0x4C, false),
+                .init(0x49, true), .init(0x49, false),
+                .init(0x50, true), .init(0x50, false)
+            ]
+        )
+    }
+
+    func testTextModeEmptyClipboardDoesNotMutateRemoteOrLocalState() async {
+        let (_, adapter, sink, _, _) = makeAdapter()
+        adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .touchpadPress, pressed: false, at: 1.1)
+
+        XCTAssertFalse(adapter.pasteTextIntoTextMode(nil))
+        await adapter.waitForTextOperationsForTesting()
+
+        XCTAssertEqual(adapter.textModeBuffer, "")
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(sink.texts.isEmpty)
+    }
+
     func testTextModePreservesFullPunctuationStringAcrossLayoutBoundary() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         let punctuation = "/ ? [ ] { } \\ | ; : ' \" , < . > ` ~ - _ = + 1 ! 2 @ 3 # 4 $ 5 % 6 ^ 7 & 8 * 9 ( 0 )"
@@ -1281,6 +1376,24 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertNil(adapter.prepareQuickCommandForConfirmation())
         XCTAssertTrue(macController.transitions.isEmpty)
         XCTAssertTrue(adapter.isQuickCommandModeActive)
+    }
+
+    func testAdapterPublishesTwentyThenTenPercentBatteryAlertsOnce() {
+        let (_, adapter, _, _, _) = makeAdapter()
+
+        adapter.receiveBatteryForTesting(percent: 20, isCharging: false)
+        XCTAssertEqual(adapter.pendingBatteryAlert?.level, .twentyPercent)
+        adapter.dismissBatteryAlert()
+
+        adapter.receiveBatteryForTesting(percent: 19, isCharging: false)
+        XCTAssertNil(adapter.pendingBatteryAlert)
+
+        adapter.receiveBatteryForTesting(percent: 10, isCharging: false)
+        XCTAssertEqual(adapter.pendingBatteryAlert?.level, .tenPercent)
+        adapter.dismissBatteryAlert()
+
+        adapter.receiveBatteryForTesting(percent: 9, isCharging: false)
+        XCTAssertNil(adapter.pendingBatteryAlert)
     }
 
     func testNativeBSIDeleteEmptyHookFiresWithoutLocalTextMutation() {
