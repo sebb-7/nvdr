@@ -128,6 +128,7 @@ final class ControllerModesTests: XCTestCase {
     func testBatteryAlertsFireOnceAtTwentyAndTenAndRearmAfterCharging() {
         var tracker = ControllerBatteryAlertTracker()
 
+        XCTAssertNil(tracker.update(percent: 10, isCharging: true))
         XCTAssertNil(tracker.update(percent: 21, isCharging: false))
         XCTAssertEqual(
             tracker.update(percent: 20, isCharging: false)?.level,
