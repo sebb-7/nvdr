@@ -777,22 +777,44 @@ private struct WindowsKeyboardKeyPicker: View {
                 selection = nil
                 dismiss()
             }
+            // Do not rely on SwiftUI inferring the Button label inside this
+            // grouped picker. iOS 27 can expose only the "button" trait.
+            .accessibilityLabel("Unassigned")
             .accessibilityValue(selection == nil ? "Selected" : "")
+            .accessibilityHint("Clears the \(title.lowercased()) mapping.")
 
             ForEach(WindowsKeyboardKeyGroup.allCases) { group in
-                DisclosureGroup(group.rawValue) {
+                DisclosureGroup {
                     ForEach(group.keys) { key in
                         Button {
                             selection = key
                             dismiss()
                         } label: {
-                            LabeledContent(
-                                key.label,
-                                value: selection == key ? "Selected" : ""
-                            )
+                            HStack {
+                                Text(key.label)
+                                Spacer()
+                                if selection == key {
+                                    Text("Selected")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
+                        // Explicit labels are load-bearing here. LabeledContent
+                        // nested in a Button regressed on physical iOS builds
+                        // and VoiceOver announced every key as just "button".
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(key.label)
+                        .accessibilityValue(selection == key ? "Selected" : "")
+                        .accessibilityHint("Selects \(key.label) as the \(title.lowercased()).")
                     }
+                } label: {
+                    Text(group.rawValue)
                 }
+                // DisclosureGroup is also a button-like accessibility control;
+                // provide its name explicitly so VoiceOver says the category
+                // before the expand/collapse trait.
+                .accessibilityLabel(group.rawValue)
+                .accessibilityHint("Shows or hides \(group.rawValue.lowercased()).")
             }
         }
         .navigationTitle(title)
