@@ -404,16 +404,16 @@ final class ControllerMappingTests: XCTestCase {
 
         settings.moveQuickNavigationCategory(.editing, direction: -1)
         XCTAssertEqual(
-            Array(settings.draftProfile.quickNavigationOrder.prefix(4)),
-            [.quickBar, .profiles, .editing, .controllerMapping]
+            Array(settings.draftProfile.quickNavigationOrder.prefix(3)),
+            [.quickBar, .editing, .profiles]
         )
 
         settings.saveDraft()
         let reloaded = ControllerMappingSettings(defaults: defaults)
         XCTAssertEqual(reloaded.activeProfile.quickBar[1].id, firstQuickBarID)
         XCTAssertEqual(
-            Array(reloaded.activeProfile.quickNavigationOrder.prefix(4)),
-            [.quickBar, .profiles, .editing, .controllerMapping]
+            Array(reloaded.activeProfile.quickNavigationOrder.prefix(3)),
+            [.quickBar, .editing, .profiles]
         )
     }
 
