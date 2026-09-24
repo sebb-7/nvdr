@@ -315,7 +315,25 @@ private final class AudioPlayback {
         }
     }
 
+    /// Ported from RemSoundApple's proven output recovery path. An
+    /// AVAudioEngine configuration change can invalidate graph connections as
+    /// well as stop the engine, so simply calling start() is not sufficient.
+    private func recoverFromEngineConfigurationChange() {
+        guard !failureLatched, sessionConfigured, !engine.isRunning, let format else { return }
+        engine.connect(source, to: engine.mainMixerNode, format: format)
+        restartOutputIfNeeded()
+    }
+
     private func observeAudioSession() {
+        notificationTokens.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverFromEngineConfigurationChange()
+            }
+        })
         notificationTokens.append(NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: AVAudioSession.sharedInstance(),
