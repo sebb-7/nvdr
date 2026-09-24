@@ -4,8 +4,10 @@ import Observation
 /// A bounded, opt-in trace of remote keyboard handling. It intentionally
 /// contains no key characters, credentials, terminal output, or speech.
 enum InputDiagnosticSource: String, Sendable {
+    case uikitEnvelope = "UIKit press envelope"
     case rawPress = "raw press"
     case keyCommand = "key command"
+    case gameControllerRaw = "GCKeyboard raw"
     case gameController = "GCKeyboard"
     case commandFallback = "Command F-key fallback"
     case responder = "responder"
@@ -17,6 +19,8 @@ struct InputDiagnosticEntry: Identifiable, Sendable {
     let sequence: Int
     let source: InputDiagnosticSource
     let hidUsage: Int?
+    let platformCode: Int?
+    let pressType: Int?
     let modifiers: Int
     let pressed: Bool?
     let virtualKey: UInt16?
@@ -30,7 +34,9 @@ struct InputDiagnosticEntry: Identifiable, Sendable {
         let vk = virtualKey.map(String.init) ?? "unmapped"
         let correlation = correlationID.map { "; controller event #\($0)" } ?? ""
         let input = controllerInput.map { "; controller:\($0.rawValue)" } ?? ""
-        return "#\(sequence) source=\(source.rawValue)\(correlation)\(input); HID \(hid); modifiers \(modifiers); \(direction); VK \(vk); \(result)"
+        let platform = platformCode.map { "; platform code \($0)" } ?? ""
+        let press = pressType.map { "; press type \($0)" } ?? ""
+        return "#\(sequence) source=\(source.rawValue)\(correlation)\(input)\(platform)\(press); HID \(hid); modifiers \(modifiers); \(direction); VK \(vk); \(result)"
     }
 }
 
@@ -46,6 +52,8 @@ final class InputDiagnosticStore {
     func observe(
         source: InputDiagnosticSource,
         hidUsage: Int? = nil,
+        platformCode: Int? = nil,
+        pressType: Int? = nil,
         modifiers: Int = 0,
         pressed: Bool? = nil,
         virtualKey: UInt16? = nil,
@@ -58,6 +66,8 @@ final class InputDiagnosticStore {
             sequence: nextSequence,
             source: source,
             hidUsage: hidUsage,
+            platformCode: platformCode,
+            pressType: pressType,
             modifiers: modifiers,
             pressed: pressed,
             virtualKey: virtualKey,
@@ -66,7 +76,10 @@ final class InputDiagnosticStore {
             result: result
         ))
         nextSequence += 1
-        if entries.count > 50 { entries.removeFirst(entries.count - 50) }
+        // A full top-row investigation can produce two transitions through
+        // multiple APIs for 24 physical gestures (plain F1-F12 + Fn+F1-F12).
+        // Keep enough history to preserve the beginning and end of one sweep.
+        if entries.count > 200 { entries.removeFirst(entries.count - 200) }
     }
 
     func clear() {
@@ -108,6 +121,8 @@ final class InputDiagnosticStore {
             "Connection state: \(connectionState)",
             "Host/protocol version: \(hostVersion ?? "unknown")",
             "Transport delivery: see per-event routing and transport stages below",
+            "Capture coverage: UIKit envelopes include presses with no UIKey; GCKeyboard raw includes mapped and unmapped key codes.",
+            "Media command handlers: diagnostics do not register MPRemoteCommandCenter handlers because doing so would change system media-key ownership.",
             "Events:"
         ]
         lines += entries.map(\.reportLine)
