@@ -54,58 +54,71 @@ struct NVDARemoteFeatureView: View {
                 }
 
                 if profile.isRemSoundReceiverEnabled {
-                    DisclosureGroup(isExpanded: $isRemSoundExpanded) {
-                        Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
-                            switch audioReceiver.snapshot.state {
-                            case .idle, .stopped, .failed:
-                                audioReceiver.start(
-                                    host: remSoundCapability.senderHost,
-                                    port: remSoundCapability.senderPort,
-                                    password: settings.credentials(for: profile)?.remSoundPassword ?? ""
-                                )
-                            case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
-                                audioReceiver.stop()
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button {
+                            isRemSoundExpanded.toggle()
+                        } label: {
+                            HStack {
+                                Text("RemSound — \(remSoundStatusLabel)")
+                                Spacer()
+                                Image(systemName: isRemSoundExpanded ? "chevron.down" : "chevron.right")
+                                    .accessibilityHidden(true)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
+                        .accessibilityValue(isRemSoundExpanded ? "Expanded" : "Collapsed")
+                        .accessibilityHint(
+                            isRemSoundExpanded
+                                ? "Double-tap to collapse RemSound controls."
+                                : "Double-tap to expand RemSound controls."
+                        )
 
-                        Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
-                            audioReceiver.reconnect()
+                        if isRemSoundExpanded {
+                            Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
+                                switch audioReceiver.snapshot.state {
+                                case .idle, .stopped, .failed:
+                                    audioReceiver.start(
+                                        host: remSoundCapability.senderHost,
+                                        port: remSoundCapability.senderPort,
+                                        password: settings.credentials(for: profile)?.remSoundPassword ?? ""
+                                    )
+                                case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
+                                    audioReceiver.stop()
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
+                                audioReceiver.reconnect()
+                            }
+                            .disabled(!canReconnectRemSound)
+
+                            Toggle("Mute RemSound audio", isOn: Binding(
+                                get: { audioReceiver.snapshot.muted },
+                                set: { audioReceiver.setMuted($0) }
+                            ))
+
+                            Slider(
+                                value: Binding(
+                                    get: { Double(audioReceiver.snapshot.volume) },
+                                    set: { audioReceiver.setVolume(Float($0)) }
+                                ),
+                                in: 0...1
+                            ) {
+                                Text("RemSound playback volume")
+                            }
+                            .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
+
+                            NavigationLink("RemSound details and diagnostics") {
+                                RemSoundAudioFeatureView(profile: profile)
+                            }
+
+                            Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
+                                AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                            }
                         }
-                        .disabled(!canReconnectRemSound)
-
-                        Toggle("Mute RemSound audio", isOn: Binding(
-                            get: { audioReceiver.snapshot.muted },
-                            set: { audioReceiver.setMuted($0) }
-                        ))
-
-                        Slider(
-                            value: Binding(
-                                get: { Double(audioReceiver.snapshot.volume) },
-                                set: { audioReceiver.setVolume(Float($0)) }
-                            ),
-                            in: 0...1
-                        ) {
-                            Text("RemSound playback volume")
-                        }
-                        .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
-
-                        NavigationLink("RemSound details and diagnostics") {
-                            RemSoundAudioFeatureView(profile: profile)
-                        }
-
-                        Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
-                            AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
-                        }
-                    } label: {
-                        Text("RemSound — \(remSoundStatusLabel)")
                     }
-                    .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
-                    .accessibilityHint(
-                        isRemSoundExpanded
-                            ? "Double-tap to collapse RemSound controls."
-                            : "Double-tap to expand RemSound controls."
-                    )
                 }
             }
             Section("Status") { Text(statusLabel) }

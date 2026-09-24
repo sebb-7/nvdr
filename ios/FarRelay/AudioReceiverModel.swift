@@ -14,8 +14,8 @@ final class AudioReceiverModel {
 
     init(receiver: RemSoundAudioReceiver = RemSoundAudioReceiver()) {
         self.receiver = receiver
-        playback = AudioPlayback { [receiver] in
-            Task { await receiver.playbackFailed() }
+        playback = AudioPlayback { [receiver] message in
+            Task { await receiver.playbackFailed(message) }
         } onDroppedFrame: { [receiver] frameCount in
             Task { await receiver.playbackDropped(frameCount: frameCount) }
         }
@@ -31,9 +31,14 @@ final class AudioReceiverModel {
                 self?.playback.setMuted(snapshot.muted)
                 self?.playback.setVolume(snapshot.volume)
                 switch snapshot.state {
-                case .reconnecting, .stopped, .failed:
+                case .reconnecting:
                     self?.playback.stop()
-                case .idle, .connecting, .authenticating, .waitingForAudio, .buffering, .playing:
+                    self?.playback.resetFailureLatch()
+                case .stopped, .failed:
+                    self?.playback.stop()
+                case .connecting, .authenticating:
+                    self?.playback.resetFailureLatch()
+                case .idle, .waitingForAudio, .buffering, .playing:
                     break
                 }
             }
@@ -159,17 +164,18 @@ private final class AudioPlayback {
     private var volume: Float = 1
     private var scheduledBufferCount = 0
     private var notificationTokens: [NSObjectProtocol] = []
-    private let onFailure: () -> Void
+    private var sessionConfigured = false
+    private var failureLatched = false
+    private let onFailure: (String) -> Void
     private let onDroppedFrame: (Int) -> Void
 
-    init(onFailure: @escaping () -> Void, onDroppedFrame: @escaping (Int) -> Void) {
+    init(onFailure: @escaping (String) -> Void, onDroppedFrame: @escaping (Int) -> Void) {
         self.onFailure = onFailure
         self.onDroppedFrame = onDroppedFrame
         format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
         guard let format else { return }
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        player.play()
         observeAudioSession()
     }
 
@@ -183,30 +189,35 @@ private final class AudioPlayback {
         player.volume = muted ? 0 : volume
     }
 
+    func resetFailureLatch() {
+        failureLatched = false
+    }
+
     func enqueue(_ frame: AudioPCMFrame) {
         guard let format, frame.sampleRate == format.sampleRate, frame.channels == 2 else { return }
         let frameCount = frame.samples.count / frame.channels
         guard frameCount > 0 else { return }
+        guard !failureLatched else {
+            onDroppedFrame(frameCount)
+            return
+        }
         guard scheduledBufferCount < Self.maximumScheduledBuffers else {
             onDroppedFrame(frameCount)
             return
         }
         guard
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
-              let channels = buffer.floatChannelData
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
+            let channels = buffer.floatChannelData
         else { return }
+
         buffer.frameLength = AVAudioFrameCount(frameCount)
         for index in 0..<frameCount {
             channels[0][index] = frame.samples[index * 2]
             channels[1][index] = frame.samples[index * 2 + 1]
         }
+
         do {
-            let session = AVAudioSession.sharedInstance()
-            // Playback only: no microphone capture. Do not duck or suppress VoiceOver.
-            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP, .mixWithOthers])
-            try session.setActive(true)
-            if !engine.isRunning { try engine.start() }
-            if !player.isPlaying { player.play() }
+            try ensureOutputStarted()
             scheduledBufferCount += 1
             player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { [weak self] _ in
                 Task { @MainActor in
@@ -214,9 +225,8 @@ private final class AudioPlayback {
                 }
             }
         } catch {
-            // Receiver state remains independent; a route/session error is contained
-            // to audio playback and never reaches the control-plane model.
-            onFailure()
+            failureLatched = true
+            onFailure("Audio playback failed: \(error.localizedDescription)")
         }
     }
 
@@ -224,6 +234,46 @@ private final class AudioPlayback {
         player.stop()
         engine.stop()
         scheduledBufferCount = 0
+        if sessionConfigured {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            sessionConfigured = false
+        }
+    }
+
+    private func ensureOutputStarted() throws {
+        let session = AVAudioSession.sharedInstance()
+
+        if !sessionConfigured {
+            // Playback already supports A2DP and AirPlay routes. Keep FarRelay
+            // mixable so VoiceOver and the app's own feedback remain audible.
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try? session.setPreferredSampleRate(48_000)
+            sessionConfigured = true
+        }
+
+        if !engine.isRunning {
+            try session.setActive(true)
+            engine.prepare()
+            try engine.start()
+        }
+        if !player.isPlaying {
+            player.play()
+        }
+    }
+
+    private func restartOutputIfNeeded() {
+        guard !failureLatched, sessionConfigured, !engine.isRunning else { return }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            engine.prepare()
+            try engine.start()
+            if !player.isPlaying {
+                player.play()
+            }
+        } catch {
+            failureLatched = true
+            onFailure("Audio playback restart failed: \(error.localizedDescription)")
+        }
     }
 
     private func observeAudioSession() {
@@ -236,11 +286,7 @@ private final class AudioPlayback {
                   type == AVAudioSession.InterruptionType.ended.rawValue
             else { return }
             Task { @MainActor in
-                guard let self else { return }
-                if !self.engine.isRunning {
-                    do { try self.engine.start() }
-                    catch { self.onFailure() }
-                }
+                self?.restartOutputIfNeeded()
             }
         })
         notificationTokens.append(NotificationCenter.default.addObserver(
@@ -249,16 +295,14 @@ private final class AudioPlayback {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                if !self.engine.isRunning {
-                    do { try self.engine.start() }
-                    catch { self.onFailure() }
-                }
+                self?.restartOutputIfNeeded()
             }
         })
     }
 
     isolated deinit {
-        for token in notificationTokens { NotificationCenter.default.removeObserver(token) }
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 }

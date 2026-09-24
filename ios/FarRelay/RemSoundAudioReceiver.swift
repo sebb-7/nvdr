@@ -27,6 +27,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var assembler = RemSoundPCMFrameAssembler()
     private var queuedPCM = BoundedPCMQueue()
     private var playbackArmed = false
+    private var playbackFailureMessage: String?
     private var listenerReadyAt: Date?
     private var lastSenderActivity: Date?
     private var generation = 0
@@ -90,8 +91,10 @@ actor RemSoundAudioReceiver: AudioReceiver {
     /// Playback is deliberately an independent downstream consumer. A route or
     /// engine failure changes only audio state and never tears down any control
     /// session or input owner.
-    func playbackFailed() {
-        fail("Audio playback is unavailable. Reconnect audio to try again.")
+    func playbackFailed(_ message: String = "Audio playback is unavailable. Reconnect audio to try again.") {
+        guard playbackFailureMessage == nil else { return }
+        playbackFailureMessage = message
+        fail(message)
     }
 
     func playbackDropped(frameCount: Int) {
@@ -463,11 +466,16 @@ actor RemSoundAudioReceiver: AudioReceiver {
         lastSenderActivity = .now
         receiverSnapshot.sampleRate = format.sampleRate
         receiverSnapshot.channelCount = format.channels
-        receiverSnapshot.state = .buffering
+        if let playbackFailureMessage {
+            receiverSnapshot.state = .failed(playbackFailureMessage)
+        } else {
+            receiverSnapshot.state = .buffering
+        }
         publish()
     }
 
     private func ingestAudio(_ payload: Data, streamID: UInt16, sequence: UInt32) {
+        guard playbackFailureMessage == nil else { return }
         guard activeStreamID == streamID, let format = activeFormat, let key else {
             // A packet from a former stream cannot contaminate its replacement.
             dropPacket()
@@ -572,6 +580,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
         assembler.reset()
         queuedPCM = BoundedPCMQueue()
         playbackArmed = false
+        playbackFailureMessage = nil
         listenerReadyAt = nil
         lastSenderActivity = nil
         key = nil

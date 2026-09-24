@@ -24,6 +24,28 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(bridge.status, .idle)
     }
 
+    func testPlaybackFailureLatchesUntilReconnectInsteadOfReturningToPlaying() async throws {
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_944, password: "phase1"))
+        await receiver.ingest(try formatPacket())
+        await receiver.playbackFailed("Audio playback failed: test route error")
+
+        for sequence in 1...4 {
+            await receiver.ingest(try makeAudioPacket(sequence: UInt32(sequence), frameID: UInt32(sequence)))
+        }
+        await receiver.ingest(try formatPacket())
+
+        let failedSnapshot = await receiver.snapshot()
+        XCTAssertEqual(failedSnapshot.state, .failed("Audio playback failed: test route error"))
+        XCTAssertEqual(failedSnapshot.statistics.lastError, "Audio playback failed: test route error")
+        XCTAssertEqual(failedSnapshot.statistics.bufferDepthFrames, 0)
+
+        await receiver.reconnect()
+        let restartedSnapshot = await receiver.snapshot()
+        XCTAssertNotEqual(restartedSnapshot.state, .failed("Audio playback failed: test route error"))
+        await receiver.stop()
+    }
+
     func testWindowsHeartbeatPingGetsPongWithoutAuthenticatingOrPlaying() async throws {
         let receiver = RemSoundAudioReceiver()
         let ping = try XCTUnwrap(Data(hex: "524D4E440104FFFF090000000010A4000000000000"))
