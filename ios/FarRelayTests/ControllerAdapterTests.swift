@@ -1267,6 +1267,46 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(secondSink.transitions.isEmpty)
     }
 
+    func testRepeatLastCommandDoesNothingBeforeAnyCommandCompletes() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.repeatLastQuickCommand), for: .square)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .square, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .square, pressed: false, at: 1.1)
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertTrue(sink.transitions.isEmpty)
+        XCTAssertTrue(sink.texts.isEmpty)
+    }
+
+    func testRepeatLastCommandReplaysOnlyTheLastSuccessfulCommand() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
+        mappings.setAction(.farRelay(.repeatLastQuickCommand), for: .square)
+        mappings.saveDraft()
+
+        adapter.receiveForTesting(input: .triangle, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .triangle, pressed: false, at: 1.1)
+        adapter.updateQuickCommandBuffer("ctrl+v")
+        XCTAssertEqual(adapter.prepareQuickCommandForConfirmation(), "Control plus V")
+        XCTAssertTrue(adapter.confirmQuickCommand())
+        await adapter.waitForQuickCommandForTesting()
+
+        let firstRun = sink.transitions
+        XCTAssertFalse(firstRun.isEmpty)
+        sink.transitions.removeAll()
+
+        adapter.receiveForTesting(input: .square, pressed: true, at: 2)
+        adapter.receiveForTesting(input: .square, pressed: false, at: 2.1)
+        await adapter.waitForQuickCommandForTesting()
+
+        XCTAssertEqual(sink.transitions, firstRun)
+        XCTAssertEqual(adapter.quickCommandStatus, "Command repeated.")
+        XCTAssertFalse(adapter.isQuickCommandModeActive)
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
     func testQuickCommandMacCommandVUsesRawHIDAndReturnsToQuickNavigation() async {
         let (adapter, macController, _) = makeMacQuickCommandAdapter()
         adapter.updateQuickCommandBuffer("cmd+v")
