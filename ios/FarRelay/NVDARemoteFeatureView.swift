@@ -41,8 +41,8 @@ struct NVDARemoteFeatureView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
                             .accessibilityLabel("Controller. \(controllerStatusLabel)")
-                            .accessibilityHint("Controller Mapping is available.")
-                            .accessibilityAction(named: Text("Controller Mapping")) {
+                            .accessibilityHint("\(ControllerMappingAccessibilityPolicy.actionName) is available in VoiceOver Actions.")
+                            .accessibilityAction(named: Text(ControllerMappingAccessibilityPolicy.actionName)) {
                                 isControllerMappingPresented = true
                             }
 
@@ -347,6 +347,15 @@ struct NVDARemoteFeatureView: View {
             break
         }
     }
+}
+
+/// Controller Mapping lives in the VoiceOver Actions rotor for the controller
+/// status element instead of taking a separate focus stop or Quick Navigation
+/// category. This preserves the user's "extra flicking" constraint.
+enum ControllerMappingAccessibilityPolicy {
+    static let actionName = "Controller Mapping"
+    static let exposesStandaloneControl = false
+    static let occupiesQuickNavigationCategory = false
 }
 
 struct KeyboardCaptureIdentity: Hashable {
