@@ -155,7 +155,6 @@ struct TextModeMirrorSession: Sendable {
 enum QuickNavigationCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case quickBar = "Quick Bar"
     case profiles = "Profiles"
-    case controllerMapping = "Controller Mapping"
     case editing = "Editing"
     case headings = "Headings"
     case links = "Links"
@@ -169,13 +168,13 @@ enum QuickNavigationCategory: String, CaseIterable, Codable, Hashable, Identifia
     var id: String { rawValue }
 
     static let defaultOrder: [QuickNavigationCategory] = [
-        .quickBar, .profiles, .controllerMapping, .editing, .headings, .links, .formControls,
+        .quickBar, .profiles, .editing, .headings, .links, .formControls,
         .editFields, .buttons, .landmarks, .tables, .lists
     ]
 
     var key: WindowsKeyboardKey? {
         switch self {
-        case .quickBar, .profiles, .controllerMapping, .editing: nil
+        case .quickBar, .profiles, .editing: nil
         case .headings: .h
         case .links: .k
         case .formControls: .f
@@ -338,7 +337,6 @@ struct QuickNavigationEngine: Sendable {
         switch category {
         case .quickBar: return "Quick Bar. \(selectedQuickBarEntry(in: quickBar)?.label ?? "Empty")"
         case .profiles: return "Profiles. \(selectedProfile(in: profiles)?.name ?? "None")"
-        case .controllerMapping: return "Controller Mapping. Press Cross to open."
         case .editing: return "Editing. \(selectedEditingAction().rawValue)"
         default: return category.rawValue
         }
