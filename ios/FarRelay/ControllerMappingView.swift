@@ -778,6 +778,21 @@ private struct ControllerActionEditorSections: View {
     }
 }
 
+enum WindowsKeyboardKeyPickerAccessibilityPolicy {
+    /// Expanded category rows must remain containers, not accessibility
+    /// elements with their own overriding label. Physical iOS 27 otherwise
+    /// propagates the category name to every descendant button.
+    static let overridesDisclosureGroupAccessibilityLabel = false
+
+    static func label(for key: WindowsKeyboardKey) -> String {
+        key.label
+    }
+
+    static func hint(for key: WindowsKeyboardKey, title: String) -> String {
+        "Selects \(key.label) as the \(title.lowercased())."
+    }
+}
+
 private struct WindowsKeyboardKeyPicker: View {
     let title: String
     @Binding var selection: WindowsKeyboardKey?
@@ -817,9 +832,14 @@ private struct WindowsKeyboardKeyPicker: View {
                         // expanded descendants and VoiceOver repeats only the
                         // group name ("Action keys", "Function keys", etc.).
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(key.label)
+                        .accessibilityLabel(WindowsKeyboardKeyPickerAccessibilityPolicy.label(for: key))
                         .accessibilityValue(selection == key ? "Selected" : "")
-                        .accessibilityHint("Selects \(key.label) as the \(title.lowercased()).")
+                        .accessibilityHint(
+                            WindowsKeyboardKeyPickerAccessibilityPolicy.hint(
+                                for: key,
+                                title: title
+                            )
+                        )
                     }
                 }
             }
