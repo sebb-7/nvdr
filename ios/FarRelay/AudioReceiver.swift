@@ -85,6 +85,17 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var opusFECRecoveries = 0
     var opusPLCFrames = 0
     var jitterTargetFrames = 0
+    var initialJitterTargetFrames = 0
+    var concealedAudioFrames = 0
+    var trimEvents = 0
+    var producerStarvationUnderruns = 0
+    var deviceRenderGulpUnderruns = 0
+    var recentPacketArrivalGapMilliseconds = 0
+    var peakPacketArrivalGapMilliseconds = 0
+    var recentRenderCallbackGapMilliseconds = 0
+    var peakRenderCallbackGapMilliseconds = 0
+    var autoTuneEnabled = true
+    var lastAutoTuneDecision = "waiting for measurements"
     var reconnects = 0
     var lastError: String?
 }

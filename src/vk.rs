@@ -152,7 +152,6 @@ pub fn extended_for_vk(vk: u16) -> bool {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

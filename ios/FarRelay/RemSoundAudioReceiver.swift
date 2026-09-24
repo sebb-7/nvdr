@@ -13,6 +13,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private static let maximumDatagramBytes = 2_048
     private static let maximumInboundConnections = 4
     private static let maximumPendingFrameDeliveries = 16
+    private static let minimumAdaptiveLatencyMilliseconds = 20
+    private static let maximumAdaptiveLatencyMilliseconds = 200
     private static let senderLivenessTimeout: TimeInterval = 5
     private static let initialTrafficTimeout: TimeInterval = 8
     private static let telemetryPublishIntervalNanoseconds: UInt64 = 250_000_000
@@ -29,10 +31,10 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var heartbeatScheduler = RemSoundHeartbeatScheduler()
     private var selectedPeerConnectionID: UUID?
     private var assembler = RemSoundPCMFrameAssembler()
-    private var queuedPCM = BoundedPCMQueue()
+    /// Read by AVAudioEngine's source callback while this actor writes decoded PCM.
+    nonisolated let playout = RemSoundPlayoutBuffer()
     private var audioDecoder: RemSoundAudioDecoder?
     private var startupBufferFrameTarget = 960
-    private var playbackArmed = false
     private var playbackFailureMessage: String?
     private var lastTelemetryPublishNanoseconds: UInt64 = 0
     private var listenerReadyAt: Date?
@@ -40,6 +42,12 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var generation = 0
     private var senderWatchdog: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
+    private var playoutTuneTask: Task<Void, Never>?
+    private var playoutSamples: [RemSoundLatencyAutoTune.Sample] = []
+    private var arrivalPeakMilliseconds = 0
+    private var lastDecodedArrival: Date?
+    private var lastTuneBlockingUnderruns = 0
+    private var tuneTicks = 0
     private var receiverSnapshot = AudioReceiverSnapshot()
     private var snapshotContinuations: [UUID: AsyncStream<AudioReceiverSnapshot>.Continuation] = [:]
     private var frameContinuations: [UUID: AsyncStream<AudioPCMFrame>.Continuation] = [:]
@@ -114,8 +122,6 @@ actor RemSoundAudioReceiver: AudioReceiver {
     /// frames must meet the startup target again before reporting Playing.
     func playbackUnderrun() {
         guard receiverSnapshot.state == .playing, playbackFailureMessage == nil else { return }
-        receiverSnapshot.statistics.underruns += 1
-        playbackArmed = false
         receiverSnapshot.state = .buffering
         publishTelemetryIfDue()
     }
@@ -176,7 +182,6 @@ actor RemSoundAudioReceiver: AudioReceiver {
             continuation.onTermination = { [weak self] _ in
                 Task { await self?.removeFrameContinuation(id) }
             }
-            drainQueuedFrames()
         }
     }
 
@@ -298,6 +303,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
             listener.start(queue: networkQueue)
             startSenderWatchdog(generation: activeGeneration)
             startHeartbeatScheduler(generation: activeGeneration)
+            startPlayoutTuner(generation: activeGeneration)
         } catch {
             fail("Unable to bind the audio UDP socket.")
         }
@@ -493,10 +499,16 @@ actor RemSoundAudioReceiver: AudioReceiver {
             audioDecoder = decoder
             expectedSequence = nil
             assembler.reset()
-            queuedPCM = BoundedPCMQueue()
-            playbackArmed = false
             startupBufferFrameTarget = startupBufferTarget(for: format)
+            playout.reset(targetFrames: startupBufferFrameTarget)
             receiverSnapshot.statistics.jitterTargetFrames = startupBufferFrameTarget
+            receiverSnapshot.statistics.initialJitterTargetFrames = startupBufferFrameTarget
+            receiverSnapshot.statistics.lastAutoTuneDecision = "initial \(format.opusMode?.rawValue ?? "PCM") target"
+            playoutSamples.removeAll(keepingCapacity: true)
+            arrivalPeakMilliseconds = 0
+            lastDecodedArrival = nil
+            lastTuneBlockingUnderruns = 0
+            tuneTicks = 0
         }
         lastSenderActivity = .now
         receiverSnapshot.sampleRate = format.sampleRate
@@ -646,28 +658,23 @@ actor RemSoundAudioReceiver: AudioReceiver {
     }
 
     private func enqueueDecoded(_ frame: AudioPCMFrame, format: RemSoundFormat) {
-        guard queuedPCM.append(frame) else {
-            receiverSnapshot.statistics.bufferDroppedFrames += frame.samples.count / format.channels
-            dropPacket()
+        guard frame.sampleRate == Double(RemSoundPlayoutBuffer.sampleRate), frame.channels == RemSoundPlayoutBuffer.channels else {
+            dropPacket(malformed: true)
             return
         }
+        recordDecodedArrival()
+        playout.write(frame.samples)
         lastSenderActivity = .now
-        receiverSnapshot.statistics.bufferDepthFrames = queuedPCM.totalFrameCount
-        if !playbackArmed, queuedPCM.totalFrameCount >= startupBufferFrameTarget {
-            playbackArmed = true
+        syncPlayoutMetrics()
+        for continuation in frameContinuations.values {
+            if case .dropped(let dropped) = continuation.yield(frame) {
+                receiverSnapshot.statistics.bufferDroppedFrames += dropped.samples.count / max(dropped.channels, 1)
+            }
         }
-        guard playbackArmed else {
-            publishTelemetryIfDue()
-            return
+        if receiverSnapshot.statistics.bufferDepthFrames >= startupBufferFrameTarget {
+            receiverSnapshot.state = .playing
         }
-        drainQueuedFrames()
-        let wasPlaying = receiverSnapshot.state == .playing
-        receiverSnapshot.state = .playing
-        if wasPlaying {
-            publishTelemetryIfDue()
-        } else {
-            publish()
-        }
+        publishTelemetryIfDue()
     }
 
     private func recordEncryptedAudioAuthenticationFailure() {
@@ -695,10 +702,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
         activeFormat = nil
         expectedSequence = nil
         assembler.reset()
-        queuedPCM = BoundedPCMQueue()
+        playout.reset(targetFrames: Self.pcmStartupBufferFrames)
         audioDecoder = nil
         startupBufferFrameTarget = Self.pcmStartupBufferFrames
-        playbackArmed = false
         playbackFailureMessage = nil
         lastTelemetryPublishNanoseconds = 0
         listenerReadyAt = nil
@@ -707,6 +713,11 @@ actor RemSoundAudioReceiver: AudioReceiver {
         expectedFingerprint = nil
         heartbeatScheduler = RemSoundHeartbeatScheduler()
         selectedPeerConnectionID = nil
+        playoutSamples.removeAll(keepingCapacity: false)
+        arrivalPeakMilliseconds = 0
+        lastDecodedArrival = nil
+        lastTuneBlockingUnderruns = 0
+        tuneTicks = 0
     }
 
     private func stopNetwork() {
@@ -714,6 +725,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
         senderWatchdog = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
+        playoutTuneTask?.cancel()
+        playoutTuneTask = nil
         listener?.cancel()
         listener = nil
         for connection in inboundConnections.values { connection.cancel() }
@@ -763,21 +776,96 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
     }
 
+    private func startPlayoutTuner(generation: Int) {
+        playoutTuneTask?.cancel()
+        playoutTuneTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                await self?.updatePlayoutTelemetryAndTune()
+                guard await self?.isCurrentGeneration(generation) == true else { return }
+            }
+        }
+    }
+
+    private func recordDecodedArrival(now: Date = .now) {
+        defer { lastDecodedArrival = now }
+        guard let lastDecodedArrival else { return }
+        let gap = max(0, Int(now.timeIntervalSince(lastDecodedArrival) * 1_000))
+        arrivalPeakMilliseconds = max(arrivalPeakMilliseconds, gap)
+        receiverSnapshot.statistics.recentPacketArrivalGapMilliseconds = gap
+        receiverSnapshot.statistics.peakPacketArrivalGapMilliseconds = max(
+            receiverSnapshot.statistics.peakPacketArrivalGapMilliseconds,
+            gap
+        )
+    }
+
+    private func syncPlayoutMetrics(resetPeakRenderGap: Bool = false) {
+        let metrics = playout.metrics(resetPeakRenderGap: resetPeakRenderGap)
+        receiverSnapshot.statistics.bufferDepthFrames = metrics.bufferedFrames
+        receiverSnapshot.statistics.jitterTargetFrames = metrics.targetFrames
+        receiverSnapshot.statistics.underruns = metrics.underruns
+        receiverSnapshot.statistics.producerStarvationUnderruns = metrics.tuneBlockingUnderruns
+        receiverSnapshot.statistics.deviceRenderGulpUnderruns = metrics.deviceGulpUnderruns
+        receiverSnapshot.statistics.concealedAudioFrames = metrics.concealedFrames
+        receiverSnapshot.statistics.trimEvents = metrics.trimEvents
+        receiverSnapshot.statistics.bufferDroppedFrames = max(receiverSnapshot.statistics.bufferDroppedFrames, metrics.droppedFrames)
+        receiverSnapshot.statistics.recentRenderCallbackGapMilliseconds = metrics.peakRenderGapMilliseconds
+        receiverSnapshot.statistics.peakRenderCallbackGapMilliseconds = max(
+            receiverSnapshot.statistics.peakRenderCallbackGapMilliseconds,
+            metrics.peakRenderGapMilliseconds
+        )
+        if receiverSnapshot.state == .playing, !metrics.isArmed {
+            receiverSnapshot.state = .buffering
+        } else if receiverSnapshot.state == .buffering, metrics.isArmed {
+            receiverSnapshot.state = .playing
+        }
+    }
+
+    private func updatePlayoutTelemetryAndTune() {
+        guard let format = activeFormat, playbackFailureMessage == nil else { return }
+        syncPlayoutMetrics(resetPeakRenderGap: true)
+        let statistics = receiverSnapshot.statistics
+        playoutSamples.append(.init(
+            arrivalGapMilliseconds: arrivalPeakMilliseconds,
+            renderGapMilliseconds: statistics.recentRenderCallbackGapMilliseconds
+        ))
+        if playoutSamples.count > 60 { playoutSamples.removeFirst(playoutSamples.count - 60) }
+        arrivalPeakMilliseconds = 0
+        tuneTicks += 1
+        guard tuneTicks.isMultiple(of: 5) else {
+            publishTelemetryIfDue()
+            return
+        }
+        let tuneBlockingDelta = max(0, statistics.producerStarvationUnderruns - lastTuneBlockingUnderruns)
+        lastTuneBlockingUnderruns = statistics.producerStarvationUnderruns
+        let frameMilliseconds = max(1, Int(format.frameDurationMilliseconds.rounded(.up)))
+        let currentMilliseconds = max(1, statistics.jitterTargetFrames * 1_000 / RemSoundPlayoutBuffer.sampleRate)
+        let decision = RemSoundLatencyAutoTune.decide(
+            samples: playoutSamples,
+            frameMilliseconds: frameMilliseconds,
+            currentTargetMilliseconds: currentMilliseconds,
+            minimumTargetMilliseconds: Self.minimumAdaptiveLatencyMilliseconds,
+            maximumTargetMilliseconds: Self.maximumAdaptiveLatencyMilliseconds,
+            tuneBlockingUnderruns: tuneBlockingDelta
+        )
+        switch decision {
+        case .hold(let reason):
+            receiverSnapshot.statistics.lastAutoTuneDecision = reason
+        case .retarget(let milliseconds):
+            let frames = milliseconds * RemSoundPlayoutBuffer.sampleRate / 1_000
+            playout.setTargetFrames(frames)
+            startupBufferFrameTarget = frames
+            receiverSnapshot.statistics.jitterTargetFrames = frames
+            receiverSnapshot.statistics.lastAutoTuneDecision = "target \(milliseconds) ms"
+        }
+        publishTelemetryIfDue()
+    }
+
     private func isCurrentGeneration(_ generation: Int) -> Bool {
         generation == self.generation
     }
 
-    private func drainQueuedFrames() {
-        guard playbackArmed, !frameContinuations.isEmpty else { return }
-        while let next = queuedPCM.popFirst() {
-            receiverSnapshot.statistics.bufferDepthFrames = queuedPCM.totalFrameCount
-            for continuation in frameContinuations.values {
-                if case .dropped(let dropped) = continuation.yield(next) {
-                    receiverSnapshot.statistics.bufferDroppedFrames += dropped.samples.count / max(dropped.channels, 1)
-                }
-            }
-        }
-    }
 }
 
 private struct AudioReceiverEndpoint: Sendable {

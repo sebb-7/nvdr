@@ -8,18 +8,13 @@ final class AudioReceiverModel {
     private let playback: AudioPlayback
     private let discovery = RemSoundDiscoveryAnnouncer()
     private var updatesTask: Task<Void, Never>?
-    private var playbackTask: Task<Void, Never>?
     private(set) var snapshot = AudioReceiverSnapshot()
     private(set) var discoveryDiagnostics = RemSoundDiscoveryDiagnostics()
 
     init(receiver: RemSoundAudioReceiver = RemSoundAudioReceiver()) {
         self.receiver = receiver
-        playback = AudioPlayback { [receiver] message in
+        playback = AudioPlayback(playout: receiver.playout) { [receiver] message in
             Task { await receiver.playbackFailed(message) }
-        } onDroppedFrame: { [receiver] frameCount in
-            Task { await receiver.playbackDropped(frameCount: frameCount) }
-        } onUnderrun: { [receiver] in
-            Task { await receiver.playbackUnderrun() }
         }
         discovery.onDiagnosticsChanged = { [weak self] diagnostics in
             self?.discoveryDiagnostics = diagnostics
@@ -40,23 +35,17 @@ final class AudioReceiverModel {
                     self?.playback.stop()
                 case .connecting, .authenticating:
                     self?.playback.resetFailureLatch()
-                case .idle, .waitingForAudio, .buffering, .playing:
+                case .buffering, .playing:
+                    self?.playback.startIfNeeded()
+                case .idle, .waitingForAudio:
                     break
                 }
-            }
-        }
-        playbackTask = Task { [weak self, receiver] in
-            let frames = await receiver.pcmFrames()
-            for await frame in frames {
-                guard !Task.isCancelled else { return }
-                self?.playback.enqueue(frame)
             }
         }
     }
 
     isolated deinit {
         updatesTask?.cancel()
-        playbackTask?.cancel()
     }
 
     func start(host: String, port: UInt16 = 47_830, password: String) {
@@ -149,9 +138,20 @@ final class AudioReceiverModel {
             "Opus decode failures: \(statistics.opusDecodeFailures)",
             "Opus FEC recoveries: \(statistics.opusFECRecoveries)",
             "Opus PLC frames: \(statistics.opusPLCFrames)",
-            "Jitter target milliseconds: \(snapshot.sampleRate.map { Double(statistics.jitterTargetFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
-            "Jitter depth milliseconds: \(snapshot.sampleRate.map { Double(statistics.bufferDepthFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Playout initial target milliseconds: \(snapshot.sampleRate.map { Double(statistics.initialJitterTargetFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Playout target milliseconds: \(snapshot.sampleRate.map { Double(statistics.jitterTargetFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Playout buffered milliseconds: \(snapshot.sampleRate.map { Double(statistics.bufferDepthFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
             "Jitter underruns: \(statistics.underruns)",
+            "Producer-starvation underruns: \(statistics.producerStarvationUnderruns)",
+            "Device/render-gulp underruns: \(statistics.deviceRenderGulpUnderruns)",
+            "Concealed audio milliseconds: \(snapshot.sampleRate.map { Double(statistics.concealedAudioFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Playout trim events: \(statistics.trimEvents)",
+            "Recent packet arrival gap milliseconds: \(statistics.recentPacketArrivalGapMilliseconds)",
+            "Peak packet arrival gap milliseconds: \(statistics.peakPacketArrivalGapMilliseconds)",
+            "Recent render callback gap milliseconds: \(statistics.recentRenderCallbackGapMilliseconds)",
+            "Peak render callback gap milliseconds: \(statistics.peakRenderCallbackGapMilliseconds)",
+            "Continuous auto-tune enabled: \(statistics.autoTuneEnabled)",
+            "Last auto-tune decision: \(statistics.lastAutoTuneDecision)",
             "Late packets discarded: \(statistics.latePacketsDiscarded)",
             "Authentication successes: \(statistics.authenticationSuccesses)",
             "Authentication failures: \(statistics.authenticationFailures)",
@@ -174,82 +174,55 @@ final class AudioReceiverModel {
 @MainActor
 private final class AudioPlayback {
     private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    private let source: AVAudioSourceNode
     private let format: AVAudioFormat?
-    private static let maximumScheduledBuffers = 16
     private var muted = false
     private var volume: Float = 1
-    private var scheduledBufferCount = 0
     private var notificationTokens: [NSObjectProtocol] = []
     private var sessionConfigured = false
     private var failureLatched = false
     private let onFailure: (String) -> Void
-    private let onDroppedFrame: (Int) -> Void
-    private let onUnderrun: () -> Void
 
-    init(
-        onFailure: @escaping (String) -> Void,
-        onDroppedFrame: @escaping (Int) -> Void,
-        onUnderrun: @escaping () -> Void
-    ) {
+    init(playout: RemSoundPlayoutBuffer, onFailure: @escaping (String) -> Void) {
         self.onFailure = onFailure
-        self.onDroppedFrame = onDroppedFrame
-        self.onUnderrun = onUnderrun
-        format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
-        guard let format else { return }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000,
+            channels: 2,
+            interleaved: true
+        )
+        self.format = format
+        source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
+            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard let first = buffers.first,
+                  let data = first.mData?.assumingMemoryBound(to: Float.self)
+            else { return noErr }
+            playout.render(into: data, frames: Int(frameCount))
+            return noErr
+        }
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: format)
         observeAudioSession()
     }
 
     func setMuted(_ muted: Bool) {
         self.muted = muted
-        player.volume = muted ? 0 : volume
+        source.volume = muted ? 0 : volume
     }
 
     func setVolume(_ volume: Float) {
         self.volume = volume
-        player.volume = muted ? 0 : volume
+        source.volume = muted ? 0 : volume
     }
 
     func resetFailureLatch() {
         failureLatched = false
     }
 
-    func enqueue(_ frame: AudioPCMFrame) {
-        guard let format, frame.sampleRate == format.sampleRate, frame.channels == 2 else { return }
-        let frameCount = frame.samples.count / frame.channels
-        guard frameCount > 0 else { return }
-        guard !failureLatched else {
-            onDroppedFrame(frameCount)
-            return
-        }
-        guard scheduledBufferCount < Self.maximumScheduledBuffers else {
-            onDroppedFrame(frameCount)
-            return
-        }
-        guard
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
-            let channels = buffer.floatChannelData
-        else { return }
-
-        buffer.frameLength = AVAudioFrameCount(frameCount)
-        for index in 0..<frameCount {
-            channels[0][index] = frame.samples[index * 2]
-            channels[1][index] = frame.samples[index * 2 + 1]
-        }
-
+    func startIfNeeded() {
+        guard !failureLatched else { return }
         do {
             try ensureOutputStarted()
-            scheduledBufferCount += 1
-            player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { [weak self] _ in
-                Task { @MainActor in
-                    self?.scheduledBufferCount = max((self?.scheduledBufferCount ?? 1) - 1, 0)
-                    if self?.scheduledBufferCount == 0, self?.player.isPlaying == true {
-                        self?.onUnderrun()
-                    }
-                }
-            }
         } catch {
             failureLatched = true
             onFailure("Audio playback failed: \(error.localizedDescription)")
@@ -257,9 +230,7 @@ private final class AudioPlayback {
     }
 
     func stop() {
-        player.stop()
         engine.stop()
-        scheduledBufferCount = 0
         if sessionConfigured {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             sessionConfigured = false
@@ -282,9 +253,6 @@ private final class AudioPlayback {
             engine.prepare()
             try engine.start()
         }
-        if !player.isPlaying {
-            player.play()
-        }
     }
 
     private func restartOutputIfNeeded() {
@@ -293,9 +261,6 @@ private final class AudioPlayback {
             try AVAudioSession.sharedInstance().setActive(true)
             engine.prepare()
             try engine.start()
-            if !player.isPlaying {
-                player.play()
-            }
         } catch {
             failureLatched = true
             onFailure("Audio playback restart failed: \(error.localizedDescription)")
