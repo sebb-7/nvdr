@@ -78,7 +78,6 @@ final class DualSenseControllerAdapter {
     private(set) var quickCommandBuffer = ""
     private(set) var quickCommandStatus: String?
     private(set) var pendingBatteryAlert: ControllerBatteryAlert?
-    private(set) var controllerMappingRequestGeneration = 0
     var layerStateForTesting: ControllerLayerEngine.State { layerEngine.state }
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
     var quickNavigationCategoryForTesting: QuickNavigationCategory { quickNavigation.category }
@@ -708,8 +707,6 @@ final class DualSenseControllerAdapter {
                         if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
                         announce("Profile: \(name)")
                     }
-                case .controllerMapping:
-                    requestControllerMapping()
                 case .editing:
                     let editingAction = quickNavigation.selectedEditingAction()
                     let started = start(
@@ -731,23 +728,6 @@ final class DualSenseControllerAdapter {
             return true
         }
         return false
-    }
-
-    private func requestControllerMapping() {
-        resetTouchpadGesture()
-        _ = quickNavigation.exit()
-        controllerMappingRequestGeneration &+= 1
-        announce("Controller Mapping")
-    }
-
-    func restoreQuickNavigationAfterControllerMapping() {
-        guard !isTextModeActive, !isQuickCommandModeActive else { return }
-        _ = quickNavigation.activate()
-        let section = quickNavigation.currentSectionAnnouncement(
-            quickBar: mappings.activeProfile.quickBar,
-            profiles: mappings.profiles
-        )
-        announce("Quick Navigation. \(section).")
     }
 
     @discardableResult
