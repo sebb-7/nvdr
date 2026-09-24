@@ -1384,7 +1384,8 @@ final class DualSenseControllerAdapter {
             let result = await self.executeQuickCommandPlan(
                 plan,
                 via: route,
-                generation: generation
+                generation: generation,
+                requiresQuickCommandMode: false
             )
             guard generation == self.quickCommandGeneration, !Task.isCancelled else { return }
             switch result {
@@ -1781,13 +1782,14 @@ final class DualSenseControllerAdapter {
     private func executeQuickCommandPlan(
         _ plan: [[QuickCommandTransmission]],
         via route: RemoteIntentRoute,
-        generation: Int
+        generation: Int,
+        requiresQuickCommandMode: Bool = true
     ) async -> RemoteIntentResult {
         for (stepIndex, step) in plan.enumerated() {
             for transmission in step {
                 guard generation == quickCommandGeneration,
                       !Task.isCancelled,
-                      isQuickCommandModeActive else {
+                      (!requiresQuickCommandMode || isQuickCommandModeActive) else {
                     return .unavailable("Quick Command was cancelled.")
                 }
 
