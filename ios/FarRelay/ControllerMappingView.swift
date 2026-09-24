@@ -135,6 +135,9 @@ struct ControllerMappingView: View {
 struct ControllerProfilesView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
     @State private var createdProfileID: UUID?
+    @State private var isImportingProfile = false
+    @State private var pendingImport: FarRelayControllerProfileManifest?
+    @State private var importErrorMessage: String?
 
     var body: some View {
         List {
@@ -173,6 +176,12 @@ struct ControllerProfilesView: View {
                         "\(prefix)Added blank \(profile?.name ?? "profile"). Editing now."
                     ).post()
                 }
+                Button("Import Profile from Files") {
+                    isImportingProfile = true
+                }
+                .accessibilityHint(
+                    "Choose a FarRelay dot F R controller profile and review it before importing."
+                )
                 Text("Profile order is also the order used by Next Profile and Previous Profile.")
                     .foregroundStyle(.secondary)
                 if mappings.profiles.count == 1 {
@@ -183,6 +192,47 @@ struct ControllerProfilesView: View {
         }
         .navigationTitle("Profiles")
         .toolbar { EditButton() }
+        .fileImporter(
+            isPresented: $isImportingProfile,
+            allowedContentTypes: [.farRelayControllerProfile],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImportSelection(result)
+        }
+        .confirmationDialog(
+            "Import Controller Profile",
+            isPresented: Binding(
+                get: { pendingImport != nil },
+                set: { presented in
+                    if !presented { pendingImport = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Import as New Profile") {
+                importPendingProfile()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingImport = nil
+            }
+        } message: {
+            Text(pendingImport?.importSummary ?? "")
+        }
+        .alert(
+            "Profile Could Not Be Imported",
+            isPresented: Binding(
+                get: { importErrorMessage != nil },
+                set: { presented in
+                    if !presented { importErrorMessage = nil }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                importErrorMessage = nil
+            }
+        } message: {
+            Text(importErrorMessage ?? "Unknown profile import error.")
+        }
         .navigationDestination(
             isPresented: Binding(
                 get: { createdProfileID != nil },
@@ -196,6 +246,38 @@ struct ControllerProfilesView: View {
             }
         }
     }
+    private func handleImportSelection(
+        _ result: Result<[URL], Error>
+    ) {
+        do {
+            guard let url = try result.get().first else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+            pendingImport = try FarRelayProfileCodec.decode(
+                Data(contentsOf: url)
+            )
+        } catch {
+            importErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func importPendingProfile() {
+        guard let manifest = pendingImport else { return }
+        pendingImport = nil
+        do {
+            let importedID = try mappings.importPortableProfile(manifest)
+            let name = mappings.profiles.first(where: { $0.id == importedID })?.name
+                ?? manifest.profile.name
+            AccessibilityNotification.Announcement(
+                "Imported \(name) as a new controller profile."
+            ).post()
+        } catch {
+            importErrorMessage = error.localizedDescription
+        }
+    }
+
 }
 
 struct ControllerProfileEditorView: View {
@@ -204,6 +286,10 @@ struct ControllerProfileEditorView: View {
     @Environment(ControllerMappingSettings.self) private var mappings
     @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
     @Environment(\.dismiss) private var dismiss
+    @State private var isExportingProfile = false
+    @State private var isSharingProfile = false
+    @State private var shareURL: URL?
+    @State private var profileFileErrorMessage: String?
 
     var body: some View {
         List {
@@ -226,6 +312,27 @@ struct ControllerProfileEditorView: View {
                         }
                     }
                 }
+            }
+
+            Section("Portable Profile") {
+                Button("Export Profile to Files") {
+                    isExportingProfile = true
+                }
+                .accessibilityHint(
+                    "Saves this controller profile as a dot F R file in Files."
+                )
+
+                Button("Share Profile") {
+                    prepareProfileShare()
+                }
+                .accessibilityHint(
+                    "Opens the iOS share sheet with this controller profile as a dot F R file."
+                )
+
+                Text(
+                    "The .fr file includes mappings, layers, Action Bar actions, and rotor order. Current unsaved edits are included in the exported file."
+                )
+                .foregroundStyle(.secondary)
             }
 
             Section("Quick Bar") {
@@ -278,6 +385,45 @@ struct ControllerProfileEditorView: View {
                 .accessibilityHint("Saves this profile and its controller mappings.")
             }
         }
+        .fileExporter(
+            isPresented: $isExportingProfile,
+            document: FarRelayProfileDocument(manifest: portableManifest),
+            contentType: .farRelayControllerProfile,
+            defaultFilename: FarRelayProfileFileName.baseName(
+                for: mappings.draftProfile.name
+            )
+        ) { result in
+            switch result {
+            case .success:
+                AccessibilityNotification.Announcement(
+                    "Controller profile exported."
+                ).post()
+            case .failure(let error):
+                if (error as? CocoaError)?.code != .userCancelled {
+                    profileFileErrorMessage = error.localizedDescription
+                }
+            }
+        }
+        .sheet(isPresented: $isSharingProfile) {
+            if let shareURL {
+                FarRelayProfileShareSheet(fileURL: shareURL)
+            }
+        }
+        .alert(
+            "Profile File Error",
+            isPresented: Binding(
+                get: { profileFileErrorMessage != nil },
+                set: { presented in
+                    if !presented { profileFileErrorMessage = nil }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                profileFileErrorMessage = nil
+            }
+        } message: {
+            Text(profileFileErrorMessage ?? "Unknown profile file error.")
+        }
         .onAppear {
             _ = mappings.beginEditing(profileID: profileID)
         }
@@ -309,6 +455,21 @@ struct ControllerProfileEditorView: View {
             }
         }
     }
+    private var portableManifest: FarRelayControllerProfileManifest {
+        FarRelayControllerProfileManifest(profile: mappings.draftProfile)
+    }
+
+    private func prepareProfileShare() {
+        do {
+            shareURL = try FarRelayProfileSharing.temporaryFileURL(
+                for: portableManifest
+            )
+            isSharingProfile = true
+        } catch {
+            profileFileErrorMessage = error.localizedDescription
+        }
+    }
+
 }
 
 struct ControllerQuickBarView: View {

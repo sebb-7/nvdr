@@ -47,6 +47,15 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         FarRelaySourceRevision: "$(FARRELAY_SOURCE_REVISION)"
         ITSAppUsesNonExemptEncryption: false
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.sebb7.farrelay.controller-profile
+            UTTypeDescription: FarRelay Controller Profile
+            UTTypeConformsTo:
+              - public.json
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - fr
+              public.mime-type: application/vnd.farrelay.controller-profile+json
         UIRequiresFullScreen: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

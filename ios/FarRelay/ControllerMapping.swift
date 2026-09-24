@@ -855,6 +855,41 @@ final class ControllerMappingSettings {
         return id
     }
 
+    func portableManifest(
+        for profileID: UUID
+    ) -> FarRelayControllerProfileManifest? {
+        guard let profile = profiles.first(where: { $0.id == profileID }) else {
+            return nil
+        }
+        return FarRelayControllerProfileManifest(profile: profile)
+    }
+
+    func exportPortableProfileData(profileID: UUID) throws -> Data {
+        guard let manifest = portableManifest(for: profileID) else {
+            throw FarRelayProfileFileError.invalidProfile(
+                "The controller profile no longer exists."
+            )
+        }
+        return try FarRelayProfileCodec.encode(manifest)
+    }
+
+    @discardableResult
+    func importPortableProfileData(_ data: Data) throws -> UUID {
+        let manifest = try FarRelayProfileCodec.decode(data)
+        return try importPortableProfile(manifest)
+    }
+
+    @discardableResult
+    func importPortableProfile(
+        _ manifest: FarRelayControllerProfileManifest
+    ) throws -> UUID {
+        var imported = try manifest.makeControllerProfile()
+        imported.name = uniqueProfileName(imported.name)
+        profiles.append(imported)
+        persistLibrary()
+        return imported.id
+    }
+
     @discardableResult
     func deleteProfile(id: UUID) -> Bool {
         guard profiles.count > 1,
@@ -908,6 +943,18 @@ final class ControllerMappingSettings {
             return activeProfile.name
         }
         return activateProfile(id: profiles[(index - 1 + profiles.count) % profiles.count].id)
+    }
+
+    private func uniqueProfileName(_ requestedName: String) -> String {
+        guard profiles.contains(where: { $0.name == requestedName }) else {
+            return requestedName
+        }
+
+        var suffix = 2
+        while profiles.contains(where: { $0.name == "\(requestedName) (\(suffix))" }) {
+            suffix += 1
+        }
+        return "\(requestedName) (\(suffix))"
     }
 
     private func persistLibrary() {
