@@ -106,7 +106,7 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var peakPacketArrivalGapMilliseconds = 0
     var recentRenderCallbackGapMilliseconds = 0
     var peakRenderCallbackGapMilliseconds = 0
-    var autoTuneEnabled = true
+    var autoTuneEnabled = false
     var lastAutoTuneDecision = "waiting for measurements"
     var reconnects = 0
     var lastError: String?
