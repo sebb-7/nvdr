@@ -30,7 +30,7 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.ingest(try formatPacket())
         await receiver.playbackFailed("Audio playback failed: test route error")
 
-        for sequence in 1...4 {
+        for sequence in 1...16 {
             await receiver.ingest(try makeAudioPacket(sequence: UInt32(sequence), frameID: UInt32(sequence)))
         }
         await receiver.ingest(try formatPacket())
@@ -147,9 +147,35 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.state, .buffering)
         XCTAssertEqual(snapshot.codec, .opus)
         XCTAssertEqual(snapshot.opusMode, .broadcast)
-        XCTAssertEqual(snapshot.statistics.jitterTargetFrames, 5_760)
+        XCTAssertEqual(snapshot.statistics.jitterTargetFrames, 3_840)
+        XCTAssertFalse(snapshot.statistics.autoTuneEnabled)
+        XCTAssertEqual(snapshot.statistics.lastAutoTuneDecision, "fixed 80 ms")
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
         XCTAssertEqual(bridge.status, .idle)
+        await receiver.stop()
+    }
+
+    func testConfiguredLatencyAndAutoTuneAreExplicit() async throws {
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(
+            host: "127.0.0.1",
+            port: 47_945,
+            password: "phase1",
+            targetLatencyMilliseconds: 120,
+            autoTuneLatencyEnabled: true
+        ))
+        await receiver.ingest(try opusFormatPacket(frameSamples: 960))
+
+        var snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.statistics.jitterTargetFrames, 5_760)
+        XCTAssertTrue(snapshot.statistics.autoTuneEnabled)
+
+        await receiver.setAutoTuneLatencyEnabled(false)
+        await receiver.setTargetLatencyMilliseconds(80)
+        snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.statistics.jitterTargetFrames, 3_840)
+        XCTAssertFalse(snapshot.statistics.autoTuneEnabled)
+        XCTAssertEqual(snapshot.statistics.lastAutoTuneDecision, "fixed 80 ms")
         await receiver.stop()
     }
 
