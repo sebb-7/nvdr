@@ -1807,7 +1807,7 @@ final class DualSenseControllerAdapter {
                 for key in chord {
                     guard generation == quickCommandGeneration,
                           !Task.isCancelled,
-                          isQuickCommandModeActive else {
+                          (!requiresQuickCommandMode || isQuickCommandModeActive) else {
                         await releaseQuickCommandKeys(pressed, via: route)
                         return .unavailable("Quick Command was cancelled.")
                     }
