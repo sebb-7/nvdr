@@ -64,7 +64,10 @@ actor SpeechOutput {
 
     private nonisolated static func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        // NVDA speech and RemSound are peers inside FarRelay. Do not duck
+        // either one when speech starts; keep the app mixable so VoiceOver
+        // and other system audio remain audible as well.
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true, options: [])
     }
 }
