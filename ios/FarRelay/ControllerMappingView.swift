@@ -463,6 +463,7 @@ enum ControllerMappingActionType: String, CaseIterable, Identifiable {
     case textMode = "Text Mode"
     case quickCommandMode = "Quick Command Mode"
     case repeatLastQuickBar = "Repeat Last Quick Bar Action"
+    case repeatLastQuickCommand = "Repeat Last Command"
     case nextProfile = "Next Profile"
     case previousProfile = "Previous Profile"
 
@@ -470,7 +471,7 @@ enum ControllerMappingActionType: String, CaseIterable, Identifiable {
 
     static let quickBarCases: [ControllerMappingActionType] = [
         .unassigned, .keyboard, .textMode, .quickCommandMode,
-        .repeatLastQuickBar, .nextProfile, .previousProfile
+        .repeatLastQuickBar, .repeatLastQuickCommand, .nextProfile, .previousProfile
     ]
 }
 
@@ -525,6 +526,10 @@ struct ControllerBindingEditorState: Equatable {
             type = .repeatLastQuickBar
             key = nil
             modifiers = []
+        case .farRelay(.repeatLastQuickCommand):
+            type = .repeatLastQuickCommand
+            key = nil
+            modifiers = []
         case .farRelay(.nextProfile):
             type = .nextProfile
             key = nil
@@ -563,6 +568,8 @@ struct ControllerBindingEditorState: Equatable {
             return .farRelay(.quickCommandMode)
         case .repeatLastQuickBar:
             return .farRelay(.repeatLastQuickBar)
+        case .repeatLastQuickCommand:
+            return .farRelay(.repeatLastQuickCommand)
         case .nextProfile:
             return .farRelay(.nextProfile)
         case .previousProfile:
@@ -722,6 +729,11 @@ private struct ControllerActionEditorSections: View {
         case .repeatLastQuickBar:
             Section("Repeat Last Quick Bar Action") {
                 Text("Repeats the most recent repeatable Quick Bar action from this FarRelay session. Only safe repeatable actions, currently keyboard actions, are remembered.")
+                    .foregroundStyle(.secondary)
+            }
+        case .repeatLastQuickCommand:
+            Section("Repeat Last Command") {
+                Text("Repeats the most recent Quick Command that completed successfully in this FarRelay session. The command is revalidated against the current active remote target before it is sent again.")
                     .foregroundStyle(.secondary)
             }
         case .nextProfile, .previousProfile:
