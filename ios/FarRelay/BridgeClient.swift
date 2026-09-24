@@ -556,6 +556,17 @@ final class BridgeClient {
         Task { await speech.setVoice(identifier: identifier) }
     }
 
+    /// Controls only FarRelay's local rendering of remote NVDA speech.
+    /// It never sends NVDA+S or changes the Windows/NVDA Remote configuration.
+    /// Speech events continue to arrive and Last spoken continues to update.
+    func setLocalSpeechOutputEnabled(_ enabled: Bool) {
+        settings?.remoteSpeechOutputEnabled = enabled
+        settings?.save()
+        guard !enabled else { return }
+        let speech = self.speech
+        Task { await speech.cancel() }
+    }
+
     nonisolated private func runDriver(
         configuration: SSHSessionConfiguration,
         remote: String,
@@ -680,7 +691,9 @@ final class BridgeClient {
         switch event {
         case .speak(let text):
             await setLastSpeech(text)
-            await speech.speak(text)
+            if await isLocalSpeechOutputEnabled() {
+                await speech.speak(text)
+            }
         case .cancel:
             await speech.cancel()
         case .state(let s):
@@ -703,6 +716,10 @@ final class BridgeClient {
 
     private func isCurrentCommandChannel(_ id: UUID) -> Bool {
         commandChannelID == id
+    }
+
+    private func isLocalSpeechOutputEnabled() -> Bool {
+        settings?.remoteSpeechOutputEnabled ?? true
     }
 
     private func setLastSpeech(_ text: String) {
