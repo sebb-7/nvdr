@@ -361,6 +361,7 @@ struct ControllerBatteryAlert: Identifiable, Equatable, Sendable {
     let level: ControllerBatteryAlertLevel
 
     var id: Int { level.rawValue }
+    var soundFilename: String { "error.wav" }
     var title: String { "DualSense battery \(level.rawValue) percent" }
     var message: String {
         level == .tenPercent
