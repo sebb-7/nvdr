@@ -64,7 +64,10 @@ pub fn scan_for_vk(vk: u16) -> u32 {
         VK_LMENU | VK_MENU => 0x38,
         VK_SPACE => 0x39,
         VK_CAPITAL => 0x3A,
+        // Set-1 scan codes are contiguous only through F10.
         VK_F1..=0x79 => 0x3B + (vk - VK_F1) as u32,
+        0x7A => 0x57, // F11
+        0x7B => 0x58, // F12
         VK_NUMLOCK => 0x45,
         VK_SCROLL => 0x46,
         VK_HOME => 0x47,
@@ -147,4 +150,19 @@ pub fn extended_for_vk(vk: u16) -> bool {
             | VK_APPS
             | VK_NUMLOCK
     )
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_row_uses_canonical_set1_scan_codes() {
+        assert_eq!(scan_for_vk(VK_F1), 0x3B);
+        assert_eq!(scan_for_vk(VK_F1 + 4), 0x3F); // F5
+        assert_eq!(scan_for_vk(VK_F1 + 9), 0x44); // F10
+        assert_eq!(scan_for_vk(VK_F1 + 10), 0x57); // F11
+        assert_eq!(scan_for_vk(VK_F1 + 11), 0x58); // F12
+    }
 }
