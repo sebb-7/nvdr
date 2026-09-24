@@ -208,6 +208,14 @@ struct NVDARemoteFeatureView: View {
                 keyboardCaptureRefreshGeneration &+= 1
             }
         }
+        .onChange(of: controllerAdapter.controllerMappingRequestGeneration) { _, _ in
+            isControllerMappingPresented = true
+        }
+        .onChange(of: isControllerMappingPresented) { old, new in
+            if old && !new {
+                controllerAdapter.restoreQuickNavigationAfterControllerMapping()
+            }
+        }
         .onChange(of: bridge.status) { old, new in
             if old == .ready, new != .ready {
                 controllerAdapter.suspendInputForInactiveContext()
@@ -219,6 +227,21 @@ struct NVDARemoteFeatureView: View {
                 controllerAdapter.suspendInputForInactiveContext()
                 bridge.suspendInputForInactiveContext()
             }
+        }
+        .alert(
+            controllerAdapter.pendingBatteryAlert?.title ?? "DualSense battery",
+            isPresented: Binding(
+                get: { controllerAdapter.pendingBatteryAlert != nil },
+                set: { presented in
+                    if !presented { controllerAdapter.dismissBatteryAlert() }
+                }
+            )
+        ) {
+            Button("OK") {
+                controllerAdapter.dismissBatteryAlert()
+            }
+        } message: {
+            Text(controllerAdapter.pendingBatteryAlert?.message ?? "")
         }
         .userFacingIssueAlert($presentedIssue) { _ in
             presentedIssue = nil
