@@ -189,17 +189,18 @@ private final class AudioPlayback {
             commonFormat: .pcmFormatFloat32,
             sampleRate: 48_000,
             channels: 2,
-            interleaved: true
+            interleaved: false
         ) else {
             fatalError("Unable to create the fixed RemSound output format.")
         }
         self.format = format
         source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
-            guard let first = buffers.first,
-                  let data = first.mData?.assumingMemoryBound(to: Float.self)
+            guard buffers.count >= 2,
+                  let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
+                  let right = buffers[1].mData?.assumingMemoryBound(to: Float.self)
             else { return noErr }
-            playout.render(into: data, frames: Int(frameCount))
+            playout.render(left: left, right: right, frames: Int(frameCount))
             return noErr
         }
         engine.attach(source)
