@@ -46,10 +46,6 @@ struct NVDARemoteFeatureView: View {
                                 isControllerMappingPresented = true
                             }
 
-                        NavigationLink("Controller Mapping") {
-                            ControllerMappingView()
-                        }
-                        .font(.footnote)
                     }
                 }
 
@@ -206,14 +202,6 @@ struct NVDARemoteFeatureView: View {
                 isActive: new
             ) {
                 keyboardCaptureRefreshGeneration &+= 1
-            }
-        }
-        .onChange(of: controllerAdapter.controllerMappingRequestGeneration) { _, _ in
-            isControllerMappingPresented = true
-        }
-        .onChange(of: isControllerMappingPresented) { old, new in
-            if old && !new {
-                controllerAdapter.restoreQuickNavigationAfterControllerMapping()
             }
         }
         .onChange(of: bridge.status) { old, new in
