@@ -81,7 +81,7 @@ private final class RemSoundOpusDecoder {
     func conceal() -> AudioPCMFrame? {
         guard let decoder else { return nil }
         let decoded = shortScratch.withUnsafeMutableBufferPointer { output in
-            opus_decode(decoder, nil, 0, output.baseAddress, Int32(frameSize), 0)
+            opus_decode(decoder, nil, 0, output.baseAddress!, Int32(frameSize), 0)
         }
         guard decoded > 0 else { return nil }
         return makeFrame(samplesPerChannel: Int(decoded))
@@ -95,7 +95,7 @@ private final class RemSoundOpusDecoder {
                     decoder,
                     bytes.bindMemory(to: UInt8.self).baseAddress,
                     Int32(packet.count),
-                    output.baseAddress,
+                    output.baseAddress!,
                     Int32(frameSize),
                     fec ? 1 : 0
                 )
