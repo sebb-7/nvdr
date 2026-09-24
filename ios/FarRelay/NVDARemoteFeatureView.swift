@@ -81,7 +81,9 @@ struct NVDARemoteFeatureView: View {
                                     audioReceiver.start(
                                         host: remSoundCapability.senderHost,
                                         port: remSoundCapability.senderPort,
-                                        password: settings.credentials(for: profile)?.remSoundPassword ?? ""
+                                        password: settings.credentials(for: profile)?.remSoundPassword ?? "",
+                                        targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
+                                        autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
                                     )
                                 case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
                                     audioReceiver.stop()
@@ -130,6 +132,15 @@ struct NVDARemoteFeatureView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+            }
+            Section("Remote speech") {
+                Toggle("Speak remote NVDA in FarRelay", isOn: Binding(
+                    get: { settings.remoteSpeechOutputEnabled },
+                    set: { bridge.setLocalSpeechOutputEnabled($0) }
+                ))
+                Text("This controls only FarRelay's local NVDA voice. It does not send NVDA+S or change speech on the Windows computer. Turn it off when whole-system RemSound already contains NVDA audio.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             Section("Input diagnostics") {
                 Toggle("Record remote keyboard diagnostics", isOn: $diagnostics.isEnabled)
