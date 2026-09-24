@@ -14,6 +14,38 @@ final class RemSoundPlayoutTests: XCTestCase {
         return output
     }
 
+    private func renderPlanar(_ buffer: RemSoundPlayoutBuffer, frames: Int) -> (left: [Float], right: [Float]) {
+        var left = Array(repeating: Float(0), count: frames)
+        var right = Array(repeating: Float(0), count: frames)
+        left.withUnsafeMutableBufferPointer { leftPointer in
+            right.withUnsafeMutableBufferPointer { rightPointer in
+                buffer.render(
+                    left: leftPointer.baseAddress!,
+                    right: rightPointer.baseAddress!,
+                    frames: frames
+                )
+            }
+        }
+        return (left, right)
+    }
+
+    func testPlanarStereoRenderPreservesChannelsAndArmsAtTarget() {
+        let buffer = RemSoundPlayoutBuffer(capacityFrames: 2_000)
+        buffer.reset(targetFrames: 64)
+        var input: [Float] = []
+        input.reserveCapacity(128)
+        for _ in 0..<64 {
+            input.append(0.5)
+            input.append(-0.25)
+        }
+        buffer.write(input)
+
+        let output = renderPlanar(buffer, frames: 64)
+        XCTAssertTrue(output.left.contains { $0 > 0 })
+        XCTAssertTrue(output.right.contains { $0 < 0 })
+        XCTAssertTrue(buffer.metrics().isArmed)
+    }
+
     func testDoesNotPlayBeforeTargetAndArmsAtTarget() {
         let buffer = RemSoundPlayoutBuffer(capacityFrames: 2_000)
         buffer.reset(targetFrames: 480)
