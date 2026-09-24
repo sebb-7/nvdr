@@ -79,8 +79,7 @@ final class ControllerMappingTests: XCTestCase {
 
     func testKeyboardPickerVoiceOverLabelsBelongToKeysNotCategoryContainers() {
         XCTAssertFalse(
-            WindowsKeyboardKeyPickerAccessibilityPolicy
-                .overridesDisclosureGroupAccessibilityLabel
+            WindowsKeyboardKeyPickerAccessibilityPolicy.usesDisclosureGroups
         )
         for group in WindowsKeyboardKeyGroup.allCases {
             for key in group.keys {
