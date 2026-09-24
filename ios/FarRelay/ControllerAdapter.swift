@@ -70,6 +70,7 @@ final class DualSenseControllerAdapter {
     private var quickCommandGeneration = 0
     private var preparedQuickCommand: PreparedQuickCommand?
     private var lastQuickBarAction: ControllerAction?
+    private var lastQuickCommand: QuickCommand?
     private var nextDiagnosticEventID = 1
 
     private(set) var isTextModeActive = false
@@ -132,6 +133,7 @@ final class DualSenseControllerAdapter {
         quickCommandBuffer = ""
         quickCommandStatus = nil
         preparedQuickCommand = nil
+        lastQuickCommand = nil
         cancelQuickCommand()
         if let connectObservation { NotificationCenter.default.removeObserver(connectObservation) }
         if let disconnectObservation { NotificationCenter.default.removeObserver(disconnectObservation) }
@@ -779,6 +781,8 @@ final class DualSenseControllerAdapter {
                 eventID: eventID,
                 recordAsLast: false
             )
+        case .repeatLastQuickCommand:
+            return repeatLastQuickCommand(input: input, eventID: eventID)
         case .nextProfile:
             if let name = mappings.activateNextProfile() {
                 lastQuickBarAction = nil
@@ -1278,6 +1282,7 @@ final class DualSenseControllerAdapter {
             switch result {
             case .performed:
                 self.diagnostics.observe(source: .controller, result: "Quick Command: completed")
+                self.lastQuickCommand = prepared.command
                 self.releaseActiveActions(exitQuickNavigation: false)
                 self.isQuickCommandModeActive = false
                 self.quickCommandBuffer = ""
@@ -1309,6 +1314,100 @@ final class DualSenseControllerAdapter {
 
     func waitForQuickCommandForTesting() async {
         await quickCommandTask?.value
+    }
+
+    @discardableResult
+    private func repeatLastQuickCommand(
+        input: ControllerInput,
+        eventID: Int
+    ) -> Bool {
+        guard let command = lastQuickCommand else {
+            announce("No Quick Command to repeat")
+            return true
+        }
+
+        guard let targetID = router.activeTargetID,
+              let route = router.routeLease(for: targetID),
+              let target = router.target(for: route),
+              target.capabilities.contains(.rawKeyInput),
+              target.kind == .nvdaRemote || target.kind == .macRemote else {
+            quickCommandStatus = "Repeat Last Command requires an active Windows/NVDA or Mac Remote keyboard target."
+            diagnostics.observeController(
+                eventID: eventID,
+                input: input,
+                pressed: true,
+                stage: "Repeat Last Command: raw keyboard target unavailable"
+            )
+            announcePrivate(quickCommandStatus!)
+            return true
+        }
+
+        let plan: [[QuickCommandTransmission]]
+        do {
+            switch target.kind {
+            case .nvdaRemote:
+                plan = try resolveWindowsQuickCommandPlan(command)
+            case .macRemote:
+                plan = try resolveMacQuickCommandPlan(command)
+            default:
+                quickCommandStatus = "Repeat Last Command is not available for this target."
+                announcePrivate(quickCommandStatus!)
+                return true
+            }
+        } catch let error as QuickCommandExecutionError {
+            quickCommandStatus = error.message
+            diagnostics.observeController(
+                eventID: eventID,
+                input: input,
+                pressed: true,
+                stage: "Repeat Last Command: target validation rejected"
+            )
+            announcePrivate(error.message)
+            return true
+        } catch {
+            quickCommandStatus = "Repeat Last Command is not available for this target."
+            announcePrivate(quickCommandStatus!)
+            return true
+        }
+
+        cancelQuickCommand()
+        let generation = quickCommandGeneration
+        quickCommandStatus = "Repeating command."
+        diagnostics.observeController(
+            eventID: eventID,
+            input: input,
+            pressed: true,
+            stage: "Repeat Last Command: executing \(command.steps.count) steps; payload redacted"
+        )
+        quickCommandTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.executeQuickCommandPlan(
+                plan,
+                via: route,
+                generation: generation
+            )
+            guard generation == self.quickCommandGeneration, !Task.isCancelled else { return }
+            switch result {
+            case .performed:
+                self.quickCommandStatus = "Command repeated."
+                self.feedback.play(.success)
+                self.diagnostics.observe(
+                    source: .controller,
+                    result: "Repeat Last Command: completed"
+                )
+                self.announce("Command repeated")
+            case .unsupported:
+                self.quickCommandStatus = "Quick Command is unsupported by the active target."
+                self.announcePrivate(self.quickCommandStatus!)
+            case .unavailable:
+                self.quickCommandStatus = "Quick Command target became unavailable."
+                self.announcePrivate(self.quickCommandStatus!)
+            case .failed:
+                self.quickCommandStatus = "Quick Command failed."
+                self.announcePrivate(self.quickCommandStatus!)
+            }
+        }
+        return true
     }
 
     private func cancelQuickCommand() {
