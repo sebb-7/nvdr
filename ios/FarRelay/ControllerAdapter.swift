@@ -223,7 +223,7 @@ final class DualSenseControllerAdapter {
     private func evaluateBatteryAlert(percent: Int?, isCharging: Bool) {
         guard let alert = batteryAlertTracker.update(percent: percent, isCharging: isCharging) else { return }
         pendingBatteryAlert = alert
-        InteractionSoundCue.playBundled(filename: "error.wav")
+        InteractionSoundCue.playBundled(filename: alert.soundFilename)
         announce("DualSense battery \(alert.level.rawValue) percent")
     }
 
