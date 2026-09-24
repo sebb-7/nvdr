@@ -185,12 +185,14 @@ private final class AudioPlayback {
 
     init(playout: RemSoundPlayoutBuffer, onFailure: @escaping (String) -> Void) {
         self.onFailure = onFailure
-        let format = AVAudioFormat(
+        guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 48_000,
             channels: 2,
             interleaved: true
-        )
+        ) else {
+            fatalError("Unable to create the fixed RemSound output format.")
+        }
         self.format = format
         source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
