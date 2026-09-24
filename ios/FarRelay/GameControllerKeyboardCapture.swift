@@ -69,16 +69,40 @@ final class GameControllerKeyboardCapture {
         installedKeyboard?.keyboardInput?.keyChangedHandler = nil
         installedKeyboard = keyboard
         keyboard.keyboardInput?.keyChangedHandler = { [weak self] input, _, keyCode, pressed in
-            guard let virtualKey = GameControllerFunctionKeyMapping.virtualKey(for: keyCode) else { return }
+            let virtualKey = GameControllerFunctionKeyMapping.virtualKey(for: keyCode)
             let modifiers = GameControllerFunctionKeyMapping.modifiers(from: input)
-            Task { @MainActor in self?.receive(virtualKey: virtualKey, pressed: pressed, modifiers: modifiers) }
+            let rawCode = Int(keyCode.rawValue)
+            Task { @MainActor in
+                self?.receive(
+                    rawCode: rawCode,
+                    virtualKey: virtualKey,
+                    pressed: pressed,
+                    modifiers: modifiers
+                )
+            }
         }
         owner?.gameControllerKeyboardConnected()
     }
 
-    private func receive(virtualKey: UInt16, pressed: Bool, modifiers: [UInt16]) {
+    private func receive(
+        rawCode: Int,
+        virtualKey: UInt16?,
+        pressed: Bool,
+        modifiers: [UInt16]
+    ) {
+        owner?.observeGameControllerKeyboardEvent(
+            rawCode: rawCode,
+            virtualKey: virtualKey,
+            pressed: pressed,
+            modifiers: modifiers
+        )
+        guard let virtualKey else { return }
         functionKeyState.receive(virtualKey: virtualKey, pressed: pressed)
-        owner?.receiveGameControllerFunctionKey(vk: virtualKey, pressed: pressed, modifiers: modifiers)
+        owner?.receiveGameControllerFunctionKey(
+            vk: virtualKey,
+            pressed: pressed,
+            modifiers: modifiers
+        )
     }
 
     private func handleDisconnect() {
