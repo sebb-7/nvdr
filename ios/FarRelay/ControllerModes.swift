@@ -155,6 +155,7 @@ struct TextModeMirrorSession: Sendable {
 enum QuickNavigationCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case quickBar = "Quick Bar"
     case profiles = "Profiles"
+    case controllerMapping = "Controller Mapping"
     case editing = "Editing"
     case headings = "Headings"
     case links = "Links"
@@ -168,13 +169,13 @@ enum QuickNavigationCategory: String, CaseIterable, Codable, Hashable, Identifia
     var id: String { rawValue }
 
     static let defaultOrder: [QuickNavigationCategory] = [
-        .quickBar, .profiles, .editing, .headings, .links, .formControls,
+        .quickBar, .profiles, .controllerMapping, .editing, .headings, .links, .formControls,
         .editFields, .buttons, .landmarks, .tables, .lists
     ]
 
     var key: WindowsKeyboardKey? {
         switch self {
-        case .quickBar, .profiles, .editing: nil
+        case .quickBar, .profiles, .controllerMapping, .editing: nil
         case .headings: .h
         case .links: .k
         case .formControls: .f
@@ -337,6 +338,7 @@ struct QuickNavigationEngine: Sendable {
         switch category {
         case .quickBar: return "Quick Bar. \(selectedQuickBarEntry(in: quickBar)?.label ?? "Empty")"
         case .profiles: return "Profiles. \(selectedProfile(in: profiles)?.name ?? "None")"
+        case .controllerMapping: return "Controller Mapping. Press Cross to open."
         case .editing: return "Editing. \(selectedEditingAction().rawValue)"
         default: return category.rawValue
         }
@@ -349,6 +351,60 @@ struct QuickNavigationEngine: Sendable {
             result.append(category)
         }
         return result.isEmpty ? QuickNavigationCategory.defaultOrder : result
+    }
+}
+
+enum ControllerBatteryAlertLevel: Int, Equatable, Sendable {
+    case twentyPercent = 20
+    case tenPercent = 10
+}
+
+struct ControllerBatteryAlert: Identifiable, Equatable, Sendable {
+    let level: ControllerBatteryAlertLevel
+
+    var id: Int { level.rawValue }
+    var title: String { "DualSense battery \(level.rawValue) percent" }
+    var message: String {
+        level == .tenPercent
+            ? "DualSense battery is at 10 percent. Charge the controller soon."
+            : "DualSense battery is at 20 percent."
+    }
+}
+
+/// Emits each low-battery threshold once per discharge cycle. Charging above
+/// 20 percent rearms both warnings for the next discharge.
+struct ControllerBatteryAlertTracker: Sendable {
+    private var warnedAt20 = false
+    private var warnedAt10 = false
+
+    mutating func reset() {
+        warnedAt20 = false
+        warnedAt10 = false
+    }
+
+    mutating func update(percent: Int?, isCharging: Bool) -> ControllerBatteryAlert? {
+        guard let percent else { return nil }
+        let clamped = min(max(percent, 0), 100)
+
+        if isCharging && clamped > 20 {
+            reset()
+            return nil
+        }
+
+        if clamped <= 10 {
+            guard !warnedAt10 else { return nil }
+            warnedAt10 = true
+            warnedAt20 = true
+            return .init(level: .tenPercent)
+        }
+
+        if clamped <= 20 {
+            guard !warnedAt20 else { return nil }
+            warnedAt20 = true
+            return .init(level: .twentyPercent)
+        }
+
+        return nil
     }
 }
 
