@@ -125,6 +125,17 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(QuickNavigationEditingAction.redo.keyboardAction, .init(key: .y, modifiers: [.control]))
     }
 
+    func testBatteryAlertContractUsesRequestedErrorSound() {
+        XCTAssertEqual(
+            ControllerBatteryAlert(level: .twentyPercent).soundFilename,
+            "error.wav"
+        )
+        XCTAssertEqual(
+            ControllerBatteryAlert(level: .tenPercent).soundFilename,
+            "error.wav"
+        )
+    }
+
     func testBatteryAlertsFireOnceAtTwentyAndTenAndRearmAfterCharging() {
         var tracker = ControllerBatteryAlertTracker()
 
