@@ -35,6 +35,9 @@ final class AppSettings {
     var commandMapping: ModifierMapping
     var speechRate: Float
     var voiceIdentifier: String?
+    var remoteSpeechOutputEnabled: Bool
+    var remSoundTargetLatencyMilliseconds: Int
+    var remSoundAutoTuneLatencyEnabled: Bool
     var hapticFeedbackEnabled: Bool
     var soundCuesEnabled: Bool
     var dynamicReadingEnabled: Bool
@@ -61,6 +64,10 @@ final class AppSettings {
         commandMapping = ModifierMapping(rawValue: defaults.string(forKey: Keys.commandMapping) ?? "") ?? .win
         speechRate = Float(defaults.object(forKey: Keys.speechRate) as? Double ?? 0.55)
         voiceIdentifier = defaults.string(forKey: Keys.voiceIdentifier)
+        remoteSpeechOutputEnabled = defaults.object(forKey: Keys.remoteSpeechOutputEnabled) as? Bool ?? true
+        let storedRemSoundLatency = defaults.object(forKey: Keys.remSoundTargetLatencyMilliseconds) as? Int ?? 80
+        remSoundTargetLatencyMilliseconds = min(max(storedRemSoundLatency, 20), 500)
+        remSoundAutoTuneLatencyEnabled = defaults.object(forKey: Keys.remSoundAutoTuneLatencyEnabled) as? Bool ?? false
         hapticFeedbackEnabled = defaults.object(forKey: Keys.hapticFeedbackEnabled) as? Bool ?? true
         soundCuesEnabled = defaults.object(forKey: Keys.soundCuesEnabled) as? Bool ?? false
         dynamicReadingEnabled = defaults.object(forKey: Keys.dynamicReadingEnabled) as? Bool ?? true
@@ -110,6 +117,10 @@ final class AppSettings {
         defaults.set(Double(speechRate), forKey: Keys.speechRate)
         if let voiceIdentifier { defaults.set(voiceIdentifier, forKey: Keys.voiceIdentifier) }
         else { defaults.removeObject(forKey: Keys.voiceIdentifier) }
+        defaults.set(remoteSpeechOutputEnabled, forKey: Keys.remoteSpeechOutputEnabled)
+        remSoundTargetLatencyMilliseconds = min(max(remSoundTargetLatencyMilliseconds, 20), 500)
+        defaults.set(remSoundTargetLatencyMilliseconds, forKey: Keys.remSoundTargetLatencyMilliseconds)
+        defaults.set(remSoundAutoTuneLatencyEnabled, forKey: Keys.remSoundAutoTuneLatencyEnabled)
         defaults.set(hapticFeedbackEnabled, forKey: Keys.hapticFeedbackEnabled)
         defaults.set(soundCuesEnabled, forKey: Keys.soundCuesEnabled)
         defaults.set(dynamicReadingEnabled, forKey: Keys.dynamicReadingEnabled)
@@ -273,6 +284,9 @@ final class AppSettings {
         static let commandMapping = "farrelay.commandMapping"
         static let speechRate = "farrelay.speechRate"
         static let voiceIdentifier = "farrelay.voiceIdentifier"
+        static let remoteSpeechOutputEnabled = "farrelay.remoteSpeechOutputEnabled"
+        static let remSoundTargetLatencyMilliseconds = "farrelay.remSoundTargetLatencyMilliseconds"
+        static let remSoundAutoTuneLatencyEnabled = "farrelay.remSoundAutoTuneLatencyEnabled"
         static let hapticFeedbackEnabled = "farrelay.hapticFeedbackEnabled"
         static let soundCuesEnabled = "farrelay.soundCuesEnabled"
         static let dynamicReadingEnabled = "farrelay.dynamicReadingEnabled"
