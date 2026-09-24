@@ -15,6 +15,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private static let maximumPendingFrameDeliveries = 16
     private static let minimumAdaptiveLatencyMilliseconds = 20
     private static let maximumAdaptiveLatencyMilliseconds = 200
+    private static let pathHandoverSilence: TimeInterval = 1
     private static let senderLivenessTimeout: TimeInterval = 5
     private static let initialTrafficTimeout: TimeInterval = 8
     private static let telemetryPublishIntervalNanoseconds: UInt64 = 250_000_000
@@ -30,6 +31,10 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var heartbeatSequence: UInt32 = 0
     private var heartbeatScheduler = RemSoundHeartbeatScheduler()
     private var selectedPeerConnectionID: UUID?
+    private var selectedPeerConnectionSelectedAt: Date?
+    private var selectedPeerLastAudioActivity: Date?
+    private var configuredTargetLatencyMilliseconds = 80
+    private var autoTuneLatencyEnabled = false
     private var assembler = RemSoundPCMFrameAssembler()
     /// Read by AVAudioEngine's source callback while this actor writes decoded PCM.
     nonisolated let playout = RemSoundPlayoutBuffer()
@@ -53,6 +58,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var frameContinuations: [UUID: AsyncStream<AudioPCMFrame>.Continuation] = [:]
 
     func start(configuration: AudioReceiverConfiguration) async {
+        configuredTargetLatencyMilliseconds = configuration.targetLatencyMilliseconds
+        autoTuneLatencyEnabled = configuration.autoTuneLatencyEnabled
         guard !configuration.host.isEmpty, !configuration.password.isEmpty else {
             begin(
                 endpoint: AudioReceiverEndpoint(host: configuration.host, port: configuration.port),
@@ -100,6 +107,38 @@ actor RemSoundAudioReceiver: AudioReceiver {
 
     func setVolume(_ volume: Float) async {
         receiverSnapshot.volume = min(max(volume, 0), 1)
+        publish()
+    }
+
+    func setTargetLatencyMilliseconds(_ milliseconds: Int) async {
+        configuredTargetLatencyMilliseconds = min(max(milliseconds, 20), 500)
+        let frames = targetFrames(for: activeFormat)
+        startupBufferFrameTarget = frames
+        playout.setTargetFrames(frames)
+        receiverSnapshot.statistics.initialJitterTargetFrames = frames
+        receiverSnapshot.statistics.jitterTargetFrames = frames
+        receiverSnapshot.statistics.lastAutoTuneDecision = autoTuneLatencyEnabled
+            ? "user target \(configuredTargetLatencyMilliseconds) ms; auto-tune enabled"
+            : "fixed \(configuredTargetLatencyMilliseconds) ms"
+        publish()
+    }
+
+    func setAutoTuneLatencyEnabled(_ enabled: Bool) async {
+        autoTuneLatencyEnabled = enabled
+        receiverSnapshot.statistics.autoTuneEnabled = enabled
+        playoutSamples.removeAll(keepingCapacity: true)
+        arrivalPeakMilliseconds = 0
+        lastTuneBlockingUnderruns = receiverSnapshot.statistics.producerStarvationUnderruns
+        tuneTicks = 0
+        if !enabled {
+            let frames = targetFrames(for: activeFormat)
+            startupBufferFrameTarget = frames
+            playout.setTargetFrames(frames)
+            receiverSnapshot.statistics.jitterTargetFrames = frames
+            receiverSnapshot.statistics.lastAutoTuneDecision = "fixed \(configuredTargetLatencyMilliseconds) ms"
+        } else {
+            receiverSnapshot.statistics.lastAutoTuneDecision = "auto-tune enabled"
+        }
         publish()
     }
 
@@ -341,8 +380,10 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
         let id = UUID()
         inboundConnections[id] = connection
-        if isConfiguredPeer(connection) {
+        if isConfiguredPeer(connection), selectedPeerConnectionID == nil {
             selectedPeerConnectionID = id
+            selectedPeerConnectionSelectedAt = .now
+            selectedPeerLastAudioActivity = nil
         }
         connection.stateUpdateHandler = { [weak self] state in
             guard case .failed = state else { return }
@@ -400,13 +441,58 @@ actor RemSoundAudioReceiver: AudioReceiver {
     /// is a relay address proof that must echo to its source.
     private func ingestNetworkDatagram(_ datagram: Data, from connectionID: UUID) -> Data? {
         if let header = RemSoundPacketHeader.parse(datagram),
-           (header.type == .format || header.type == .audio),
-           connectionID != selectedPeerConnectionID {
-            receiverSnapshot.statistics.packetsReceived += 1
-            dropPacket()
-            return nil
+           header.type == .format || header.type == .audio {
+            guard isConfiguredPeerConnection(connectionID) else {
+                receiverSnapshot.statistics.packetsReceived += 1
+                dropPacket()
+                return nil
+            }
+
+            let now = Date()
+            if connectionID != selectedPeerConnectionID {
+                guard shouldHandover(to: connectionID, now: now) else {
+                    receiverSnapshot.statistics.packetsReceived += 1
+                    receiverSnapshot.statistics.duplicatePathsSuppressed += 1
+                    dropPacket()
+                    return nil
+                }
+                handover(to: connectionID, now: now)
+            }
+
+            if header.type == .audio {
+                selectedPeerLastAudioActivity = now
+            }
         }
         return ingestAndPrepareReply(datagram)
+    }
+
+    private func isConfiguredPeerConnection(_ id: UUID) -> Bool {
+        guard let connection = inboundConnections[id] else { return false }
+        return isConfiguredPeer(connection)
+    }
+
+    private func shouldHandover(to candidateID: UUID, now: Date) -> Bool {
+        guard candidateID != selectedPeerConnectionID else { return true }
+        guard let selectedPeerConnectionID else { return true }
+        guard inboundConnections[selectedPeerConnectionID] != nil else { return true }
+        if let lastAudio = selectedPeerLastAudioActivity {
+            return now.timeIntervalSince(lastAudio) > Self.pathHandoverSilence
+        }
+        if let selectedAt = selectedPeerConnectionSelectedAt {
+            return now.timeIntervalSince(selectedAt) > Self.pathHandoverSilence
+        }
+        return false
+    }
+
+    private func handover(to connectionID: UUID, now: Date) {
+        selectedPeerConnectionID = connectionID
+        selectedPeerConnectionSelectedAt = now
+        selectedPeerLastAudioActivity = nil
+        receiverSnapshot.statistics.pathHandovers += 1
+        resetActiveStreamState()
+        if playbackFailureMessage == nil {
+            receiverSnapshot.state = .waitingForAudio
+        }
     }
 
     /// Network.framework gives an accepted UDP connection for each remote path.
@@ -609,14 +695,16 @@ actor RemSoundAudioReceiver: AudioReceiver {
     }
 
     private func startupBufferTarget(for format: RemSoundFormat) -> Int {
-        switch format.opusMode {
-        case .broadcast:
-            return max(Self.broadcastStartupBufferFrames, format.frameSamplesPerChannel * 3)
-        case .live:
-            return max(Self.liveStartupBufferFrames, format.frameSamplesPerChannel * 4)
-        case nil:
-            return Self.pcmStartupBufferFrames
-        }
+        targetFrames(for: format)
+    }
+
+    private func targetFrames(for format: RemSoundFormat?) -> Int {
+        let configured = configuredTargetLatencyMilliseconds * RemSoundPlayoutBuffer.sampleRate / 1_000
+        guard let format else { return max(configured, 1) }
+        // Mirror the official receiver's codec floor: the playout target must
+        // never sit below roughly 1.5 packets, even if the user chooses a tiny delay.
+        let codecFloor = (format.frameSamplesPerChannel * 3 + 1) / 2
+        return max(configured, codecFloor, 1)
     }
 
     private func recoverOpusGap(
@@ -697,14 +785,30 @@ actor RemSoundAudioReceiver: AudioReceiver {
         publish()
     }
 
-    private func resetPipeline() {
+    private func resetActiveStreamState() {
         activeStreamID = nil
         activeFormat = nil
         expectedSequence = nil
         assembler.reset()
-        playout.reset(targetFrames: Self.pcmStartupBufferFrames)
+        let target = targetFrames(for: nil)
+        playout.reset(targetFrames: target)
         audioDecoder = nil
-        startupBufferFrameTarget = Self.pcmStartupBufferFrames
+        startupBufferFrameTarget = target
+        playoutSamples.removeAll(keepingCapacity: true)
+        arrivalPeakMilliseconds = 0
+        lastDecodedArrival = nil
+        lastTuneBlockingUnderruns = receiverSnapshot.statistics.producerStarvationUnderruns
+        tuneTicks = 0
+        receiverSnapshot.statistics.initialJitterTargetFrames = target
+        receiverSnapshot.statistics.jitterTargetFrames = target
+        receiverSnapshot.statistics.autoTuneEnabled = autoTuneLatencyEnabled
+        receiverSnapshot.statistics.lastAutoTuneDecision = autoTuneLatencyEnabled
+            ? "waiting for measurements"
+            : "fixed \(configuredTargetLatencyMilliseconds) ms"
+    }
+
+    private func resetPipeline() {
+        resetActiveStreamState()
         playbackFailureMessage = nil
         lastTelemetryPublishNanoseconds = 0
         listenerReadyAt = nil
@@ -713,11 +817,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
         expectedFingerprint = nil
         heartbeatScheduler = RemSoundHeartbeatScheduler()
         selectedPeerConnectionID = nil
-        playoutSamples.removeAll(keepingCapacity: false)
-        arrivalPeakMilliseconds = 0
-        lastDecodedArrival = nil
-        lastTuneBlockingUnderruns = 0
-        tuneTicks = 0
+        selectedPeerConnectionSelectedAt = nil
+        selectedPeerLastAudioActivity = nil
     }
 
     private func stopNetwork() {
@@ -751,9 +852,21 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private func removeConnection(_ id: UUID, generation: Int) {
         guard generation == self.generation else { return }
         inboundConnections.removeValue(forKey: id)
-        if selectedPeerConnectionID == id {
-            selectedPeerConnectionID = nil
+        guard selectedPeerConnectionID == id else { return }
+
+        selectedPeerConnectionID = nil
+        selectedPeerConnectionSelectedAt = nil
+        selectedPeerLastAudioActivity = nil
+        resetActiveStreamState()
+        if playbackFailureMessage == nil {
+            receiverSnapshot.state = .waitingForAudio
         }
+
+        if let replacement = inboundConnections.first(where: { isConfiguredPeer($0.value) })?.key {
+            selectedPeerConnectionID = replacement
+            selectedPeerConnectionSelectedAt = .now
+        }
+        publish()
     }
 
     private func removeSnapshotContinuation(_ id: UUID) {
@@ -825,6 +938,12 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private func updatePlayoutTelemetryAndTune() {
         guard let format = activeFormat, playbackFailureMessage == nil else { return }
         syncPlayoutMetrics(resetPeakRenderGap: true)
+        receiverSnapshot.statistics.autoTuneEnabled = autoTuneLatencyEnabled
+        guard autoTuneLatencyEnabled else {
+            receiverSnapshot.statistics.lastAutoTuneDecision = "fixed \(configuredTargetLatencyMilliseconds) ms"
+            publishTelemetryIfDue()
+            return
+        }
         let statistics = receiverSnapshot.statistics
         playoutSamples.append(.init(
             arrivalGapMilliseconds: arrivalPeakMilliseconds,
