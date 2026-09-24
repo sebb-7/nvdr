@@ -784,7 +784,7 @@ private struct WindowsKeyboardKeyPicker: View {
             .accessibilityHint("Clears the \(title.lowercased()) mapping.")
 
             ForEach(WindowsKeyboardKeyGroup.allCases) { group in
-                DisclosureGroup {
+                DisclosureGroup(group.rawValue) {
                     ForEach(group.keys) { key in
                         Button {
                             selection = key
@@ -799,22 +799,17 @@ private struct WindowsKeyboardKeyPicker: View {
                                 }
                             }
                         }
-                        // Explicit labels are load-bearing here. LabeledContent
-                        // nested in a Button regressed on physical iOS builds
-                        // and VoiceOver announced every key as just "button".
+                        // The key button owns its own accessibility element and
+                        // name. Do not label the parent DisclosureGroup itself:
+                        // on physical iOS 27 that parent label propagates into
+                        // expanded descendants and VoiceOver repeats only the
+                        // group name ("Action keys", "Function keys", etc.).
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(key.label)
                         .accessibilityValue(selection == key ? "Selected" : "")
                         .accessibilityHint("Selects \(key.label) as the \(title.lowercased()).")
                     }
-                } label: {
-                    Text(group.rawValue)
                 }
-                // DisclosureGroup is also a button-like accessibility control;
-                // provide its name explicitly so VoiceOver says the category
-                // before the expand/collapse trait.
-                .accessibilityLabel(group.rawValue)
-                .accessibilityHint("Shows or hides \(group.rawValue.lowercased()).")
             }
         }
         .navigationTitle(title)
