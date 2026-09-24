@@ -25,6 +25,8 @@ final class DualSenseControllerAdapter {
     private var touchpadContactSuppressed = false
     private var touchpadFallbackEndTask: Task<Void, Never>?
     private var didObserveDualSensePrimaryMovement = false
+    private var batteryPollTask: Task<Void, Never>?
+    private var batteryAlertTracker = ControllerBatteryAlertTracker()
     private let controllerHaptics = ControllerHapticFeedback()
     private var leftStick = ControllerStickDirectionClassifier(
         left: .leftStickLeft, right: .leftStickRight,
@@ -75,6 +77,8 @@ final class DualSenseControllerAdapter {
     private(set) var isQuickCommandModeActive = false
     private(set) var quickCommandBuffer = ""
     private(set) var quickCommandStatus: String?
+    private(set) var pendingBatteryAlert: ControllerBatteryAlert?
+    private(set) var controllerMappingRequestGeneration = 0
     var layerStateForTesting: ControllerLayerEngine.State { layerEngine.state }
     var isQuickNavigationActiveForTesting: Bool { quickNavigation.isActive }
     var quickNavigationCategoryForTesting: QuickNavigationCategory { quickNavigation.category }
@@ -136,6 +140,10 @@ final class DualSenseControllerAdapter {
         disconnectObservation = nil
         controller?.extendedGamepad?.valueChangedHandler = nil
         clearTouchpadHandlers()
+        batteryPollTask?.cancel()
+        batteryPollTask = nil
+        batteryAlertTracker.reset()
+        pendingBatteryAlert = nil
         controllerHaptics.detach()
         controller = nil
         connectedControllerName = nil
@@ -148,6 +156,8 @@ final class DualSenseControllerAdapter {
         guard controller == nil, let gamepad = candidate.extendedGamepad else { return }
         controller = candidate
         connectedControllerName = candidate.vendorName ?? "Controller"
+        batteryAlertTracker.reset()
+        pendingBatteryAlert = nil
         refreshControllerStatus(from: candidate)
         availableInputs = inputsExposed(by: gamepad)
         controllerHasRemappedElements = gamepad.hasRemappedElements
@@ -156,6 +166,7 @@ final class DualSenseControllerAdapter {
         }
         configureTouchpad(for: candidate)
         controllerHaptics.attach(to: candidate)
+        startBatteryMonitoring(for: candidate)
     }
 
     func refreshControllerStatus() {
@@ -189,6 +200,40 @@ final class DualSenseControllerAdapter {
                 (candidate.extendedGamepad as? GCDualSenseGamepad) != nil ||
                 !candidate.physicalInputProfile.touchpads.isEmpty
         )
+        evaluateBatteryAlert(
+            percent: batteryPercent,
+            isCharging: battery?.batteryState == .charging || battery?.batteryState == .full
+        )
+    }
+
+    private func startBatteryMonitoring(for candidate: GCController) {
+        batteryPollTask?.cancel()
+        batteryPollTask = Task { @MainActor [weak self, weak candidate] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    return
+                }
+                guard let self, let candidate, self.controller === candidate else { return }
+                self.refreshControllerStatus(from: candidate)
+            }
+        }
+    }
+
+    private func evaluateBatteryAlert(percent: Int?, isCharging: Bool) {
+        guard let alert = batteryAlertTracker.update(percent: percent, isCharging: isCharging) else { return }
+        pendingBatteryAlert = alert
+        InteractionSoundCue.playBundled(filename: "error.wav")
+        announce("DualSense battery \(alert.level.rawValue) percent")
+    }
+
+    func dismissBatteryAlert() {
+        pendingBatteryAlert = nil
+    }
+
+    func receiveBatteryForTesting(percent: Int?, isCharging: Bool) {
+        evaluateBatteryAlert(percent: percent, isCharging: isCharging)
     }
 
     private func configureTouchpad(for candidate: GCController) {
@@ -394,6 +439,10 @@ final class DualSenseControllerAdapter {
         releaseActiveActions()
         controller?.extendedGamepad?.valueChangedHandler = nil
         clearTouchpadHandlers()
+        batteryPollTask?.cancel()
+        batteryPollTask = nil
+        batteryAlertTracker.reset()
+        pendingBatteryAlert = nil
         controller = nil
         connectedControllerName = nil
         controllerStatus = nil
@@ -451,6 +500,12 @@ final class DualSenseControllerAdapter {
                 // one-shot layer. Once the layer returns to Base, Navigation
                 // resumes without needing to be toggled back on.
                 let action = resolvedAction(for: input)
+                // Modal entry controls are also their own exit controls. Claim
+                // the same saved local action before the modal gate swallows it.
+                if layerEngine.state == .base,
+                   handleActiveModeToggle(action: action) {
+                    continue
+                }
                 // A profile's remote Escape mapping must never be interpreted
                 // as Circle's local "leave this mode" behavior. Resolve it
                 // before the local-mode dispatcher so every press is routed
@@ -563,6 +618,20 @@ final class DualSenseControllerAdapter {
         }
     }
 
+    private func handleActiveModeToggle(action: ControllerAction?) -> Bool {
+        guard case .farRelay(let localAction)? = action else { return false }
+        switch localAction {
+        case .textMode where isTextModeActive:
+            setTextMode(false)
+            return true
+        case .quickCommandMode where isQuickCommandModeActive:
+            setQuickCommandMode(false)
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Returns true if a local mode fully consumed the input.
     private func handleModeInput(_ input: ControllerInput, pressed: Bool, eventID: Int) -> Bool {
         if isQuickCommandModeActive {
@@ -639,12 +708,20 @@ final class DualSenseControllerAdapter {
                         if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
                         announce("Profile: \(name)")
                     }
+                case .controllerMapping:
+                    requestControllerMapping()
                 case .editing:
-                    start(
-                        action: .keyboard(quickNavigation.selectedEditingAction().keyboardAction),
+                    let editingAction = quickNavigation.selectedEditingAction()
+                    let started = start(
+                        action: .keyboard(editingAction.keyboardAction),
                         input: input,
                         eventID: eventID
                     )
+                    if started {
+                        resetTouchpadGesture()
+                        _ = quickNavigation.exit()
+                        announce("\(editingAction.rawValue). Quick Navigation off.")
+                    }
                 default:
                     start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
                 }
@@ -654,6 +731,23 @@ final class DualSenseControllerAdapter {
             return true
         }
         return false
+    }
+
+    private func requestControllerMapping() {
+        resetTouchpadGesture()
+        _ = quickNavigation.exit()
+        controllerMappingRequestGeneration &+= 1
+        announce("Controller Mapping")
+    }
+
+    func restoreQuickNavigationAfterControllerMapping() {
+        guard !isTextModeActive, !isQuickCommandModeActive else { return }
+        _ = quickNavigation.activate()
+        let section = quickNavigation.currentSectionAnnouncement(
+            quickBar: mappings.activeProfile.quickBar,
+            profiles: mappings.profiles
+        )
+        announce("Quick Navigation. \(section).")
     }
 
     @discardableResult
@@ -1014,6 +1108,26 @@ final class DualSenseControllerAdapter {
     }
 
     func exitTextMode() { setTextMode(false) }
+
+    @discardableResult
+    func pasteClipboardIntoTextMode() -> Bool {
+        pasteTextIntoTextMode(AppClipboard.string)
+    }
+
+    @discardableResult
+    func pasteTextIntoTextMode(_ clipboardText: String?) -> Bool {
+        guard isTextModeActive else { return false }
+        guard let clipboardText, !clipboardText.isEmpty else {
+            announce("Clipboard is empty")
+            return false
+        }
+        let normalized = clipboardText
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        mirrorTextInsertion(Array(normalized))
+        announce("Clipboard pasted into Text Mode")
+        return true
+    }
 
     func submitTextModeAndExit() {
         guard isTextModeActive else { return }
