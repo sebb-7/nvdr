@@ -31,7 +31,7 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var assembler = RemSoundPCMFrameAssembler()
     private var queuedPCM = BoundedPCMQueue()
     private var audioDecoder: RemSoundAudioDecoder?
-    private var startupBufferFrameTarget = Self.pcmStartupBufferFrames
+    private var startupBufferFrameTarget = 960
     private var playbackArmed = false
     private var playbackFailureMessage: String?
     private var lastTelemetryPublishNanoseconds: UInt64 = 0
