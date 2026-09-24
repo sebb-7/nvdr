@@ -1196,9 +1196,11 @@ final class DualSenseControllerAdapter {
         cancelQuickCommand()
         if active {
             _ = quickNavigation.exit()
-        } else if restoreQuickNavigation {
+        } else {
             releaseActiveActions(exitQuickNavigation: false)
-            _ = quickNavigation.activate()
+            if restoreQuickNavigation {
+                _ = quickNavigation.activate()
+            }
         }
         if announceChange {
             announce(active ? "Quick Command Mode" : "Quick Command Mode off")

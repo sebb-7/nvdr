@@ -175,6 +175,21 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.prior, true), .init(VK.prior, false)])
     }
 
+    func testControllerStartDefaultsQuickNavigationOffAndTouchpadSwipeActivatesIt() {
+        let (_, adapter, _, _, _) = makeAdapter()
+
+        adapter.start()
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+
+        adapter.beginTouchpadSwipeForTesting(x: -0.6)
+        adapter.moveTouchpadForTesting(x: 0.0)
+        adapter.endTouchpadSwipeForTesting()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .profiles)
+        adapter.stop()
+    }
+
     func testControllerStopClearsAllTransientModesAndReleasesHeldKey() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
