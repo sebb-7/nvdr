@@ -181,6 +181,27 @@ final class AudioReceiverModel {
     }
 }
 
+/// AVAudioSourceNode invokes its render block on a CoreAudio real-time thread.
+/// Build that block outside any actor-isolated context so Swift 6 does not
+/// inherit MainActor isolation from AudioPlayback.init and trap when CoreAudio
+/// invokes it off the main queue on physical devices.
+private enum RemSoundSourceNodeFactory {
+    nonisolated static func make(
+        playout: RemSoundPlayoutBuffer,
+        format: AVAudioFormat
+    ) -> AVAudioSourceNode {
+        AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
+            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard buffers.count >= 2,
+                  let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
+                  let right = buffers[1].mData?.assumingMemoryBound(to: Float.self)
+            else { return noErr }
+            playout.render(left: left, right: right, frames: Int(frameCount))
+            return noErr
+        }
+    }
+}
+
 @MainActor
 private final class AudioPlayback {
     private let engine = AVAudioEngine()
@@ -204,15 +225,7 @@ private final class AudioPlayback {
             fatalError("Unable to create the fixed RemSound output format.")
         }
         self.format = format
-        source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
-            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
-            guard buffers.count >= 2,
-                  let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-                  let right = buffers[1].mData?.assumingMemoryBound(to: Float.self)
-            else { return noErr }
-            playout.render(left: left, right: right, frames: Int(frameCount))
-            return noErr
-        }
+        source = RemSoundSourceNodeFactory.make(playout: playout, format: format)
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: format)
         observeAudioSession()
