@@ -26,7 +26,7 @@ final class QuickCommandModifierOnlyExecutionTests: XCTestCase {
         )
         XCTAssertTrue(sink.texts.isEmpty)
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testModifierOnlyStepReleasesBeforeFollowingTabStep() async {

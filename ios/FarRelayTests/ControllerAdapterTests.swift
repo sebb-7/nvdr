@@ -615,7 +615,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
-    func testTextModeClearsInFlightTouchpadContactBeforeQuickNavigationReturns() {
+    func testTextModeClearsInFlightTouchpadContactBeforeTouchpadReactivatesQuickNavigation() {
         let (_, adapter, _, _, _) = makeAdapter()
 
         adapter.receiveTouchpadContactForTesting(.down, x: -0.6)
@@ -626,7 +626,7 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1.2)
         adapter.receiveForTesting(input: .touchpadPress, pressed: false, at: 1.3)
         XCTAssertFalse(adapter.isTextModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
 
         // Movement from the old finger contact must not rotate after mode exit.
         adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
