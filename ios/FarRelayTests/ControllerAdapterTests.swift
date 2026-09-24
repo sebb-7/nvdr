@@ -958,7 +958,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, [.init(VK.back, true), .init(VK.back, false)])
     }
 
-    func testQuickCommandModeIsLocalUntilExplicitSendAndRestoresQuickNavigation() async {
+    func testQuickCommandModeIsLocalUntilExplicitSendAndReturnsToBase() async {
         let (mappings, adapter, sink, _, _) = makeAdapter()
         mappings.setAction(.farRelay(.quickCommandMode), for: .triangle)
         mappings.saveDraft()
@@ -986,7 +986,7 @@ final class ControllerAdapterTests: XCTestCase {
             ]
         )
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testQuickCommandSequenceExecutesChordTextAndEnterInOrder() async {
@@ -1035,7 +1035,7 @@ final class ControllerAdapterTests: XCTestCase {
             [.init(VK.return, true), .init(VK.return, false)]
         )
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testQuickCommandHoldsFourModifiersUntilItsOneTargetReleases() async {
@@ -1209,7 +1209,7 @@ final class ControllerAdapterTests: XCTestCase {
 
         XCTAssertTrue(sink.transitions.isEmpty)
         XCTAssertEqual(adapter.quickCommandBuffer, "")
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testQuickCommandConfirmationPreviewSendsNothingUntilAlertSend() async {
@@ -1350,10 +1350,10 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertEqual(sink.transitions, firstRun)
         XCTAssertEqual(adapter.quickCommandStatus, "Command repeated.")
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
-    func testQuickCommandMacCommandVUsesRawHIDAndReturnsToQuickNavigation() async {
+    func testQuickCommandMacCommandVUsesRawHIDAndReturnsToBase() async {
         let (adapter, macController, _) = makeMacQuickCommandAdapter()
         adapter.updateQuickCommandBuffer("cmd+v")
 
@@ -1369,7 +1369,7 @@ final class ControllerAdapterTests: XCTestCase {
             ]
         )
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
     }
 
     func testQuickCommandMacLiteralTextUsesShiftedHIDAndRedactsPayload() async {
