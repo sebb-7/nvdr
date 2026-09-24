@@ -608,7 +608,10 @@ actor RemSoundAudioReceiver: AudioReceiver {
             playout.reset(targetFrames: startupBufferFrameTarget)
             receiverSnapshot.statistics.jitterTargetFrames = startupBufferFrameTarget
             receiverSnapshot.statistics.initialJitterTargetFrames = startupBufferFrameTarget
-            receiverSnapshot.statistics.lastAutoTuneDecision = "initial \(format.opusMode?.rawValue ?? "PCM") target"
+            receiverSnapshot.statistics.autoTuneEnabled = autoTuneLatencyEnabled
+            receiverSnapshot.statistics.lastAutoTuneDecision = autoTuneLatencyEnabled
+                ? "initial \(format.opusMode?.rawValue ?? "PCM") target"
+                : "fixed \(configuredTargetLatencyMilliseconds) ms"
             playoutSamples.removeAll(keepingCapacity: true)
             arrivalPeakMilliseconds = 0
             lastDecodedArrival = nil
