@@ -9,12 +9,12 @@ final class InputDiagnosticsTests: XCTestCase {
         XCTAssertTrue(diagnostics.entries.isEmpty)
 
         diagnostics.isEnabled = true
-        for sequence in 0..<55 {
+        for sequence in 0..<205 {
             diagnostics.observe(source: .rawPress, hidUsage: sequence, pressed: true, virtualKey: VK.f1, result: "queued for transmission")
         }
-        XCTAssertEqual(diagnostics.entries.count, 50)
+        XCTAssertEqual(diagnostics.entries.count, 200)
         XCTAssertEqual(diagnostics.entries.first?.sequence, 6)
-        XCTAssertEqual(diagnostics.entries.last?.sequence, 55)
+        XCTAssertEqual(diagnostics.entries.last?.sequence, 205)
         XCTAssertTrue(diagnostics.entries.last?.reportLine.contains("VK 112") == true)
     }
 
@@ -28,8 +28,38 @@ final class InputDiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("TestFlight build:"))
         XCTAssertTrue(report.contains("Source revision:"))
         XCTAssertTrue(report.contains("Transport delivery: see per-event routing and transport stages below"))
+        XCTAssertTrue(report.contains("Capture coverage: UIKit envelopes include presses with no UIKey"))
+        XCTAssertTrue(report.contains("Media command handlers: diagnostics do not register MPRemoteCommandCenter handlers"))
         XCTAssertTrue(report.contains("key command"))
         XCTAssertFalse(report.contains("typed text"))
+    }
+
+
+    func testRawPlatformMetadataIsReportedWithoutKeyCharacters() {
+        let diagnostics = InputDiagnosticStore()
+        diagnostics.isEnabled = true
+        diagnostics.observe(
+            source: .uikitEnvelope,
+            hidUsage: 58,
+            pressType: 1,
+            modifiers: 0,
+            pressed: true,
+            result: "UIKit delivered UIPress with UIKey"
+        )
+        diagnostics.observe(
+            source: .gameControllerRaw,
+            platformCode: 58,
+            pressed: true,
+            virtualKey: VK.f1,
+            result: "GCKeyboard delivered F1-F12 key code"
+        )
+
+        let report = diagnostics.report(connectionState: "NVDA connected")
+        XCTAssertTrue(report.contains("source=UIKit press envelope"))
+        XCTAssertTrue(report.contains("press type 1"))
+        XCTAssertTrue(report.contains("source=GCKeyboard raw"))
+        XCTAssertTrue(report.contains("platform code 58"))
+        XCTAssertFalse(report.contains("key character"))
     }
 
     func testForwardingResultsGiveAnActionableRejectionReason() {
