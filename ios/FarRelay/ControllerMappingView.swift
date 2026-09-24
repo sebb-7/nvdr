@@ -779,10 +779,10 @@ private struct ControllerActionEditorSections: View {
 }
 
 enum WindowsKeyboardKeyPickerAccessibilityPolicy {
-    /// Expanded category rows must remain containers, not accessibility
-    /// elements with their own overriding label. Physical iOS 27 otherwise
-    /// propagates the category name to every descendant button.
-    static let overridesDisclosureGroupAccessibilityLabel = false
+    /// Physical iOS 27 can propagate a DisclosureGroup's category label into
+    /// every expanded descendant button. Use ordinary List sections instead:
+    /// VoiceOver reads the category once as a heading, then each key by name.
+    static let usesDisclosureGroups = false
 
     static func label(for key: WindowsKeyboardKey) -> String {
         key.label
@@ -800,18 +800,18 @@ private struct WindowsKeyboardKeyPicker: View {
 
     var body: some View {
         List {
-            Button("Unassigned") {
-                selection = nil
-                dismiss()
+            Section {
+                Button("Unassigned") {
+                    selection = nil
+                    dismiss()
+                }
+                .accessibilityLabel("Unassigned")
+                .accessibilityValue(selection == nil ? "Selected" : "")
+                .accessibilityHint("Clears the \(title.lowercased()) mapping.")
             }
-            // Do not rely on SwiftUI inferring the Button label inside this
-            // grouped picker. iOS 27 can expose only the "button" trait.
-            .accessibilityLabel("Unassigned")
-            .accessibilityValue(selection == nil ? "Selected" : "")
-            .accessibilityHint("Clears the \(title.lowercased()) mapping.")
 
             ForEach(WindowsKeyboardKeyGroup.allCases) { group in
-                DisclosureGroup(group.rawValue) {
+                Section(group.rawValue) {
                     ForEach(group.keys) { key in
                         Button {
                             selection = key
@@ -826,13 +826,13 @@ private struct WindowsKeyboardKeyPicker: View {
                                 }
                             }
                         }
-                        // The key button owns its own accessibility element and
-                        // name. Do not label the parent DisclosureGroup itself:
-                        // on physical iOS 27 that parent label propagates into
-                        // expanded descendants and VoiceOver repeats only the
-                        // group name ("Action keys", "Function keys", etc.).
+                        // Own the accessibility element explicitly. The parent
+                        // is a noninteractive Section header, so its category
+                        // name cannot replace this per-key label.
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(WindowsKeyboardKeyPickerAccessibilityPolicy.label(for: key))
+                        .accessibilityLabel(
+                            WindowsKeyboardKeyPickerAccessibilityPolicy.label(for: key)
+                        )
                         .accessibilityValue(selection == key ? "Selected" : "")
                         .accessibilityHint(
                             WindowsKeyboardKeyPickerAccessibilityPolicy.hint(
