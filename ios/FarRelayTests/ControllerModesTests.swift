@@ -40,6 +40,16 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertFalse(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "a"))
     }
 
+    func testTextModeKeepsResolvedPunctuationOffLayoutDependentOEMKeys() {
+        XCTAssertTrue(TextModeCharacterTransportPolicy.usesResolvedText(for: "?"))
+        XCTAssertTrue(TextModeCharacterTransportPolicy.usesResolvedText(for: "/"))
+        XCTAssertTrue(TextModeCharacterTransportPolicy.usesResolvedText(for: "{"))
+        XCTAssertTrue(TextModeCharacterTransportPolicy.usesResolvedText(for: "é"))
+        XCTAssertFalse(TextModeCharacterTransportPolicy.usesResolvedText(for: "a"))
+        XCTAssertFalse(TextModeCharacterTransportPolicy.usesResolvedText(for: "7"))
+        XCTAssertFalse(TextModeCharacterTransportPolicy.usesResolvedText(for: " "))
+    }
+
     func testHoldUsesExtendedOnlyWhileOptionsIsHeld() {
         var engine = ControllerLayerEngine()
         engine.press(layerID: "extended", at: 1)

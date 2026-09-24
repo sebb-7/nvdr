@@ -28,7 +28,14 @@ struct ControllerMappingView: View {
                 NavigationLink("Edit Rotor Order") {
                     ControllerRotorOrderView()
                 }
-                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections.")
+                Toggle(
+                    "Exit Quick Navigation After Action",
+                    isOn: Binding(
+                        get: { mappings.draftProfile.quickNavigationAutoExitAfterAction },
+                        set: { mappings.setQuickNavigationAutoExitAfterAction($0) }
+                    )
+                )
+                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections. When auto-exit is on, activating an Action Bar item, profile, editing command, or focused item returns the controller to Base. Rotor browsing stays active until you activate something.")
                     .foregroundStyle(.secondary)
             }
 
@@ -343,7 +350,14 @@ struct ControllerProfileEditorView: View {
 
             Section("Quick Navigation") {
                 NavigationLink("Edit Rotor Order") { ControllerRotorOrderView() }
-                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections")
+                Toggle(
+                    "Exit Quick Navigation After Action",
+                    isOn: Binding(
+                        get: { mappings.draftProfile.quickNavigationAutoExitAfterAction },
+                        set: { mappings.setQuickNavigationAutoExitAfterAction($0) }
+                    )
+                )
+                Text("\(mappings.draftProfile.quickNavigationOrder.count) rotor sections. Auto-exit affects activated actions, not browsing between rotor results.")
                     .foregroundStyle(.secondary)
             }
 

@@ -462,6 +462,20 @@ struct TouchpadRotorGesture: Sendable {
     }
 }
 
+enum TextModeCharacterTransportPolicy {
+    static func usesResolvedText(for character: Character) -> Bool {
+        let value = String(character)
+        guard value.unicodeScalars.count == 1,
+              let scalar = value.unicodeScalars.first else { return true }
+        switch scalar.value {
+        case 9, 10, 13, 32, 48...57, 65...90, 97...122:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
 enum ControllerTextCharacterMapper {
     static func action(for character: Character) -> KeyboardAction? {
         let value = String(character)

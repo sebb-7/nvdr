@@ -112,7 +112,7 @@ final class DualSenseControllerAdapter {
 
     func start() {
         guard connectObservation == nil, disconnectObservation == nil else { return }
-        if !isTextModeActive && !isQuickCommandModeActive { _ = quickNavigation.activate() }
+        if !isTextModeActive && !isQuickCommandModeActive { _ = quickNavigation.exit() }
         connectObservation = NotificationCenter.default.addObserver(
             of: GCController.self, for: .didConnect
         ) { [weak self] message in
@@ -408,10 +408,20 @@ final class DualSenseControllerAdapter {
     }
 
     private func handleTouchpadMove(x: Float, source: String) {
-        guard quickNavigation.isActive,
+        guard !isTextModeActive,
+              !isQuickCommandModeActive,
               !isActionLayerActiveForTouchpad,
               !touchpadContactSuppressed,
               let direction = touchpadRotor.move(x: x) else { return }
+
+        if !quickNavigation.isActive {
+            _ = quickNavigation.activate()
+            diagnostics.observe(
+                source: .controller,
+                result: "Touchpad: Quick Navigation activated by rotor swipe"
+            )
+        }
+
         let rotorOrder = mappings.activeProfile.quickNavigationOrder
         let change = direction > 0
             ? quickNavigation.nextCategoryChange(in: rotorOrder)
@@ -698,31 +708,51 @@ final class DualSenseControllerAdapter {
                         announce("Quick Bar action is unassigned")
                         return true
                     }
-                    _ = executeQuickBarAction(action, input: input, eventID: eventID, recordAsLast: true)
+                    let autoExit = mappings.activeProfile.quickNavigationAutoExitAfterAction
+                    let started = executeQuickBarAction(
+                        action,
+                        input: input,
+                        eventID: eventID,
+                        recordAsLast: true
+                    )
+                    if started {
+                        completeQuickNavigationAction(autoExit: autoExit)
+                    }
                 case .profiles:
                     guard let profile = quickNavigation.selectedProfile(in: mappings.profiles) else {
                         announce("No profiles")
                         return true
                     }
+                    let autoExit = mappings.activeProfile.quickNavigationAutoExitAfterAction
                     if let name = mappings.activateProfile(id: profile.id) {
                         lastQuickBarAction = nil
-                        if settings.hapticFeedbackEnabled { controllerHaptics.play(.boundary) }
+                        if settings.hapticFeedbackEnabled && !autoExit {
+                            controllerHaptics.play(.boundary)
+                        }
                         announce("Profile: \(name)")
+                        completeQuickNavigationAction(autoExit: autoExit)
                     }
                 case .editing:
                     let editingAction = quickNavigation.selectedEditingAction()
+                    let autoExit = mappings.activeProfile.quickNavigationAutoExitAfterAction
                     let started = start(
                         action: .keyboard(editingAction.keyboardAction),
                         input: input,
                         eventID: eventID
                     )
                     if started {
-                        resetTouchpadGesture()
-                        _ = quickNavigation.exit()
-                        announce("\(editingAction.rawValue). Quick Navigation off.")
+                        completeQuickNavigationAction(autoExit: autoExit)
                     }
                 default:
-                    start(action: .keyboard(.init(key: .enter)), input: input, eventID: eventID)
+                    let autoExit = mappings.activeProfile.quickNavigationAutoExitAfterAction
+                    let started = start(
+                        action: .keyboard(.init(key: .enter)),
+                        input: input,
+                        eventID: eventID
+                    )
+                    if started {
+                        completeQuickNavigationAction(autoExit: autoExit)
+                    }
                 }
             default:
                 return false
@@ -730,6 +760,19 @@ final class DualSenseControllerAdapter {
             return true
         }
         return false
+    }
+
+    private func completeQuickNavigationAction(autoExit: Bool) {
+        guard autoExit else { return }
+        resetTouchpadGesture()
+        _ = quickNavigation.exit()
+        diagnostics.observe(
+            source: .controller,
+            result: "Quick Navigation: activated action completed; returned to Base"
+        )
+        if settings.hapticFeedbackEnabled {
+            controllerHaptics.play(.quickNavigationCompleted)
+        }
     }
 
     @discardableResult
@@ -1086,7 +1129,6 @@ final class DualSenseControllerAdapter {
             _ = quickNavigation.exit()
         } else {
             releaseActiveActions()
-            _ = quickNavigation.activate()
         }
         announce(active ? "Text Mode" : "Text Mode off")
     }
@@ -1139,7 +1181,7 @@ final class DualSenseControllerAdapter {
 
     private func setQuickCommandMode(
         _ active: Bool,
-        restoreQuickNavigation: Bool = true,
+        restoreQuickNavigation: Bool = false,
         announceChange: Bool = true
     ) {
         resetTouchpadGesture()
@@ -1288,13 +1330,8 @@ final class DualSenseControllerAdapter {
                 self.quickCommandBuffer = ""
                 self.preparedQuickCommand = nil
                 self.quickCommandStatus = "Command sent."
-                _ = self.quickNavigation.activate()
                 self.feedback.play(.success)
-                let section = self.quickNavigation.currentSectionAnnouncement(
-                    quickBar: self.mappings.activeProfile.quickBar,
-                    profiles: self.mappings.profiles
-                )
-                self.announce("Command sent. Quick Navigation. \(section).")
+                self.announce("Command sent.")
             case .unsupported:
                 self.quickCommandStatus = "Quick Command is unsupported by the active target."
                 self.diagnostics.observe(source: .controller, result: "Quick Command: executor unsupported")
@@ -1973,17 +2010,16 @@ final class DualSenseControllerAdapter {
     }
 
     private func routeTextInsertion(_ character: Character) async -> RemoteIntentResult {
-        if let action = ControllerTextCharacterMapper.action(for: character) {
+        if !TextModeCharacterTransportPolicy.usesResolvedText(for: character),
+           let action = ControllerTextCharacterMapper.action(for: character) {
             return await routeTextTap(action, diagnostic: "Text Mode: key transmitted")
         }
 
         guard let targetID = router.activeTargetID else {
-            diagnostics.observe(source: .controller, result: "Text Mode: unsupported text; no active target")
+            diagnostics.observe(source: .controller, result: "Text Mode: resolved text; no active target")
             return .unavailable("No remote target is active.")
         }
-        // The Windows bridge intentionally implements sendText using the
-        // slave clipboard. Use it only where there is no safe raw VK mapping.
-        diagnostics.observe(source: .controller, result: "Text Mode: unsupported text transmitted")
+        diagnostics.observe(source: .controller, result: "Text Mode: resolved text transmitted")
         return await router.route(.sendText(String(character)), to: targetID)
     }
 

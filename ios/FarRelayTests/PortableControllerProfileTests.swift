@@ -23,6 +23,10 @@ final class PortableControllerProfileTests: XCTestCase {
             restored.quickNavigationOrder,
             original.quickNavigationOrder
         )
+        XCTAssertEqual(
+            restored.quickNavigationAutoExitAfterAction,
+            original.quickNavigationAutoExitAfterAction
+        )
     }
 
     func testPortableJSONUsesStableHumanReadableSchema() throws {
@@ -111,11 +115,17 @@ final class PortableControllerProfileTests: XCTestCase {
         profile.setAction(.layer(.init()), for: .rightShoulder)
         profile.setAction(.quickNavigation(.toggle), for: .touchpadPress)
         profile.setAction(.farRelay(.quickCommandMode), for: .square)
-        profile.setAction(
-            .keyboard(.init(key: .f7, modifiers: [.nvda])),
-            for: .cross,
-            layerID: ControllerLayerDefinition.extendedID
-        )
+        if let extendedIndex = profile.layers.firstIndex(
+            where: { $0.id == ControllerLayerDefinition.extendedID }
+        ) {
+            profile.layers[extendedIndex].setAction(
+                .keyboard(.init(key: .f7, modifiers: [.nvda])),
+                for: .cross
+            )
+        } else {
+            XCTFail("Expected Extended layer in blank profile")
+        }
+        profile.quickNavigationAutoExitAfterAction = false
         profile.quickBar = [
             .init(action: .keyboard(.init(key: .c, modifiers: [.control]))),
             .init(action: .farRelay(.repeatLastQuickCommand)),

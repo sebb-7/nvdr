@@ -232,6 +232,7 @@ struct FarRelayPortableControllerProfile: Codable, Equatable, Sendable {
     var layers: [FarRelayPortableLayer]
     var actionBar: [FarRelayPortableAction?]
     var rotor: [String]
+    var quickNavigationAutoExitAfterAction: Bool?
 }
 
 struct FarRelayControllerProfileManifest: Codable, Equatable, Sendable {
@@ -269,7 +270,8 @@ struct FarRelayControllerProfileManifest: Codable, Equatable, Sendable {
             actionBar: profile.quickBar.map { entry in
                 entry.action.map(FarRelayPortableAction.init)
             },
-            rotor: profile.quickNavigationOrder.map(Self.portableRotorIdentifier)
+            rotor: profile.quickNavigationOrder.map(Self.portableRotorIdentifier),
+            quickNavigationAutoExitAfterAction: profile.quickNavigationAutoExitAfterAction
         )
     }
 
@@ -286,6 +288,7 @@ struct FarRelayControllerProfileManifest: Codable, Equatable, Sendable {
         Layers: \(profile.layers.count)
         Action Bar: \(assignedActionBar) actions
         Rotor: \(profile.rotor.count) sections
+        Exit Quick Navigation After Action: \((profile.quickNavigationAutoExitAfterAction ?? true) ? "On" : "Off")
         """
     }
 
@@ -376,7 +379,8 @@ struct FarRelayControllerProfileManifest: Codable, Equatable, Sendable {
             bindings: baseBindings,
             layers: layers,
             quickBar: actionBar,
-            quickNavigationOrder: rotor
+            quickNavigationOrder: rotor,
+            quickNavigationAutoExitAfterAction: profile.quickNavigationAutoExitAfterAction ?? true
         )
     }
 

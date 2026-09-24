@@ -4,6 +4,7 @@ import GameController
 enum ControllerHapticCue: Sendable {
     case selection
     case boundary
+    case quickNavigationCompleted
 }
 
 @MainActor
@@ -48,6 +49,11 @@ final class ControllerHapticFeedback {
             events = [
                 transient(intensity: 0.75, sharpness: 0.45, time: 0),
                 transient(intensity: 0.75, sharpness: 0.45, time: 0.09)
+            ]
+        case .quickNavigationCompleted:
+            events = [
+                transient(intensity: 0.5, sharpness: 0.75, time: 0),
+                transient(intensity: 0.5, sharpness: 0.75, time: 0.08)
             ]
         }
 

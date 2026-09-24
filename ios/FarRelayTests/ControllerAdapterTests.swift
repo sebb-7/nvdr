@@ -182,7 +182,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(adapter.isTextModeActive)
         XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         adapter.exitTextMode()
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         adapter.receiveForTesting(input: .dpadUp, pressed: true, at: 1.2)
         await settle()
         adapter.stop()
@@ -632,7 +632,7 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertTrue(adapter.isQuickCommandModeActive)
 
         adapter.exitQuickCommandMode()
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
 
         adapter.receiveTouchpadContactForTesting(.moving, x: 0.0)
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .quickBar)
@@ -656,7 +656,7 @@ final class ControllerAdapterTests: XCTestCase {
         await settle()
 
         XCTAssertFalse(adapter.isQuickCommandModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         XCTAssertTrue(sink.transitions.isEmpty)
     }
 
@@ -748,15 +748,52 @@ final class ControllerAdapterTests: XCTestCase {
 
         XCTAssertEqual(mappings.activeProfileID, secondID)
         XCTAssertTrue(sink.transitions.isEmpty)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
 
-        // Profile activation clears transient touch state but preserves Quick
-        // Navigation, so the next fresh one-finger contact must still rotate.
+        // Auto-exit returns to Base. A new touchpad swipe activates Quick
+        // Navigation again and performs the intended category move.
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+    }
+
+    func testQuickBarAutoExitCanBeDisabledPerProfile() async {
+        let (mappings, adapter, sink, _, _) = makeAdapter()
+        mappings.setQuickNavigationAutoExitAfterAction(false)
+        mappings.saveDraft()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.1)
+        await settle()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertEqual(
+            sink.transitions,
+            [
+                .init(VK.lwin, true), .init(0x44, true),
+                .init(0x44, false), .init(VK.lwin, false),
+            ]
+        )
+    }
+
+    func testQuickBarAutoExitReturnsToBaseByDefault() async {
+        let (_, adapter, sink, _, diagnostics) = makeAdapter()
+
+        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        adapter.receiveForTesting(input: .cross, pressed: true, at: 1)
+        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.1)
+        await settle()
+
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(sink.transitions.contains { $0.key == VK.return })
+        XCTAssertTrue(
+            diagnostics.entries.contains {
+                $0.result == "Quick Navigation: activated action completed; returned to Base"
+            }
+        )
     }
 
     func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
@@ -863,20 +900,14 @@ final class ControllerAdapterTests: XCTestCase {
         XCTAssertFalse(diagnostics.entries.contains { $0.result.contains("SECRET_SENTINEL_123") })
     }
 
-    func testTextModeSlashAndQuestionMarkUseBalancedRawKeyboardTransitions() async {
+    func testTextModeSlashAndQuestionMarkPreserveResolvedUnicode() async {
         let (_, adapter, sink, _, _) = makeAdapter()
         adapter.receiveForTesting(input: .touchpadPress, pressed: true, at: 1)
         _ = adapter.applyTextModeEditorValue("/?")
         await adapter.waitForTextOperationsForTesting()
 
-        XCTAssertEqual(sink.texts, [])
-        XCTAssertEqual(
-            sink.transitions,
-            [
-                .init(VK.oem2, true), .init(VK.oem2, false),
-                .init(VK.shift, true), .init(VK.oem2, true), .init(VK.oem2, false), .init(VK.shift, false)
-            ]
-        )
+        XCTAssertEqual(sink.texts, ["/", "?"])
+        XCTAssertTrue(sink.transitions.isEmpty)
     }
 
     func testTextModeSubmitSendsEnterAfterLiveTextThenExits() async {
@@ -896,7 +927,7 @@ final class ControllerAdapterTests: XCTestCase {
         )
         XCTAssertEqual(sink.texts, [])
         XCTAssertFalse(adapter.isTextModeActive)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
+        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
         XCTAssertEqual(adapter.textModeBuffer, "")
     }
 
@@ -1085,10 +1116,10 @@ final class ControllerAdapterTests: XCTestCase {
         _ = adapter.applyTextModeEditorValue(punctuation)
         await adapter.waitForTextOperationsForTesting()
 
-        XCTAssertEqual(sink.texts, [])
+        XCTAssertTrue(sink.texts.contains("/"))
+        XCTAssertTrue(sink.texts.contains("?"))
+        XCTAssertFalse(sink.transitions.contains(.init(VK.oem2, true)))
         XCTAssertFalse(sink.transitions.isEmpty)
-        XCTAssertTrue(sink.transitions.contains(.init(VK.oem2, true)))
-        XCTAssertTrue(sink.transitions.contains(.init(VK.shift, true)))
     }
 
     func testQuickCommandMultiModifierChordsKeepEveryModifierHeldForTarget() async {

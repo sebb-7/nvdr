@@ -296,7 +296,7 @@ struct ControllerBinding: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
-    static let currentSchemaVersion = 5
+    static let currentSchemaVersion = 6
     var schemaVersion: Int = currentSchemaVersion
     var id: UUID = UUID()
     var name: String = "Default Controller Profile"
@@ -307,9 +307,11 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
     var layers: [ControllerLayerDefinition] = []
     var quickBar: [QuickBarEntry] = QuickBarEntry.recommended
     var quickNavigationOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+    var quickNavigationAutoExitAfterAction: Bool = true
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, name, controller, bindings, layers, quickBar, quickNavigationOrder
+        case schemaVersion, id, name, controller, bindings, layers, quickBar
+        case quickNavigationOrder, quickNavigationAutoExitAfterAction
     }
 
     init(
@@ -320,7 +322,8 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         bindings: [ControllerBinding] = ControllerInput.allCases.map { .init(sourceInput: $0, action: nil) },
         layers: [ControllerLayerDefinition] = [],
         quickBar: [QuickBarEntry] = QuickBarEntry.recommended,
-        quickNavigationOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder
+        quickNavigationOrder: [QuickNavigationCategory] = QuickNavigationCategory.defaultOrder,
+        quickNavigationAutoExitAfterAction: Bool = true
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -330,6 +333,7 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
         self.layers = layers
         self.quickBar = quickBar
         self.quickNavigationOrder = quickNavigationOrder
+        self.quickNavigationAutoExitAfterAction = quickNavigationAutoExitAfterAction
     }
 
     init(from decoder: Decoder) throws {
@@ -350,6 +354,10 @@ struct ControllerProfile: Codable, Hashable, Identifiable, Sendable {
             [QuickNavigationCategory].self,
             forKey: .quickNavigationOrder
         ) ?? QuickNavigationCategory.defaultOrder
+        quickNavigationAutoExitAfterAction = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .quickNavigationAutoExitAfterAction
+        ) ?? true
     }
 
     func action(for input: ControllerInput) -> ControllerAction? { bindings.first { $0.sourceInput == input }?.action }
@@ -681,6 +689,10 @@ final class ControllerMappingSettings {
 
     func renameDraftProfile(_ name: String) {
         draftProfile.name = name
+    }
+
+    func setQuickNavigationAutoExitAfterAction(_ enabled: Bool) {
+        draftProfile.quickNavigationAutoExitAfterAction = enabled
     }
 
     func setQuickBarAction(_ action: ControllerAction?, entryID: UUID) {
