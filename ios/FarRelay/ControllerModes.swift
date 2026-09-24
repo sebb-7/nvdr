@@ -384,8 +384,8 @@ struct ControllerBatteryAlertTracker: Sendable {
         guard let percent else { return nil }
         let clamped = min(max(percent, 0), 100)
 
-        if isCharging && clamped > 20 {
-            reset()
+        if isCharging {
+            if clamped > 20 { reset() }
             return nil
         }
 
