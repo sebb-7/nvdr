@@ -179,6 +179,34 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.stop()
     }
 
+    func testSelectedPeerPathStaysStickyWhileAudioIsLive() {
+        XCTAssertFalse(RemSoundAudioReceiver.shouldHandoverPeerPath(
+            currentPathExists: true,
+            lastAudioAge: 0.25,
+            selectedAge: 5
+        ))
+        XCTAssertTrue(RemSoundAudioReceiver.shouldHandoverPeerPath(
+            currentPathExists: true,
+            lastAudioAge: 1.25,
+            selectedAge: 5
+        ))
+        XCTAssertFalse(RemSoundAudioReceiver.shouldHandoverPeerPath(
+            currentPathExists: true,
+            lastAudioAge: nil,
+            selectedAge: 0.5
+        ))
+        XCTAssertTrue(RemSoundAudioReceiver.shouldHandoverPeerPath(
+            currentPathExists: true,
+            lastAudioAge: nil,
+            selectedAge: 1.5
+        ))
+        XCTAssertTrue(RemSoundAudioReceiver.shouldHandoverPeerPath(
+            currentPathExists: false,
+            lastAudioAge: 0,
+            selectedAge: 0
+        ))
+    }
+
     func testStaleAndMalformedPacketsCannotOpenOrContaminateAStream() async throws {
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_932, password: "phase1"))
