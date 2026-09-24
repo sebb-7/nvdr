@@ -453,12 +453,9 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.receiveForTesting(input: .cross, pressed: true, at: 1.1)
         adapter.receiveForTesting(input: .cross, pressed: false, at: 1.2)
 
-        // Quick Bar -> Profiles -> Controller Mapping -> Editing -> Headings
-        // takes four horizontal swipes. Right-stick Down then moves to the next
-        // heading and Cross becomes Enter.
-        adapter.beginTouchpadSwipeForTesting(x: -0.5)
-        adapter.moveTouchpadForTesting(x: 0.1)
-        adapter.endTouchpadSwipeForTesting()
+        // Quick Bar -> Profiles -> Editing -> Headings takes three horizontal
+        // swipes. Right-stick Down then moves to the next heading and Cross
+        // becomes Enter.
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
@@ -704,7 +701,7 @@ final class ControllerAdapterTests: XCTestCase {
     func testEditingRotorExecutesSelectedEditingChordThenExitsQuickNavigation() async {
         let (_, adapter, sink, _, _) = makeAdapter()
 
-        for _ in 0..<3 {
+        for _ in 0..<2 {
             adapter.beginTouchpadSwipeForTesting(x: -0.5)
             adapter.moveTouchpadForTesting(x: 0.1)
             adapter.endTouchpadSwipeForTesting()
@@ -758,36 +755,8 @@ final class ControllerAdapterTests: XCTestCase {
         adapter.beginTouchpadSwipeForTesting(x: -0.5)
         adapter.moveTouchpadForTesting(x: 0.1)
         adapter.endTouchpadSwipeForTesting()
-        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
-        XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
-
-        adapter.beginTouchpadSwipeForTesting(x: -0.5)
-        adapter.moveTouchpadForTesting(x: 0.1)
-        adapter.endTouchpadSwipeForTesting()
         XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .editing)
-    }
-
-    func testControllerMappingRotorRequestsPresentationWithoutSendingRemoteInput() async {
-        let (_, adapter, sink, _, _) = makeAdapter()
-        for _ in 0..<2 {
-            adapter.beginTouchpadSwipeForTesting(x: -0.5)
-            adapter.moveTouchpadForTesting(x: 0.1)
-            adapter.endTouchpadSwipeForTesting()
-        }
-        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
-        XCTAssertEqual(adapter.controllerMappingRequestGeneration, 0)
-
-        adapter.receiveForTesting(input: .cross, pressed: true, at: 1)
-        adapter.receiveForTesting(input: .cross, pressed: false, at: 1.1)
-        await settle()
-
-        XCTAssertEqual(adapter.controllerMappingRequestGeneration, 1)
-        XCTAssertFalse(adapter.isQuickNavigationActiveForTesting)
-        XCTAssertTrue(sink.transitions.isEmpty)
-
-        adapter.restoreQuickNavigationAfterControllerMapping()
         XCTAssertTrue(adapter.isQuickNavigationActiveForTesting)
-        XCTAssertEqual(adapter.quickNavigationCategoryForTesting, .controllerMapping)
     }
 
     func testRepeatLastQuickBarActionReplaysKeyboardActionWithoutSyntheticEnter() async {
