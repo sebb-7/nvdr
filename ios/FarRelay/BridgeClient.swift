@@ -560,8 +560,6 @@ final class BridgeClient {
     /// It never sends NVDA+S or changes the Windows/NVDA Remote configuration.
     /// Speech events continue to arrive and Last spoken continues to update.
     func setLocalSpeechOutputEnabled(_ enabled: Bool) {
-        settings?.remoteSpeechOutputEnabled = enabled
-        settings?.save()
         guard !enabled else { return }
         let speech = self.speech
         Task { await speech.cancel() }
