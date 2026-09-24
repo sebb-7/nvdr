@@ -5,7 +5,7 @@ import Observation
 @Observable
 final class AudioReceiverModel {
     private let receiver: RemSoundAudioReceiver
-    private let playback: AudioPlayback
+    private var playback: AudioPlayback?
     private let discovery = RemSoundDiscoveryAnnouncer()
     private var updatesTask: Task<Void, Never>?
     private(set) var snapshot = AudioReceiverSnapshot()
@@ -13,9 +13,6 @@ final class AudioReceiverModel {
 
     init(receiver: RemSoundAudioReceiver = RemSoundAudioReceiver()) {
         self.receiver = receiver
-        playback = AudioPlayback(playout: receiver.playout) { [receiver] message in
-            Task { await receiver.playbackFailed(message) }
-        }
         discovery.onDiagnosticsChanged = { [weak self] diagnostics in
             self?.discoveryDiagnostics = diagnostics
         }
@@ -24,19 +21,23 @@ final class AudioReceiverModel {
             let updates = await receiver.updates()
             for await snapshot in updates {
                 guard !Task.isCancelled else { return }
-                self?.snapshot = snapshot
-                self?.playback.setMuted(snapshot.muted)
-                self?.playback.setVolume(snapshot.volume)
+                guard let self else { return }
+                self.snapshot = snapshot
+                self.playback?.setMuted(snapshot.muted)
+                self.playback?.setVolume(snapshot.volume)
                 switch snapshot.state {
                 case .reconnecting:
-                    self?.playback.stop()
-                    self?.playback.resetFailureLatch()
+                    self.playback?.stop()
+                    self.playback?.resetFailureLatch()
                 case .stopped, .failed:
-                    self?.playback.stop()
+                    self.playback?.stop()
                 case .connecting, .authenticating:
-                    self?.playback.resetFailureLatch()
+                    self.playback?.resetFailureLatch()
                 case .buffering, .playing:
-                    self?.playback.startIfNeeded()
+                    let playback = self.ensurePlayback()
+                    playback.setMuted(snapshot.muted)
+                    playback.setVolume(snapshot.volume)
+                    playback.startIfNeeded()
                 case .idle, .waitingForAudio:
                     break
                 }
@@ -46,6 +47,15 @@ final class AudioReceiverModel {
 
     isolated deinit {
         updatesTask?.cancel()
+    }
+
+    private func ensurePlayback() -> AudioPlayback {
+        if let playback { return playback }
+        let playback = AudioPlayback(playout: receiver.playout) { [receiver] message in
+            Task { await receiver.playbackFailed(message) }
+        }
+        self.playback = playback
+        return playback
     }
 
     func start(host: String, port: UInt16 = 47_830, password: String) {
