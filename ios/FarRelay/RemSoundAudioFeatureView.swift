@@ -13,7 +13,7 @@ struct RemSoundAudioFeatureView: View {
         Form {
             Section("Windows RemSound peer") {
                 Text(senderDescription)
-                Text("This is the Windows PC address, not the iPhone address. Start audio to announce FarRelay iOS directly to that RemSound app. Then select FarRelay iOS in RemSound's discovered peers and send PCM audio to it on UDP port \(port).")
+                Text("This is the Windows PC address, not the iPhone address. Start audio to announce FarRelay iOS directly to that RemSound app. Then select FarRelay iOS in RemSound's discovered peers and send PCM or Opus audio to it on UDP port \(port).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Text("RemSound does not use an interactive pairing request for this direct connection. Windows heartbeat proves reachability; the shared password is validated when its audio Format packet supplies the password fingerprint.")
@@ -30,7 +30,13 @@ struct RemSoundAudioFeatureView: View {
                 Button(actionTitle, systemImage: actionSymbol) {
                     switch audioReceiver.snapshot.state {
                     case .idle, .stopped, .failed:
-                        audioReceiver.start(host: host, port: port, password: password)
+                        audioReceiver.start(
+                            host: host,
+                            port: port,
+                            password: password,
+                            targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
+                            autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
+                        )
                     case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
                         audioReceiver.stop()
                     }
@@ -56,6 +62,36 @@ struct RemSoundAudioFeatureView: View {
                     Text("Playback volume")
                 }
                 .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
+
+                Stepper(
+                    "Playback delay: \(settings.remSoundTargetLatencyMilliseconds) milliseconds",
+                    value: Binding(
+                        get: { settings.remSoundTargetLatencyMilliseconds },
+                        set: { milliseconds in
+                            settings.remSoundTargetLatencyMilliseconds = milliseconds
+                            settings.save()
+                            audioReceiver.setTargetLatencyMilliseconds(milliseconds)
+                        }
+                    ),
+                    in: 20...500,
+                    step: 10
+                )
+
+                Toggle("Adjust playback delay automatically", isOn: Binding(
+                    get: { settings.remSoundAutoTuneLatencyEnabled },
+                    set: { enabled in
+                        settings.remSoundAutoTuneLatencyEnabled = enabled
+                        settings.save()
+                        audioReceiver.setAutoTuneLatencyEnabled(enabled)
+                    }
+                ))
+
+                Text(settings.remSoundAutoTuneLatencyEnabled
+                     ? "FarRelay starts from your selected delay and adapts to measured packet and render gaps. Turn this off for a stable fixed buffer."
+                     : "Fixed-delay mode is the default. 80 milliseconds matches the official RemSound receiver's stable default and avoids silently shrinking toward an underrun-prone buffer.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
                 Text("Playback-only audio. FarRelay never captures the microphone in Phase 1.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -66,11 +102,12 @@ struct RemSoundAudioFeatureView: View {
                 Text(receiverStatusLine)
                 Text("Format packets: \(audioReceiver.snapshot.statistics.formatPacketsReceived), compatible: \(audioReceiver.snapshot.statistics.compatibleFormatPacketsAccepted), unsupported: \(audioReceiver.snapshot.statistics.unsupportedFormatPackets)")
                 Text("Encrypted audio packets: \(audioReceiver.snapshot.statistics.encryptedAudioPacketsReceived), malformed: \(audioReceiver.snapshot.statistics.malformedPackets), unsupported: \(audioReceiver.snapshot.statistics.unsupportedPackets), address checks: \(audioReceiver.snapshot.statistics.addrChecksReceived)")
-                Text("Dropped: \(audioReceiver.snapshot.statistics.packetsDropped), lost: \(audioReceiver.snapshot.statistics.packetsLost), reordered: \(audioReceiver.snapshot.statistics.packetsReordered)")
+                Text("Dropped: \(audioReceiver.snapshot.statistics.packetsDropped), lost: \(audioReceiver.snapshot.statistics.packetsLost), reordered: \(audioReceiver.snapshot.statistics.packetsReordered), duplicates: \(audioReceiver.snapshot.statistics.packetsDuplicated)")
+                Text("Duplicate peer paths suppressed: \(audioReceiver.snapshot.statistics.duplicatePathsSuppressed), path handovers: \(audioReceiver.snapshot.statistics.pathHandovers)")
                 Text("Authentication successes: \(audioReceiver.snapshot.statistics.authenticationSuccesses), failures: \(audioReceiver.snapshot.statistics.authenticationFailures), encrypted-frame failures: \(audioReceiver.snapshot.statistics.encryptedAudioAuthenticationFailures), buffer frames: \(audioReceiver.snapshot.statistics.bufferDepthFrames), underruns: \(audioReceiver.snapshot.statistics.underruns)")
                 if let sampleRate = audioReceiver.snapshot.sampleRate,
                    let channels = audioReceiver.snapshot.channelCount {
-                    Text("Format: \(sampleRate) Hz, \(channels) channels, PCM")
+                    Text("Format: \(sampleRate) Hz, \(channels) channels, \(audioReceiver.snapshot.codec == .opus ? "Opus" : "PCM")")
                 }
                 Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
                     AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
