@@ -24,6 +24,9 @@ packages:
   SwiftTerm:
     url: https://github.com/sebb-7/SwiftTerm.git
     revision: "3a7f37e39d2c273f8fcba92c63c8a767a1e1e00d"
+  swift-opus:
+    url: https://github.com/alta/swift-opus.git
+    exactVersion: "0.0.2"
 
 targets:
   FarRelay:
@@ -64,6 +67,8 @@ targets:
       - package: swift-crypto
         product: _CryptoExtras
       - package: SwiftTerm
+      - package: swift-opus
+        product: Copus
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sebb7.farrelay

@@ -98,11 +98,38 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertNil(scheduler.roundTripMilliseconds(forPong: matchedPong, now: 3_000))
     }
 
-    func testSyntacticallyValidOpusFormatIsClassifiedSeparatelyFromMalformed() throws {
-        var opus = try XCTUnwrap(Data(hex: "80BB0000020000001800000001000000060000000065040002000000F00000000000000073182B124D200DD0"))
-        XCTAssertEqual(RemSoundFormat.classify(opus), .unsupported(.opus))
-        opus.removeLast(14)
-        XCTAssertEqual(RemSoundFormat.classify(opus), .malformed)
+    func testCurrentWindowsOpusBroadcastAndLiveFormatsParseStrictly() throws {
+        let broadcast = try XCTUnwrap(RemSoundFormat.parse(currentOpusPayload(frameSamples: 960)))
+        XCTAssertEqual(broadcast.codec, .opus)
+        XCTAssertEqual(broadcast.opusMode, .broadcast)
+        XCTAssertEqual(broadcast.frameDurationMilliseconds, 20)
+        XCTAssertEqual(broadcast.lane, .mixed)
+        XCTAssertEqual(broadcast.captureLatencyMilliseconds, 0.7)
+
+        let live = try XCTUnwrap(RemSoundFormat.parse(currentOpusPayload(frameSamples: 120)))
+        XCTAssertEqual(live.opusMode, .live)
+        XCTAssertEqual(live.frameDurationMilliseconds, 2.5)
+
+        var malformed = currentOpusPayload(frameSamples: 960)
+        malformed[33] = 1 // Reserved extension bytes must stay zero.
+        XCTAssertEqual(RemSoundFormat.classify(malformed), .malformed)
+
+        var invalidMetadata = currentOpusPayload(frameSamples: 960)
+        invalidMetadata[8] = 24 // Opus uses 16-bit / four-byte-aligned metadata.
+        XCTAssertEqual(RemSoundFormat.classify(invalidMetadata), .unsupported(2))
+    }
+
+    func testLibopusDecoderProducesStereoPCMAndSurvivesMalformedPacket() throws {
+        let format = try XCTUnwrap(RemSoundFormat.parse(currentOpusPayload(frameSamples: 960)))
+        let decoder = try XCTUnwrap(RemSoundAudioDecoder(format: format))
+        XCTAssertNil(decoder.decode(Data()))
+
+        // Standard libopus all-silence packet (20 ms / 960 samples at 48 kHz).
+        let decoded = try XCTUnwrap(decoder.decode(Data([0xF8, 0xFF, 0xFE])))
+        XCTAssertEqual(decoded.sampleRate, 48_000)
+        XCTAssertEqual(decoded.channels, 2)
+        XCTAssertEqual(decoded.samples.count, 1_920)
+        XCTAssertTrue(decoded.samples.allSatisfy { abs($0) <= 1 })
     }
 
     func testMalformedHeadersAndUnsupportedFormatsFailClosed() throws {
@@ -147,6 +174,24 @@ final class RemSoundProtocolTests: XCTestCase {
         XCTAssertLessThanOrEqual(queue.totalFrameCount, 4)
         XCTAssertFalse(queue.append(AudioPCMFrame(samples: Array(repeating: 0, count: 10), sampleRate: 48_000, channels: 2)))
     }
+}
+
+private func currentOpusPayload(frameSamples: Int32) -> Data {
+    // Current Windows SenderLane: 48 kHz, stereo, 16-bit metadata, 192 kb/s,
+    // codec 2, lane Mixed, followed by the shared-password fingerprint and
+    // capture-latency ticks (0.1 ms each).
+    var payload = Data()
+    for value: Int32 in [48_000, 2, 16, 1, 4, 192_000, 2, frameSamples] {
+        let bits = UInt32(bitPattern: value)
+        payload.append(UInt8(truncatingIfNeeded: bits))
+        payload.append(UInt8(truncatingIfNeeded: bits >> 8))
+        payload.append(UInt8(truncatingIfNeeded: bits >> 16))
+        payload.append(UInt8(truncatingIfNeeded: bits >> 24))
+    }
+    payload.append(contentsOf: [0, 0, 0, 0]) // lane + reserved bytes
+    payload.append(Data(hex: "73182B124D200DD0") ?? Data())
+    payload.append(contentsOf: [7, 0])
+    return payload
 }
 
 extension Data {

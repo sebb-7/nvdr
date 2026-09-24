@@ -79,6 +79,12 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var bufferDepthFrames = 0
     var bufferDroppedFrames = 0
     var underruns = 0
+    var latePacketsDiscarded = 0
+    var opusPacketsDecoded = 0
+    var opusDecodeFailures = 0
+    var opusFECRecoveries = 0
+    var opusPLCFrames = 0
+    var jitterTargetFrames = 0
     var reconnects = 0
     var lastError: String?
 }
@@ -91,6 +97,9 @@ struct AudioReceiverSnapshot: Equatable, Sendable {
     var isListening = false
     var sampleRate: Int?
     var channelCount: Int?
+    var codec: RemSoundCodec?
+    var opusMode: RemSoundOpusMode?
+    var frameDurationMilliseconds: Double?
     var statistics = AudioReceiverStatistics()
 }
 

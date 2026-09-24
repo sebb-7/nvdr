@@ -124,7 +124,7 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertNil(unrelatedReply)
     }
 
-    func testUnsupportedOpusFormatIsNotReportedAsMalformedOrPasswordFailure() async throws {
+    func testInvalidOpusFormatIsNotReportedAsMalformedOrPasswordFailure() async throws {
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_943, password: "phase1"))
         let opus = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040002000000F00000000000000073182B124D200DD00700"))
@@ -134,6 +134,22 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         XCTAssertEqual(snapshot.statistics.unsupportedFormatPackets, 1)
         XCTAssertEqual(snapshot.statistics.malformedPackets, 0)
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        await receiver.stop()
+    }
+
+    func testAuthenticatedOpusFormatPreparesBroadcastPipelineWithoutTouchingControlState() async throws {
+        let bridge = BridgeClient(speech: SpeechOutput())
+        let receiver = RemSoundAudioReceiver()
+        await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_943, password: "phase1"))
+        await receiver.ingest(try opusFormatPacket(frameSamples: 960))
+
+        let snapshot = await receiver.snapshot()
+        XCTAssertEqual(snapshot.state, .buffering)
+        XCTAssertEqual(snapshot.codec, .opus)
+        XCTAssertEqual(snapshot.opusMode, .broadcast)
+        XCTAssertEqual(snapshot.statistics.jitterTargetFrames, 5_760)
+        XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        XCTAssertEqual(bridge.status, .idle)
         await receiver.stop()
     }
 
@@ -297,5 +313,20 @@ private func makeAudioPacket(sequence: UInt32, frameID: UInt32, streamID: UInt16
     packet.append(nonceData)
     packet.append(sealed.tag)
     packet.append(sealed.ciphertext)
+    return packet
+}
+
+private func opusFormatPacket(frameSamples: Int32) throws -> Data {
+    var packet = try XCTUnwrap(Data(hex: "524D4E44010134127B000000"))
+    for value: Int32 in [48_000, 2, 16, 1, 4, 192_000, 2, frameSamples] {
+        let bits = UInt32(bitPattern: value)
+        packet.append(UInt8(truncatingIfNeeded: bits))
+        packet.append(UInt8(truncatingIfNeeded: bits >> 8))
+        packet.append(UInt8(truncatingIfNeeded: bits >> 16))
+        packet.append(UInt8(truncatingIfNeeded: bits >> 24))
+    }
+    packet.append(contentsOf: [0, 0, 0, 0])
+    packet.append(try XCTUnwrap(Data(hex: "73182B124D200DD0")))
+    packet.append(contentsOf: [7, 0])
     return packet
 }

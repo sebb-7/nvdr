@@ -2,11 +2,14 @@ import CryptoKit
 import Foundation
 import Network
 
-/// RemSound UDP receiver for the deliberately narrow Phase 1 PCM subset.
+/// RemSound UDP receiver for the current PCM and Opus transport contracts.
 /// Its mutable state is actor-isolated and it owns no SSH, NVDA, controller,
 /// keyboard, or RemoteIntent references.
 actor RemSoundAudioReceiver: AudioReceiver {
-    private static let startupBufferFrames = 960 // 20 ms at the Phase 1 48 kHz target.
+    private static let pcmStartupBufferFrames = 960 // Preserve the proven PCM 20 ms baseline.
+    private static let liveStartupBufferFrames = 960
+    private static let broadcastStartupBufferFrames = 5_760 // 120 ms at 48 kHz.
+    private static let maximumConcealedFramesPerGap = 8
     private static let maximumDatagramBytes = 2_048
     private static let maximumInboundConnections = 4
     private static let maximumPendingFrameDeliveries = 16
@@ -27,6 +30,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
     private var selectedPeerConnectionID: UUID?
     private var assembler = RemSoundPCMFrameAssembler()
     private var queuedPCM = BoundedPCMQueue()
+    private var audioDecoder: RemSoundAudioDecoder?
+    private var startupBufferFrameTarget = Self.pcmStartupBufferFrames
     private var playbackArmed = false
     private var playbackFailureMessage: String?
     private var lastTelemetryPublishNanoseconds: UInt64 = 0
@@ -101,6 +106,17 @@ actor RemSoundAudioReceiver: AudioReceiver {
 
     func playbackDropped(frameCount: Int) {
         receiverSnapshot.statistics.bufferDroppedFrames += frameCount
+        publishTelemetryIfDue()
+    }
+
+    /// Called by the renderer only when its scheduled AVAudio buffers drain
+    /// while this receiver still believes a stream is playing. The next decoded
+    /// frames must meet the startup target again before reporting Playing.
+    func playbackUnderrun() {
+        guard receiverSnapshot.state == .playing, playbackFailureMessage == nil else { return }
+        receiverSnapshot.statistics.underruns += 1
+        playbackArmed = false
+        receiverSnapshot.state = .buffering
         publishTelemetryIfDue()
     }
 
@@ -437,9 +453,9 @@ actor RemSoundAudioReceiver: AudioReceiver {
         switch RemSoundFormat.classify(payload) {
         case .supported(let supported):
             format = supported
-        case .unsupported(let codec):
+        case .unsupported(let rawCodec):
             receiverSnapshot.statistics.unsupportedFormatPackets += 1
-            receiverSnapshot.statistics.lastError = "Unsupported RemSound format: \(codec == .opus ? "Opus" : "PCM variant")."
+            receiverSnapshot.statistics.lastError = "Unsupported RemSound format codec: \(rawCodec)."
             if receiverSnapshot.state == .connecting || receiverSnapshot.state == .authenticating {
                 receiverSnapshot.state = .waitingForAudio
             }
@@ -461,13 +477,33 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
         receiverSnapshot.statistics.authenticationSuccesses += 1
         receiverSnapshot.statistics.compatibleFormatPacketsAccepted += 1
-        activeStreamID = streamID
-        activeFormat = format
-        expectedSequence = nil
-        assembler.reset()
+
+        // Windows repeats its Format packet every 250 ms. Only a stream or
+        // format identity change retires decoder, FEC, partial PCM and playout
+        // state; an ordinary re-announcement must never create a playback gap.
+        let isNewStream = activeStreamID != streamID || activeFormat != format
+        if isNewStream {
+            guard let decoder = RemSoundAudioDecoder(format: format) else {
+                playbackFailureMessage = "Unable to prepare the RemSound \(format.codec == .opus ? "Opus" : "PCM") decoder. Reconnect audio to try again."
+                fail(playbackFailureMessage ?? "Unable to prepare audio decoder.")
+                return
+            }
+            activeStreamID = streamID
+            activeFormat = format
+            audioDecoder = decoder
+            expectedSequence = nil
+            assembler.reset()
+            queuedPCM = BoundedPCMQueue()
+            playbackArmed = false
+            startupBufferFrameTarget = startupBufferTarget(for: format)
+            receiverSnapshot.statistics.jitterTargetFrames = startupBufferFrameTarget
+        }
         lastSenderActivity = .now
         receiverSnapshot.sampleRate = format.sampleRate
         receiverSnapshot.channelCount = format.channels
+        receiverSnapshot.codec = format.codec
+        receiverSnapshot.opusMode = format.opusMode
+        receiverSnapshot.frameDurationMilliseconds = format.frameDurationMilliseconds
         if let playbackFailureMessage {
             receiverSnapshot.state = .failed(playbackFailureMessage)
         } else {
@@ -478,39 +514,138 @@ actor RemSoundAudioReceiver: AudioReceiver {
 
     private func ingestAudio(_ payload: Data, streamID: UInt16, sequence: UInt32) {
         guard playbackFailureMessage == nil else { return }
-        guard activeStreamID == streamID, let format = activeFormat, let key else {
+        guard activeStreamID == streamID, let format = activeFormat, let key, let audioDecoder else {
             // A packet from a former stream cannot contaminate its replacement.
             dropPacket()
             return
         }
-        guard acceptSequence(sequence) else { return }
-        guard let part = RemSoundPCMPart.parse(payload) else {
-            dropPacket(malformed: true)
-            return
+        guard let sequenceEvent = acceptSequence(sequence) else { return }
+
+        switch format.codec {
+        case .pcm:
+            guard let part = RemSoundPCMPart.parse(payload) else {
+                dropPacket(malformed: true)
+                return
+            }
+            let encryptedFrame: Data
+            switch assembler.append(part) {
+            case .pending:
+                return
+            case .rejected:
+                dropPacket()
+                return
+            case .complete(let completed):
+                encryptedFrame = completed
+            }
+            guard let plaintext = RemSoundCrypto.decrypt(encryptedFrame, using: key) else {
+                recordEncryptedAudioAuthenticationFailure()
+                return
+            }
+            guard let frame = audioDecoder.decode(plaintext) else {
+                dropPacket(malformed: true)
+                return
+            }
+            enqueueDecoded(frame, format: format)
+
+        case .opus:
+            guard let plaintext = RemSoundCrypto.decrypt(payload, using: key) else {
+                recordEncryptedAudioAuthenticationFailure()
+                return
+            }
+            recoverOpusGap(sequenceEvent, packet: plaintext, decoder: audioDecoder, format: format)
+            guard let frame = audioDecoder.decode(plaintext) else {
+                receiverSnapshot.statistics.opusDecodeFailures += 1
+                receiverSnapshot.statistics.lastError = "Opus decode failed."
+                publishTelemetryIfDue()
+                return
+            }
+            receiverSnapshot.statistics.opusPacketsDecoded += 1
+            enqueueDecoded(frame, format: format)
         }
-        let encryptedFrame: Data
-        switch assembler.append(part) {
-        case .pending:
-            return
-        case .rejected:
-            dropPacket()
-            return
-        case .complete(let completed):
-            encryptedFrame = completed
+    }
+
+    private enum SequenceEvent {
+        case first
+        case inOrder
+        case gap(Int)
+    }
+
+    private func acceptSequence(_ sequence: UInt32) -> SequenceEvent? {
+        guard let expected = expectedSequence else {
+            expectedSequence = sequence &+ 1
+            return .first
         }
-        guard let plaintext = RemSoundCrypto.decrypt(encryptedFrame, using: key) else {
-            receiverSnapshot.statistics.authenticationFailures += 1
-            receiverSnapshot.statistics.encryptedAudioAuthenticationFailures += 1
-            receiverSnapshot.statistics.lastError = "Encrypted audio authentication failed."
-            dropPacket()
-            return
+        if sequence == expected {
+            expectedSequence = sequence &+ 1
+            return .inOrder
         }
-        guard plaintext.count.isMultiple(of: 3) else {
-            dropPacket(malformed: true)
+        let forwardGap = sequence &- expected
+        if forwardGap < 1_000_000 {
+            receiverSnapshot.statistics.packetsLost += Int(forwardGap)
+            expectedSequence = sequence &+ 1
+            return .gap(Int(forwardGap))
+        }
+        if sequence == (expected &- 1) {
+            receiverSnapshot.statistics.packetsDuplicated += 1
+        } else {
+            receiverSnapshot.statistics.packetsReordered += 1
+            receiverSnapshot.statistics.latePacketsDiscarded += 1
+        }
+        receiverSnapshot.statistics.packetsDropped += 1
+        publish()
+        return nil
+    }
+
+    private func startupBufferTarget(for format: RemSoundFormat) -> Int {
+        switch format.opusMode {
+        case .broadcast:
+            return max(Self.broadcastStartupBufferFrames, format.frameSamplesPerChannel * 3)
+        case .live:
+            return max(Self.liveStartupBufferFrames, format.frameSamplesPerChannel * 4)
+        case nil:
+            return Self.pcmStartupBufferFrames
+        }
+    }
+
+    private func recoverOpusGap(
+        _ sequenceEvent: SequenceEvent,
+        packet: Data,
+        decoder: RemSoundAudioDecoder,
+        format: RemSoundFormat
+    ) {
+        let missingFrames: Int
+        switch sequenceEvent {
+        case .first, .inOrder:
+            return
+        case .gap(let count):
+            missingFrames = count
+        }
+
+        if missingFrames == 1,
+           let fec = decoder.decode(packet, fec: true) {
+            receiverSnapshot.statistics.opusFECRecoveries += 1
+            enqueueDecoded(fec, format: format)
             return
         }
 
-        let frame = decodePCM24(plaintext, sampleRate: Double(format.sampleRate), channels: format.channels)
+        // libopus PLC is bounded both in work and latency. A long outage is
+        // re-synchronized by the next valid packet rather than synthesizing an
+        // arbitrarily long run of audio on the network actor.
+        let concealed = min(missingFrames, Self.maximumConcealedFramesPerGap)
+        for _ in 0..<concealed {
+            guard let frame = decoder.concealLostOpusFrame() else {
+                receiverSnapshot.statistics.opusDecodeFailures += 1
+                break
+            }
+            receiverSnapshot.statistics.opusPLCFrames += 1
+            enqueueDecoded(frame, format: format)
+        }
+        if missingFrames > concealed {
+            receiverSnapshot.statistics.latePacketsDiscarded += missingFrames - concealed
+        }
+    }
+
+    private func enqueueDecoded(_ frame: AudioPCMFrame, format: RemSoundFormat) {
         guard queuedPCM.append(frame) else {
             receiverSnapshot.statistics.bufferDroppedFrames += frame.samples.count / format.channels
             dropPacket()
@@ -518,11 +653,11 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
         lastSenderActivity = .now
         receiverSnapshot.statistics.bufferDepthFrames = queuedPCM.totalFrameCount
-        if !playbackArmed, queuedPCM.totalFrameCount >= Self.startupBufferFrames {
+        if !playbackArmed, queuedPCM.totalFrameCount >= startupBufferFrameTarget {
             playbackArmed = true
         }
         guard playbackArmed else {
-            publish()
+            publishTelemetryIfDue()
             return
         }
         drainQueuedFrames()
@@ -535,43 +670,12 @@ actor RemSoundAudioReceiver: AudioReceiver {
         }
     }
 
-    private func acceptSequence(_ sequence: UInt32) -> Bool {
-        guard let expected = expectedSequence else {
-            expectedSequence = sequence &+ 1
-            return true
-        }
-        if sequence == expected {
-            expectedSequence = sequence &+ 1
-            return true
-        }
-        let forwardGap = sequence &- expected
-        if forwardGap < 1_000_000 {
-            receiverSnapshot.statistics.packetsLost += Int(forwardGap)
-            expectedSequence = sequence &+ 1
-            return true
-        }
-        if sequence == (expected &- 1) {
-            receiverSnapshot.statistics.packetsDuplicated += 1
-        } else {
-            receiverSnapshot.statistics.packetsReordered += 1
-        }
+    private func recordEncryptedAudioAuthenticationFailure() {
+        receiverSnapshot.statistics.authenticationFailures += 1
+        receiverSnapshot.statistics.encryptedAudioAuthenticationFailures += 1
+        receiverSnapshot.statistics.lastError = "Encrypted audio authentication failed."
         receiverSnapshot.statistics.packetsDropped += 1
-        publish()
-        return false
-    }
-
-    private func decodePCM24(_ data: Data, sampleRate: Double, channels: Int) -> AudioPCMFrame {
-        var samples: [Float] = []
-        samples.reserveCapacity(data.count / 3)
-        var index = data.startIndex
-        while index < data.endIndex {
-            let low = Int32(data[index])
-            let middle = Int32(data[index + 1]) << 8
-            let high = Int32(Int8(bitPattern: data[index + 2])) << 16
-            samples.append(Float(low | middle | high) / 8_388_608)
-            index += 3
-        }
-        return AudioPCMFrame(samples: samples, sampleRate: sampleRate, channels: channels)
+        publishTelemetryIfDue()
     }
 
     private func dropPacket(malformed: Bool = false) {
@@ -592,6 +696,8 @@ actor RemSoundAudioReceiver: AudioReceiver {
         expectedSequence = nil
         assembler.reset()
         queuedPCM = BoundedPCMQueue()
+        audioDecoder = nil
+        startupBufferFrameTarget = Self.pcmStartupBufferFrames
         playbackArmed = false
         playbackFailureMessage = nil
         lastTelemetryPublishNanoseconds = 0

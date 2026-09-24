@@ -168,6 +168,20 @@ enum RemSoundCodec: Int, Equatable, Sendable {
     case opus = 2
 }
 
+enum RemSoundRenderRoute: UInt8, Equatable, Sendable {
+    case mixed = 0
+    case wasapi = 1
+    case asio = 2
+}
+
+/// Windows does not send a named profile: the current Opus profile is
+/// determined by its frame duration. Tight/live uses 2.5 or 5 ms frames;
+/// normal streams use 10 ms or longer frames.
+enum RemSoundOpusMode: String, Equatable, Sendable {
+    case broadcast = "Broadcast"
+    case live = "Live"
+}
+
 struct RemSoundFormat: Equatable, Sendable {
     static let minimumPayloadSize = 32
     static let fingerprintPayloadSize = 44
@@ -181,11 +195,22 @@ struct RemSoundFormat: Equatable, Sendable {
     let bytesPerSecond: Int
     let codec: RemSoundCodec
     let frameSamplesPerChannel: Int
+    let lane: RemSoundRenderRoute
     let fingerprint: Data?
+    let captureLatencyMilliseconds: Double?
+
+    var frameDurationMilliseconds: Double {
+        Double(frameSamplesPerChannel) * 1_000 / Double(sampleRate)
+    }
+
+    var opusMode: RemSoundOpusMode? {
+        guard codec == .opus else { return nil }
+        return frameSamplesPerChannel <= 240 ? .live : .broadcast
+    }
 
     enum ParseResult: Equatable, Sendable {
         case supported(RemSoundFormat)
-        case unsupported(RemSoundCodec)
+        case unsupported(Int)
         case malformed
     }
 
@@ -196,7 +221,7 @@ struct RemSoundFormat: Equatable, Sendable {
 
     static func classify(_ payload: Data) -> ParseResult {
         guard payload.count >= minimumPayloadSize,
-              let codec = RemSoundCodec(rawValue: Int(payload.int32LE(at: 24) ?? -1)),
+              let rawCodec = payload.int32LE(at: 24),
               let sampleRate = payload.int32LE(at: 0),
               let channels = payload.int32LE(at: 4),
               let bitsPerSample = payload.int32LE(at: 8),
@@ -206,20 +231,41 @@ struct RemSoundFormat: Equatable, Sendable {
               let frameSamples = payload.int32LE(at: 28)
         else { return .malformed }
 
-        // Phase 1 intentionally accepts only the Windows sender's smallest
-        // interoperable stream. Unknown or future formats fail closed.
-        guard codec == .pcm,
-              sampleRate == 48_000,
-              channels == 2,
-              bitsPerSample == 24,
-              encoding == 1,
-              blockAlign == 6,
-              bytesPerSecond == 288_000,
-              (120...240).contains(frameSamples)
-        else { return .unsupported(codec) }
+        guard let codec = RemSoundCodec(rawValue: Int(rawCodec)) else {
+            return .unsupported(Int(rawCodec))
+        }
+
+        // Exact current Windows sender contracts. Format packets are not
+        // encrypted, so this allow-list also bounds native decoder allocation.
+        let validPCM = codec == .pcm
+            && sampleRate == 48_000 && channels == 2
+            && bitsPerSample == 24 && encoding == 1
+            && blockAlign == 6 && bytesPerSecond == 288_000
+            && (120...240).contains(frameSamples)
+        let validOpus = codec == .opus
+            && sampleRate == 48_000 && channels == 2
+            && bitsPerSample == 16 && encoding == 1
+            && blockAlign == 4 && bytesPerSecond == 192_000
+            && (120...2_880).contains(frameSamples)
+        guard validPCM || validOpus else { return .unsupported(Int(rawCodec)) }
+
+        let lane: RemSoundRenderRoute
+        if payload.count >= 36 {
+            guard payload[33] == 0, payload[34] == 0, payload[35] == 0 else {
+                return .malformed
+            }
+            // Current upstream maps unrecognized lane values to Mixed. FarRelay
+            // has one renderer, but retains the field for diagnostics.
+            lane = RemSoundRenderRoute(rawValue: payload[32]) ?? .mixed
+        } else {
+            lane = .mixed
+        }
 
         let fingerprint = payload.count >= fingerprintPayloadSize
             ? payload.subdata(in: 36..<44)
+            : nil
+        let captureLatencyMilliseconds = payload.count >= captureLatencyPayloadSize
+            ? Double(payload.uint16LE(at: 44) ?? 0) / 10
             : nil
         return .supported(Self(
             sampleRate: Int(sampleRate),
@@ -230,7 +276,9 @@ struct RemSoundFormat: Equatable, Sendable {
             bytesPerSecond: Int(bytesPerSecond),
             codec: codec,
             frameSamplesPerChannel: Int(frameSamples),
-            fingerprint: fingerprint
+            lane: lane,
+            fingerprint: fingerprint,
+            captureLatencyMilliseconds: captureLatencyMilliseconds
         ))
     }
 }

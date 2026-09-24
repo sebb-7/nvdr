@@ -18,6 +18,8 @@ final class AudioReceiverModel {
             Task { await receiver.playbackFailed(message) }
         } onDroppedFrame: { [receiver] frameCount in
             Task { await receiver.playbackDropped(frameCount: frameCount) }
+        } onUnderrun: { [receiver] in
+            Task { await receiver.playbackUnderrun() }
         }
         discovery.onDiagnosticsChanged = { [weak self] diagnostics in
             self?.discoveryDiagnostics = diagnostics
@@ -111,6 +113,11 @@ final class AudioReceiverModel {
             "State: \(compactStatusLabel)",
             "Receiver listening: \(snapshot.isListening)",
             "Receiver peer: \(snapshot.peer ?? "none")",
+            "Codec: \(snapshot.codec.map { $0 == .opus ? "Opus" : "PCM" } ?? "unknown")",
+            "Opus mode: \(snapshot.opusMode?.rawValue ?? "unknown")",
+            "Sample rate: \(snapshot.sampleRate.map(String.init) ?? "unknown")",
+            "Channels: \(snapshot.channelCount.map(String.init) ?? "unknown")",
+            "Frame duration milliseconds: \(snapshot.frameDurationMilliseconds.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
             "Discovery active: \(discovery.isActive)",
             "Discovery target: \(discovery.target ?? "none")",
             "Discovery announcements attempted: \(discovery.announcementsAttempted)",
@@ -137,6 +144,15 @@ final class AudioReceiverModel {
             "Playback buffer dropped frames: \(statistics.bufferDroppedFrames)",
             "Packets lost: \(statistics.packetsLost)",
             "Packets reordered: \(statistics.packetsReordered)",
+            "Packets duplicated: \(statistics.packetsDuplicated)",
+            "Opus packets decoded: \(statistics.opusPacketsDecoded)",
+            "Opus decode failures: \(statistics.opusDecodeFailures)",
+            "Opus FEC recoveries: \(statistics.opusFECRecoveries)",
+            "Opus PLC frames: \(statistics.opusPLCFrames)",
+            "Jitter target milliseconds: \(snapshot.sampleRate.map { Double(statistics.jitterTargetFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Jitter depth milliseconds: \(snapshot.sampleRate.map { Double(statistics.bufferDepthFrames) * 1_000 / Double($0) }.map { $0.formatted(.number.precision(.fractionLength(1...2))) } ?? "unknown")",
+            "Jitter underruns: \(statistics.underruns)",
+            "Late packets discarded: \(statistics.latePacketsDiscarded)",
             "Authentication successes: \(statistics.authenticationSuccesses)",
             "Authentication failures: \(statistics.authenticationFailures)",
             "Format authentication failures: \(statistics.formatAuthenticationFailures)",
@@ -169,10 +185,16 @@ private final class AudioPlayback {
     private var failureLatched = false
     private let onFailure: (String) -> Void
     private let onDroppedFrame: (Int) -> Void
+    private let onUnderrun: () -> Void
 
-    init(onFailure: @escaping (String) -> Void, onDroppedFrame: @escaping (Int) -> Void) {
+    init(
+        onFailure: @escaping (String) -> Void,
+        onDroppedFrame: @escaping (Int) -> Void,
+        onUnderrun: @escaping () -> Void
+    ) {
         self.onFailure = onFailure
         self.onDroppedFrame = onDroppedFrame
+        self.onUnderrun = onUnderrun
         format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
         guard let format else { return }
         engine.attach(player)
@@ -223,6 +245,9 @@ private final class AudioPlayback {
             player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { [weak self] _ in
                 Task { @MainActor in
                     self?.scheduledBufferCount = max((self?.scheduledBufferCount ?? 1) - 1, 0)
+                    if self?.scheduledBufferCount == 0, self?.player.isPlaying == true {
+                        self?.onUnderrun()
+                    }
                 }
             }
         } catch {
