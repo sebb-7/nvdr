@@ -30,7 +30,7 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.ingest(try formatPacket())
         await receiver.playbackFailed("Audio playback failed: test route error")
 
-        for sequence in 1...16 {
+        for sequence in 1...4 {
             await receiver.ingest(try makeAudioPacket(sequence: UInt32(sequence), frameID: UInt32(sequence)))
         }
         await receiver.ingest(try formatPacket())
@@ -201,7 +201,7 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_934, password: "phase1"))
         let format = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040001000000F00000000000000073182B124D200DD00700"))
         await receiver.ingest(format)
-        for sequence in 1...4 {
+        for sequence in 1...16 {
             await receiver.ingest(try makeAudioPacket(sequence: UInt32(sequence), frameID: UInt32(sequence)))
         }
         let snapshot = await receiver.snapshot()
