@@ -19,6 +19,12 @@ struct TextModeEntryView: View {
             }
             .navigationTitle("Text Mode")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Paste Clipboard", systemImage: "doc.on.clipboard") {
+                        _ = controller.pasteClipboardIntoTextMode()
+                    }
+                    .accessibilityHint("Appends the current iPhone clipboard to Text Mode and sends it to the remote computer.")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { controller.exitTextMode() }
                 }
@@ -58,7 +64,7 @@ struct RemoteTextModeEditor: UIViewRepresentable {
         textView.smartQuotesType = .no
         textView.smartInsertDeleteType = .no
         textView.accessibilityLabel = "Remote text entry"
-        textView.accessibilityHint = "Text is sent live. Three-finger swipe up sends Enter and exits Text Mode. Text Mode supports appending and deleting from the end."
+        textView.accessibilityHint = "Text is sent live. Three-finger swipe up sends Enter and exits Text Mode. Text Mode supports appending, clipboard paste, and deleting from the end."
         textView.text = controller.textModeBuffer
         context.coordinator.moveCaretToEnd(textView)
 
