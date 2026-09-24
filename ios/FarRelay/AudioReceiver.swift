@@ -16,11 +16,21 @@ struct AudioReceiverConfiguration: Equatable, Sendable {
     let host: String
     let port: UInt16
     let password: String
+    let targetLatencyMilliseconds: Int
+    let autoTuneLatencyEnabled: Bool
 
-    init(host: String, port: UInt16 = 47_830, password: String) {
+    init(
+        host: String,
+        port: UInt16 = 47_830,
+        password: String,
+        targetLatencyMilliseconds: Int = 80,
+        autoTuneLatencyEnabled: Bool = false
+    ) {
         self.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         self.port = port
         self.password = password
+        self.targetLatencyMilliseconds = min(max(targetLatencyMilliseconds, 20), 500)
+        self.autoTuneLatencyEnabled = autoTuneLatencyEnabled
     }
 }
 
@@ -56,6 +66,8 @@ struct AudioReceiverStatistics: Equatable, Sendable {
     var packetsLost = 0
     var packetsReordered = 0
     var packetsDuplicated = 0
+    var duplicatePathsSuppressed = 0
+    var pathHandovers = 0
     var authenticationFailures = 0
     var authenticationSuccesses = 0
     var formatAuthenticationFailures = 0
