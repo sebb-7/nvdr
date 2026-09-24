@@ -58,9 +58,23 @@ final class AudioReceiverModel {
         return playback
     }
 
-    func start(host: String, port: UInt16 = 47_830, password: String) {
+    func start(
+        host: String,
+        port: UInt16 = 47_830,
+        password: String,
+        targetLatencyMilliseconds: Int = 80,
+        autoTuneLatencyEnabled: Bool = false
+    ) {
         discovery.start(peerHost: host, audioPort: port)
-        Task { await receiver.start(configuration: .init(host: host, port: port, password: password)) }
+        Task {
+            await receiver.start(configuration: .init(
+                host: host,
+                port: port,
+                password: password,
+                targetLatencyMilliseconds: targetLatencyMilliseconds,
+                autoTuneLatencyEnabled: autoTuneLatencyEnabled
+            ))
+        }
     }
 
     func stop() {
@@ -75,6 +89,12 @@ final class AudioReceiverModel {
 
     func setMuted(_ muted: Bool) { Task { await receiver.setMuted(muted) } }
     func setVolume(_ volume: Float) { Task { await receiver.setVolume(volume) } }
+    func setTargetLatencyMilliseconds(_ milliseconds: Int) {
+        Task { await receiver.setTargetLatencyMilliseconds(milliseconds) }
+    }
+    func setAutoTuneLatencyEnabled(_ enabled: Bool) {
+        Task { await receiver.setAutoTuneLatencyEnabled(enabled) }
+    }
 
     /// A concise state intended for the Remote tab. Heartbeats prove the
     /// Windows app can reach this device but do not imply password success.
@@ -144,6 +164,8 @@ final class AudioReceiverModel {
             "Packets lost: \(statistics.packetsLost)",
             "Packets reordered: \(statistics.packetsReordered)",
             "Packets duplicated: \(statistics.packetsDuplicated)",
+            "Duplicate peer paths suppressed: \(statistics.duplicatePathsSuppressed)",
+            "Peer path handovers: \(statistics.pathHandovers)",
             "Opus packets decoded: \(statistics.opusPacketsDecoded)",
             "Opus decode failures: \(statistics.opusDecodeFailures)",
             "Opus FEC recoveries: \(statistics.opusFECRecoveries)",
