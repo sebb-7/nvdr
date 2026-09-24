@@ -77,14 +77,6 @@ final class ControllerModesTests: XCTestCase {
         XCTAssertEqual(rotor.nextProfile(in: profiles), "Hearthstone")
         XCTAssertEqual(rotor.previousProfile(in: profiles), "Desktop")
 
-        XCTAssertEqual(rotor.nextCategory(), "Controller Mapping")
-        XCTAssertEqual(rotor.category, .controllerMapping)
-        XCTAssertNil(rotor.category.key)
-        XCTAssertEqual(
-            rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles),
-            "Controller Mapping. Press Cross to open."
-        )
-
         XCTAssertEqual(rotor.nextCategory(), "Editing")
         XCTAssertNil(rotor.category.key)
         XCTAssertEqual(rotor.currentSectionAnnouncement(quickBar: quickBar, profiles: profiles), "Editing. Select All")
@@ -118,8 +110,8 @@ final class ControllerModesTests: XCTestCase {
     func testCustomRotorOrderDrivesCategoryTraversal() {
         var rotor = QuickNavigationEngine()
         let order: [QuickNavigationCategory] = [
-            .quickBar, .headings, .profiles, .controllerMapping, .editing, .links,
-            .formControls, .editFields, .buttons, .landmarks, .tables, .lists
+            .quickBar, .headings, .profiles, .editing, .links, .formControls,
+            .editFields, .buttons, .landmarks, .tables, .lists
         ]
 
         XCTAssertEqual(rotor.nextCategory(in: order), "Headings")
