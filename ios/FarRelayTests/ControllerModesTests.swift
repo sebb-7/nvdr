@@ -25,6 +25,15 @@ final class ControllerModesTests: XCTestCase {
         )
     }
 
+    func testControllerMappingUsesVoiceOverActionWithoutExtraRotorStop() {
+        XCTAssertEqual(ControllerMappingAccessibilityPolicy.actionName, "Controller Mapping")
+        XCTAssertFalse(ControllerMappingAccessibilityPolicy.exposesStandaloneControl)
+        XCTAssertFalse(ControllerMappingAccessibilityPolicy.occupiesQuickNavigationCategory)
+        XCTAssertFalse(
+            QuickNavigationCategory.allCases.map(\.rawValue).contains("Controller Mapping")
+        )
+    }
+
     func testTextModeReturnRequestsSubmitAndExit() {
         XCTAssertTrue(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "\n"))
         XCTAssertTrue(TextModeInputPolicy.requestsSubmitAndExit(replacementText: "\r"))
