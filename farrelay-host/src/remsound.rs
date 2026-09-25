@@ -118,9 +118,7 @@ impl<R> ManagedRemSoundProvider<R> {
 }
 
 impl<R: RemSoundRuntime> ManagedRemSoundProvider<R> {
-    fn resolved_executable(
-        &self,
-    ) -> Result<Option<ResolvedRemSoundExecutable>, RemSoundError> {
+    fn resolved_executable(&self) -> Result<Option<ResolvedRemSoundExecutable>, RemSoundError> {
         self.runtime
             .resolve_executable()
             .map_err(|_| RemSoundError::ProbeFailed)
@@ -521,10 +519,7 @@ mod tests {
         }
 
         fn version(&self, _: &Path) -> Result<Option<String>, String> {
-            self.versions
-                .borrow_mut()
-                .pop_front()
-                .unwrap_or(Ok(None))
+            self.versions.borrow_mut().pop_front().unwrap_or(Ok(None))
         }
 
         fn launch_minimized(&self, _: &Path) -> Result<(), String> {
@@ -627,6 +622,9 @@ mod tests {
         let provider = UnsupportedRemSoundProvider;
         let status = provider.status().unwrap();
         assert_eq!(status.state, RemSoundLifecycleState::Unsupported);
-        assert_eq!(provider.start().unwrap_err(), RemSoundError::UnsupportedPlatform);
+        assert_eq!(
+            provider.start().unwrap_err(),
+            RemSoundError::UnsupportedPlatform
+        );
     }
 }

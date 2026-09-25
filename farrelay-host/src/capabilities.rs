@@ -166,7 +166,10 @@ mod tests {
                 .operations
                 .iter()
                 .all(|op| !op.starts_with("remsound.")));
-            assert!(caps.features.iter().all(|feature| !feature.starts_with("remSound")));
+            assert!(caps
+                .features
+                .iter()
+                .all(|feature| !feature.starts_with("remSound")));
         }
     }
 }
