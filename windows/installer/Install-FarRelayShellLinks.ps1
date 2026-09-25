@@ -27,18 +27,22 @@ function New-FarRelayShortcut {
     $shortcut.Save()
 }
 
+$wizard = Join-Path $scriptDir 'Start-FarRelaySetupWizard.ps1'
+$core = Join-Path $scriptDir 'FarRelay.Setup.Core.psm1'
 $control = Join-Path $scriptDir 'Start-FarRelayControlCenter.ps1'
 $prepare = Join-Path $scriptDir 'Prepare-FarRelayTravel.ps1'
-foreach ($required in @($control,$prepare)) {
+foreach ($required in @($wizard,$core,$control,$prepare)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required FarRelay control script is missing: $required"
     }
 }
 
+$wizardArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$wizard`""
 $controlArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$control`""
 $prepareArgs = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$prepare`" -Repair"
 $readinessArgs = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$prepare`""
 
+New-FarRelayShortcut -Path (Join-Path $startMenu 'FarRelay Setup Wizard.lnk') -Arguments $wizardArgs -Description 'Configure and verify FarRelay remote access.'
 New-FarRelayShortcut -Path (Join-Path $startMenu 'FarRelay Control Center.lnk') -Arguments $controlArgs -Description 'Open the FarRelay local status and setup dashboard.'
 New-FarRelayShortcut -Path (Join-Path $desktop 'FarRelay Control Center.lnk') -Arguments $controlArgs -Description 'Open the FarRelay local status and setup dashboard.'
 New-FarRelayShortcut -Path (Join-Path $startMenu 'FarRelay Prepare for Travel.lnk') -Arguments $prepareArgs -Description 'Install and configure missing FarRelay travel prerequisites.'
