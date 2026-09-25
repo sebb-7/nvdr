@@ -48,7 +48,7 @@ Source: "{#SourceDir}\FarRelayBridge-{#AppVersion}.nvda-addon"; DestDir: "{app}\
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\Install-FarRelayNvdaRecoveryTask.ps1"" -AllowMissingNvda"; Flags: runhidden waituntilterminated
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\Install-FarRelayUpdaterTask.ps1"" -InstallDirectory ""{app}"""; Flags: runhidden waituntilterminated
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\Install-FarRelayShellLinks.ps1"" -InstallDirectory ""{app}"""; Flags: runhidden waituntilterminated
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\Start-FarRelaySetupWizard.ps1"""; Description: "Open FarRelay Setup Wizard"; Flags: postinstall nowait skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\Start-FarRelaySetupWizard.ps1"""; Description: "Open FarRelay Setup Wizard"; Flags: postinstall nowait skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
