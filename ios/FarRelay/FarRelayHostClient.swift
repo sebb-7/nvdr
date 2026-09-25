@@ -120,6 +120,81 @@ struct NvdaRestartResult: Codable, Sendable, Equatable {
     }
 }
 
+struct HostRemSoundLifecycleState: RawRepresentable, Codable, Sendable, Equatable {
+    let rawValue: String
+
+    static let unsupported = Self(rawValue: "unsupported")
+    static let notInstalled = Self(rawValue: "not_installed")
+    static let stopped = Self(rawValue: "stopped")
+    static let running = Self(rawValue: "running")
+    static let starting = Self(rawValue: "starting")
+    static let stopping = Self(rawValue: "stopping")
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct HostRemSoundStatus: Codable, Sendable, Equatable {
+    let platformSupported: Bool
+    let installed: Bool
+    let running: Bool
+    let manageable: Bool
+    let state: HostRemSoundLifecycleState
+    let version: String?
+    let executableSource: String?
+
+    enum CodingKeys: String, CodingKey {
+        case platformSupported = "platform_supported"
+        case installed
+        case running
+        case manageable
+        case state
+        case version
+        case executableSource = "executable_source"
+    }
+}
+
+struct HostRemSoundActionResult: Codable, Sendable, Equatable {
+    let requested: Bool
+    let state: HostRemSoundLifecycleState
+}
+
+struct HostRemSoundSessionDescriptor: Codable, Sendable, Equatable {
+    let transport: String
+    let audioPort: UInt16
+    let discoveryPort: UInt16
+    let sampleRateHz: UInt32
+    let channels: UInt8
+    let codecs: [String]
+    let sharedPasswordRequired: Bool
+    let peerSelectionRequired: Bool
+    let senderState: HostRemSoundLifecycleState
+    let senderVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case transport
+        case audioPort = "audio_port"
+        case discoveryPort = "discovery_port"
+        case sampleRateHz = "sample_rate_hz"
+        case channels
+        case codecs
+        case sharedPasswordRequired = "shared_password_required"
+        case peerSelectionRequired = "peer_selection_required"
+        case senderState = "sender_state"
+        case senderVersion = "sender_version"
+    }
+}
+
 /// Strict VoiceOver cursor movement values accepted by `voiceover.move`.
 enum VoiceOverMoveDirection: String, Codable, Sendable, Equatable {
     case left
@@ -178,6 +253,11 @@ protocol HostClientProtocol: Sendable {
     func processInfo(pid: UInt32) async throws -> HostProcessInfo
     func nvdaRecoveryStatus() async throws -> NvdaRecoveryStatus
     func restartNvda() async throws -> NvdaRestartResult
+    func remSoundStatus() async throws -> HostRemSoundStatus
+    func startRemSound() async throws -> HostRemSoundActionResult
+    func stopRemSound() async throws -> HostRemSoundActionResult
+    func restartRemSound() async throws -> HostRemSoundActionResult
+    func remSoundSession() async throws -> HostRemSoundSessionDescriptor
     func voiceOverStatus() async throws -> VoiceOverStatus
     func voiceOverMove(_ direction: VoiceOverMoveDirection) async throws -> VoiceOverMoveResult
     func voiceOverPress() async throws -> VoiceOverPressResult
@@ -305,6 +385,26 @@ actor FarRelayHostClient: HostClientProtocol {
 
     func restartNvda() async throws -> NvdaRestartResult {
         try await request(operation: "recovery.nvda.restart", parameters: HostEmptyParameters())
+    }
+
+    func remSoundStatus() async throws -> HostRemSoundStatus {
+        try await request(operation: "remsound.status", parameters: HostEmptyParameters())
+    }
+
+    func startRemSound() async throws -> HostRemSoundActionResult {
+        try await request(operation: "remsound.start", parameters: HostEmptyParameters())
+    }
+
+    func stopRemSound() async throws -> HostRemSoundActionResult {
+        try await request(operation: "remsound.stop", parameters: HostEmptyParameters())
+    }
+
+    func restartRemSound() async throws -> HostRemSoundActionResult {
+        try await request(operation: "remsound.restart", parameters: HostEmptyParameters())
+    }
+
+    func remSoundSession() async throws -> HostRemSoundSessionDescriptor {
+        try await request(operation: "remsound.session", parameters: HostEmptyParameters())
     }
 
     func voiceOverStatus() async throws -> VoiceOverStatus {

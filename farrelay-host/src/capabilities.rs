@@ -14,6 +14,7 @@ const WINDOWS_REMSOUND_OPERATIONS: &[&str] = &[
     "remsound.start",
     "remsound.stop",
     "remsound.restart",
+    "remsound.session",
 ];
 const WINDOWS_FEATURES: &[&str] = &["remoteAudioOrchestration", "remSoundProcessControl"];
 

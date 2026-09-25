@@ -49,6 +49,21 @@ pub struct RemSoundActionResult {
     pub state: RemSoundLifecycleState,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RemSoundSessionDescriptor {
+    pub transport: String,
+    pub audio_port: u16,
+    pub discovery_port: u16,
+    pub sample_rate_hz: u32,
+    pub channels: u8,
+    pub codecs: Vec<String>,
+    pub shared_password_required: bool,
+    pub peer_selection_required: bool,
+    pub sender_state: RemSoundLifecycleState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_version: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemSoundError {
     UnsupportedPlatform,
@@ -115,6 +130,7 @@ pub trait RemSoundProvider {
     fn start(&self) -> Result<RemSoundActionResult, RemSoundError>;
     fn stop(&self) -> Result<RemSoundActionResult, RemSoundError>;
     fn restart(&self) -> Result<RemSoundActionResult, RemSoundError>;
+    fn session(&self) -> Result<RemSoundSessionDescriptor, RemSoundError>;
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -291,6 +307,43 @@ impl<R: RemSoundRuntime> RemSoundProvider for ManagedRemSoundProvider<R> {
             state: RemSoundLifecycleState::Starting,
         })
     }
+
+    fn session(&self) -> Result<RemSoundSessionDescriptor, RemSoundError> {
+        if !self.runtime.platform_supported() {
+            return Err(RemSoundError::UnsupportedPlatform);
+        }
+
+        let running = !self.running_process_ids()?.is_empty();
+        let executable = self.require_executable(running)?;
+        let action = if running {
+            RemSoundActionResult {
+                requested: false,
+                state: RemSoundLifecycleState::Running,
+            }
+        } else {
+            self.runtime
+                .launch_minimized(&executable.path)
+                .map_err(|_| RemSoundError::StartFailed)?;
+            RemSoundActionResult {
+                requested: true,
+                state: RemSoundLifecycleState::Starting,
+            }
+        };
+
+        let sender_version = self.runtime.version(&executable.path).ok().flatten();
+        Ok(RemSoundSessionDescriptor {
+            transport: "direct_udp".into(),
+            audio_port: 47_830,
+            discovery_port: 47_821,
+            sample_rate_hz: 48_000,
+            channels: 2,
+            codecs: vec!["opus".into(), "pcm".into()],
+            shared_password_required: true,
+            peer_selection_required: true,
+            sender_state: action.state,
+            sender_version,
+        })
+    }
 }
 
 #[cfg(any(test, not(target_os = "windows")))]
@@ -319,6 +372,10 @@ impl RemSoundProvider for UnsupportedRemSoundProvider {
     }
 
     fn restart(&self) -> Result<RemSoundActionResult, RemSoundError> {
+        Err(RemSoundError::UnsupportedPlatform)
+    }
+
+    fn session(&self) -> Result<RemSoundSessionDescriptor, RemSoundError> {
         Err(RemSoundError::UnsupportedPlatform)
     }
 }
@@ -353,6 +410,10 @@ impl RemSoundProvider for WindowsRemSoundProvider {
 
     fn restart(&self) -> Result<RemSoundActionResult, RemSoundError> {
         self.inner.restart()
+    }
+
+    fn session(&self) -> Result<RemSoundSessionDescriptor, RemSoundError> {
+        self.inner.session()
     }
 }
 
@@ -664,12 +725,33 @@ mod tests {
     }
 
     #[test]
+    fn session_ensures_sender_and_returns_non_secret_receiver_contract() {
+        let provider = ManagedRemSoundProvider::new(FakeRuntime::installed(false));
+        let session = provider.session().unwrap();
+        assert_eq!(provider.runtime.launches.get(), 1);
+        assert_eq!(session.transport, "direct_udp");
+        assert_eq!(session.audio_port, 47_830);
+        assert_eq!(session.discovery_port, 47_821);
+        assert_eq!(session.sample_rate_hz, 48_000);
+        assert_eq!(session.channels, 2);
+        assert_eq!(session.codecs, ["opus", "pcm"]);
+        assert!(session.shared_password_required);
+        assert!(session.peer_selection_required);
+        assert_eq!(session.sender_state, RemSoundLifecycleState::Starting);
+        assert_eq!(session.sender_version.as_deref(), Some("RemSound 1.2.3"));
+    }
+
+    #[test]
     fn unsupported_provider_reports_capability_without_mutating_state() {
         let provider = UnsupportedRemSoundProvider;
         let status = provider.status().unwrap();
         assert_eq!(status.state, RemSoundLifecycleState::Unsupported);
         assert_eq!(
             provider.start().unwrap_err(),
+            RemSoundError::UnsupportedPlatform
+        );
+        assert_eq!(
+            provider.session().unwrap_err(),
             RemSoundError::UnsupportedPlatform
         );
     }

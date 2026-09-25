@@ -265,6 +265,63 @@ final class FarRelayHostClientTests: XCTestCase {
         XCTAssertEqual(restart, NvdaRestartResult(requested: true, taskStarted: true))
     }
 
+    func testEncodesTypedRemSoundOrchestrationWithoutCallerControlledProgram() async throws {
+        let transport = FakeHostTransport()
+        let client = FarRelayHostClient(transport: transport)
+
+        let statusTask = Task { try await client.remSoundStatus() }
+        let statusRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(statusRequest.operation, "remsound.status")
+        XCTAssertNil(statusRequest.command)
+        transport.sendSuccess(
+            requestID: statusRequest.requestID,
+            result: HostRemSoundStatus(
+                platformSupported: true,
+                installed: true,
+                running: true,
+                manageable: true,
+                state: .running,
+                version: "RemSound 1.2.3",
+                executableSource: "installed"
+            )
+        )
+        XCTAssertEqual(try await statusTask.value.state, .running)
+
+        for (operation, task) in [
+            ("remsound.start", Task { try await client.startRemSound() }),
+            ("remsound.stop", Task { try await client.stopRemSound() }),
+            ("remsound.restart", Task { try await client.restartRemSound() }),
+        ] {
+            let request = try await nextRequest(from: transport)
+            XCTAssertEqual(request.operation, operation)
+            XCTAssertNil(request.command)
+            transport.sendSuccess(
+                requestID: request.requestID,
+                result: HostRemSoundActionResult(requested: true, state: .starting)
+            )
+            _ = try await task.value
+        }
+
+        let sessionTask = Task { try await client.remSoundSession() }
+        let sessionRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(sessionRequest.operation, "remsound.session")
+        XCTAssertNil(sessionRequest.command)
+        let expected = HostRemSoundSessionDescriptor(
+            transport: "direct_udp",
+            audioPort: 47_830,
+            discoveryPort: 47_821,
+            sampleRateHz: 48_000,
+            channels: 2,
+            codecs: ["opus", "pcm"],
+            sharedPasswordRequired: true,
+            peerSelectionRequired: true,
+            senderState: .running,
+            senderVersion: "RemSound 1.2.3"
+        )
+        transport.sendSuccess(requestID: sessionRequest.requestID, result: expected)
+        XCTAssertEqual(try await sessionTask.value, expected)
+    }
+
     func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
         let transport = FakeHostTransport()
         let client = FarRelayHostClient(transport: transport)

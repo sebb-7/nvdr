@@ -190,6 +190,12 @@ where
                 Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
             }
         },
+        "remsound.session" => match parse_empty_params(request.params) {
+            Ok(()) => remsound_result(request_id, remsound.session()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
         _ => Response::error(ErrorResponse::new(
             request_id,
             "unsupported_operation",
@@ -278,7 +284,8 @@ mod tests {
             NvdaRecoveryError, NvdaRecoveryProvider, NvdaRecoveryStatus, NvdaRestartResult,
         },
         remsound::{
-            RemSoundActionResult, RemSoundLifecycleState, RemSoundProvider, RemSoundStatus,
+            RemSoundActionResult, RemSoundLifecycleState, RemSoundProvider,
+            RemSoundSessionDescriptor, RemSoundStatus,
         },
         voiceover::{
             UnsupportedVoiceOverProvider, VoiceOverMoveResult, VoiceOverPressResult,
@@ -436,6 +443,21 @@ mod tests {
                 state: RemSoundLifecycleState::Starting,
             })
         }
+
+        fn session(&self) -> Result<RemSoundSessionDescriptor, RemSoundError> {
+            Ok(RemSoundSessionDescriptor {
+                transport: "direct_udp".into(),
+                audio_port: 47_830,
+                discovery_port: 47_821,
+                sample_rate_hz: 48_000,
+                channels: 2,
+                codecs: vec!["opus".into(), "pcm".into()],
+                shared_password_required: true,
+                peer_selection_required: true,
+                sender_state: RemSoundLifecycleState::Running,
+                sender_version: Some("RemSound 1.2.3".into()),
+            })
+        }
     }
 
     #[test]
@@ -562,6 +584,19 @@ mod tests {
             assert!(response.ok, "{operation}");
             assert_eq!(response.result.unwrap()["requested"], true);
         }
+
+        let session = call(
+            r#"{"version":1,"request_id":"rs-session","operation":"remsound.session","params":{}}"#,
+            &UnsupportedVoiceOverProvider,
+            Capabilities::for_os("windows"),
+        );
+        assert!(session.ok);
+        let descriptor = session.result.unwrap();
+        assert_eq!(descriptor["transport"], "direct_udp");
+        assert_eq!(descriptor["audio_port"], 47_830);
+        assert_eq!(descriptor["shared_password_required"], true);
+        assert_eq!(descriptor["peer_selection_required"], true);
+        assert!(descriptor.get("password").is_none());
 
         let rejected = call(
             r#"{"version":1,"request_id":"rs-bad","operation":"remsound.start","params":{"program":"cmd.exe"}}"#,
