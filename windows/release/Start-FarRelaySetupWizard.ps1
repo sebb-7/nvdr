@@ -272,7 +272,7 @@ function Show-Page([int]$Page) {
             $backButton.Enabled = $true
             $nextButton.Enabled = $true
             $nextButton.Text = '&Next'
-            if ($custom.Checked) { $checkOpenSsh.Focus() } else { $recommended.Focus() }
+            if ($custom.Checked) { $custom.Focus() } elseif ($travel.Checked) { $travel.Focus() } else { $recommended.Focus() }
         }
         6 {
             $title.Text = 'Choose custom components'
