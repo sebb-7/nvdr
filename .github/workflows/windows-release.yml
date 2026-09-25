@@ -102,6 +102,8 @@ jobs:
             "windows/release/Test-FarRelayTravelReadiness.ps1",
             "windows/release/Prepare-FarRelayTravel.ps1",
             "windows/release/Start-FarRelayControlCenter.ps1",
+            "windows/release/Start-FarRelaySetupWizard.ps1",
+            "windows/release/FarRelay.Setup.Core.psm1",
             "windows/installer/Install-FarRelayUpdaterTask.ps1",
             "windows/installer/Install-FarRelayShellLinks.ps1",
             "farrelay-host/scripts/Install-FarRelayNvdaRecoveryTask.ps1"
@@ -159,6 +161,8 @@ jobs:
           Copy-Item "windows/installer/Install-FarRelayShellLinks.ps1" (Join-Path $payload "scripts")
           Copy-Item "windows/release/Prepare-FarRelayTravel.ps1" (Join-Path $payload "scripts")
           Copy-Item "windows/release/Start-FarRelayControlCenter.ps1" (Join-Path $payload "scripts")
+          Copy-Item "windows/release/Start-FarRelaySetupWizard.ps1" (Join-Path $payload "scripts")
+          Copy-Item "windows/release/FarRelay.Setup.Core.psm1" (Join-Path $payload "scripts")
           Copy-Item "windows/release/Test-FarRelayTravelReadiness.ps1" (Join-Path $payload "scripts")
           Compress-Archive -Path "$payload/*" -DestinationPath "$env:DIST/FarRelay-Windows-Update-$env:VERSION.zip" -Force
           Compress-Archive -Path "$env:DIST/farrelay.exe", "$env:DIST/farrelay-host.exe", "$env:DIST/farrelay-updater.exe", "$env:DIST/FarRelayBridge-$env:VERSION.nvda-addon" -DestinationPath "$env:DIST/FarRelay-Windows-Portable-$env:VERSION.zip" -Force
