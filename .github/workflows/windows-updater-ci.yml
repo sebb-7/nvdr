@@ -87,6 +87,8 @@ jobs:
             "windows/release/Test-FarRelayTravelReadiness.ps1",
             "windows/release/Prepare-FarRelayTravel.ps1",
             "windows/release/Start-FarRelayControlCenter.ps1",
+            "windows/release/Start-FarRelaySetupWizard.ps1",
+            "windows/release/FarRelay.Setup.Core.psm1",
             "windows/installer/Install-FarRelayShellLinks.ps1"
           )) {
             [void][scriptblock]::Create((Get-Content $script -Raw))
