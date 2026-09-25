@@ -3,11 +3,16 @@ pub use super::common::SystemProvider;
 use crate::{
     exec::StdCommandRunner,
     recovery::{NvdaProcessProbe, NvdaRecoveryProvider, WindowsNvdaRecoveryProvider},
+    remsound::{RemSoundProvider, WindowsRemSoundProvider},
 };
 use sysinfo::System;
 
 pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
     WindowsNvdaRecoveryProvider::new(StdCommandRunner, SysinfoNvdaProcessProbe)
+}
+
+pub fn remsound_host() -> impl RemSoundProvider {
+    WindowsRemSoundProvider::new()
 }
 
 struct SysinfoNvdaProcessProbe;

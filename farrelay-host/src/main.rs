@@ -6,6 +6,7 @@ mod platform;
 mod process;
 mod protocol;
 mod recovery;
+mod remsound;
 mod voiceover;
 
 use std::io::{self, BufRead, Write};
@@ -19,6 +20,7 @@ use platform::SystemProvider;
 use process::ProcessProvider;
 use protocol::{dispatch, ErrorResponse, Request, Response};
 use recovery::NvdaRecoveryProvider;
+use remsound::RemSoundProvider;
 use voiceover::VoiceOverProvider;
 
 pub const DISTRIBUTION_VERSION: &str = match option_env!("FARRELAY_DIST_VERSION") {
@@ -50,12 +52,13 @@ fn main() {
     let provider = SystemProvider::new();
     let voiceover = platform::voiceover_host();
     let recovery = platform::nvda_recovery_host();
+    let remsound = platform::remsound_host();
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
     for line in stdin.lock().lines() {
         let response = match line {
-            Ok(line) => handle_line(&line, &provider, &voiceover, &recovery),
+            Ok(line) => handle_line(&line, &provider, &voiceover, &recovery, &remsound),
             Err(error) => Response::error(ErrorResponse::new(
                 None,
                 "internal_error",
@@ -73,11 +76,18 @@ fn main() {
     }
 }
 
-fn handle_line<P, V, R>(line: &str, provider: &P, voiceover: &V, recovery: &R) -> Response
+fn handle_line<P, V, R, A>(
+    line: &str,
+    provider: &P,
+    voiceover: &V,
+    recovery: &R,
+    remsound: &A,
+) -> Response
 where
     P: HostProvider + ProcessProvider,
     V: VoiceOverProvider,
     R: NvdaRecoveryProvider,
+    A: RemSoundProvider,
 {
     match serde_json::from_str::<Request>(line) {
         Ok(request) => dispatch(
@@ -86,6 +96,7 @@ where
             provider,
             voiceover,
             recovery,
+            remsound,
             Capabilities::v1(),
         ),
         Err(error) => Response::error(ErrorResponse::new(
@@ -104,6 +115,7 @@ mod tests {
     use host::HostInfo;
     use process::{ProcessInfo, ProcessStatus};
     use recovery::UnsupportedNvdaRecoveryProvider;
+    use remsound::UnsupportedRemSoundProvider;
     use voiceover::UnsupportedVoiceOverProvider;
 
     #[derive(Default)]
@@ -153,6 +165,7 @@ mod tests {
                 &provider,
                 &UnsupportedVoiceOverProvider,
                 &UnsupportedNvdaRecoveryProvider,
+                &UnsupportedRemSoundProvider,
             );
             serde_json::to_writer(&mut output, &response).unwrap();
             output.push(b'\n');
@@ -177,6 +190,7 @@ mod tests {
             &provider,
             &UnsupportedVoiceOverProvider,
             &UnsupportedNvdaRecoveryProvider,
+            &UnsupportedRemSoundProvider,
         );
         let mut output = Vec::new();
         serde_json::to_writer(&mut output, &response).unwrap();

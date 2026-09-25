@@ -17,6 +17,7 @@ pub use windows::SystemProvider;
 use crate::voiceover::VoiceOverProvider;
 
 use crate::recovery::NvdaRecoveryProvider;
+use crate::remsound::RemSoundProvider;
 
 #[cfg(target_os = "macos")]
 use crate::exec::StdCommandRunner;
@@ -46,4 +47,14 @@ pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
 #[cfg(not(target_os = "windows"))]
 pub fn nvda_recovery_host() -> impl NvdaRecoveryProvider {
     crate::recovery::UnsupportedNvdaRecoveryProvider
+}
+
+#[cfg(target_os = "windows")]
+pub fn remsound_host() -> impl RemSoundProvider {
+    windows::remsound_host()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn remsound_host() -> impl RemSoundProvider {
+    crate::remsound::UnsupportedRemSoundProvider
 }

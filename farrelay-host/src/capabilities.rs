@@ -9,6 +9,13 @@ const VOICEOVER_OPERATIONS: &[&str] = &[
 ];
 const MACOS_FEATURES: &[&str] = &["macRemote", "voiceOverSemanticFeedback"];
 const WINDOWS_RECOVERY_OPERATIONS: &[&str] = &["recovery.nvda.status", "recovery.nvda.restart"];
+const WINDOWS_REMSOUND_OPERATIONS: &[&str] = &[
+    "remsound.status",
+    "remsound.start",
+    "remsound.stop",
+    "remsound.restart",
+];
+const WINDOWS_FEATURES: &[&str] = &["remoteAudioOrchestration", "remSoundProcessControl"];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Capabilities {
@@ -39,9 +46,19 @@ impl Capabilities {
                     .iter()
                     .map(|op| (*op).to_string()),
             );
+            operations.extend(
+                WINDOWS_REMSOUND_OPERATIONS
+                    .iter()
+                    .map(|op| (*op).to_string()),
+            );
         }
         let features = if os == "macos" {
             MACOS_FEATURES
+                .iter()
+                .map(|feature| (*feature).to_string())
+                .collect()
+        } else if os == "windows" {
+            WINDOWS_FEATURES
                 .iter()
                 .map(|feature| (*feature).to_string())
                 .collect()
@@ -74,6 +91,11 @@ mod tests {
         );
         if std::env::consts::OS == "macos" {
             assert_eq!(caps.features, ["macRemote", "voiceOverSemanticFeedback"]);
+        } else if std::env::consts::OS == "windows" {
+            assert_eq!(
+                caps.features,
+                ["remoteAudioOrchestration", "remSoundProcessControl"]
+            );
         } else {
             assert!(caps.features.is_empty());
         }
@@ -118,15 +140,33 @@ mod tests {
     #[test]
     fn only_windows_advertises_fixed_nvda_recovery() {
         let windows = Capabilities::for_os("windows");
-        assert!(windows.operations.ends_with(&[
-            "recovery.nvda.status".into(),
-            "recovery.nvda.restart".into()
-        ]));
+        assert!(windows.operations.contains(&"recovery.nvda.status".into()));
+        assert!(windows.operations.contains(&"recovery.nvda.restart".into()));
         for os in ["linux", "macos"] {
             assert!(Capabilities::for_os(os)
                 .operations
                 .iter()
                 .all(|op| !op.starts_with("recovery.nvda")));
+        }
+    }
+
+    #[test]
+    fn only_windows_advertises_remsound_orchestration() {
+        let windows = Capabilities::for_os("windows");
+        for operation in WINDOWS_REMSOUND_OPERATIONS {
+            assert!(windows.operations.contains(&(*operation).to_string()));
+        }
+        assert_eq!(
+            windows.features,
+            ["remoteAudioOrchestration", "remSoundProcessControl"]
+        );
+        for os in ["linux", "macos"] {
+            let caps = Capabilities::for_os(os);
+            assert!(caps
+                .operations
+                .iter()
+                .all(|op| !op.starts_with("remsound.")));
+            assert!(caps.features.iter().all(|feature| !feature.starts_with("remSound")));
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::{
     host::HostProvider,
     process::{ProcessError, ProcessProvider},
     recovery::{NvdaRecoveryError, NvdaRecoveryProvider},
+    remsound::{RemSoundError, RemSoundProvider},
     voiceover::{VoiceOverError, VoiceOverMoveDirection, VoiceOverProvider},
 };
 use serde::{Deserialize, Serialize};
@@ -74,12 +75,13 @@ impl Response {
     }
 }
 
-pub fn dispatch<H, P, V, R>(
+pub fn dispatch<H, P, V, R, A>(
     request: Request,
     host: &H,
     processes: &P,
     voiceover: &V,
     recovery: &R,
+    remsound: &A,
     capabilities: Capabilities,
 ) -> Response
 where
@@ -87,6 +89,7 @@ where
     P: ProcessProvider,
     V: VoiceOverProvider,
     R: NvdaRecoveryProvider,
+    A: RemSoundProvider,
 {
     let request_id = request.request_id.clone();
     let version = match request.version {
@@ -163,6 +166,30 @@ where
                 Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
             }
         },
+        "remsound.status" => match parse_empty_params(request.params) {
+            Ok(()) => remsound_result(request_id, remsound.status()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
+        "remsound.start" => match parse_empty_params(request.params) {
+            Ok(()) => remsound_result(request_id, remsound.start()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
+        "remsound.stop" => match parse_empty_params(request.params) {
+            Ok(()) => remsound_result(request_id, remsound.stop()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
+        "remsound.restart" => match parse_empty_params(request.params) {
+            Ok(()) => remsound_result(request_id, remsound.restart()),
+            Err(error) => {
+                Response::error(ErrorResponse::new(request_id, "invalid_parameters", error))
+            }
+        },
         _ => Response::error(ErrorResponse::new(
             request_id,
             "unsupported_operation",
@@ -174,6 +201,20 @@ where
 fn recovery_result<T: Serialize>(
     request_id: Option<String>,
     result: Result<T, NvdaRecoveryError>,
+) -> Response {
+    match result {
+        Ok(value) => Response::success(request_id, value),
+        Err(error) => Response::error(ErrorResponse::new(
+            request_id,
+            error.code(),
+            error.message(),
+        )),
+    }
+}
+
+fn remsound_result<T: Serialize>(
+    request_id: Option<String>,
+    result: Result<T, RemSoundError>,
 ) -> Response {
     match result {
         Ok(value) => Response::success(request_id, value),
@@ -221,7 +262,7 @@ fn parse_direction(params: Option<Value>) -> Result<VoiceOverMoveDirection, Stri
 fn parse_empty_params(params: Option<Value>) -> Result<(), String> {
     match params {
         Some(Value::Object(values)) if values.is_empty() => Ok(()),
-        Some(Value::Object(_)) => Err("recovery operations do not accept parameters".into()),
+        Some(Value::Object(_)) => Err("operation does not accept parameters".into()),
         Some(_) => Err("params must be an empty object".into()),
         None => Err("missing params".into()),
     }
@@ -235,6 +276,9 @@ mod tests {
         process::{ProcessInfo, ProcessStatus},
         recovery::{
             NvdaRecoveryError, NvdaRecoveryProvider, NvdaRecoveryStatus, NvdaRestartResult,
+        },
+        remsound::{
+            RemSoundActionResult, RemSoundLifecycleState, RemSoundProvider, RemSoundStatus,
         },
         voiceover::{
             UnsupportedVoiceOverProvider, VoiceOverMoveResult, VoiceOverPressResult,
@@ -331,7 +375,15 @@ mod tests {
     }
 
     fn call(json: &str, voiceover: &impl VoiceOverProvider, caps: Capabilities) -> Response {
-        dispatch(req(json), &Fake, &Fake, voiceover, &FakeRecovery, caps)
+        dispatch(
+            req(json),
+            &Fake,
+            &Fake,
+            voiceover,
+            &FakeRecovery,
+            &FakeRemSound,
+            caps,
+        )
     }
 
     struct FakeRecovery;
@@ -346,6 +398,42 @@ mod tests {
             Ok(NvdaRestartResult {
                 requested: true,
                 task_started: true,
+            })
+        }
+    }
+
+    struct FakeRemSound;
+    impl RemSoundProvider for FakeRemSound {
+        fn status(&self) -> Result<RemSoundStatus, RemSoundError> {
+            Ok(RemSoundStatus {
+                platform_supported: true,
+                installed: true,
+                running: false,
+                manageable: true,
+                state: RemSoundLifecycleState::Stopped,
+                version: Some("RemSound 1.2.3".into()),
+                executable_source: None,
+            })
+        }
+
+        fn start(&self) -> Result<RemSoundActionResult, RemSoundError> {
+            Ok(RemSoundActionResult {
+                requested: true,
+                state: RemSoundLifecycleState::Starting,
+            })
+        }
+
+        fn stop(&self) -> Result<RemSoundActionResult, RemSoundError> {
+            Ok(RemSoundActionResult {
+                requested: true,
+                state: RemSoundLifecycleState::Stopping,
+            })
+        }
+
+        fn restart(&self) -> Result<RemSoundActionResult, RemSoundError> {
+            Ok(RemSoundActionResult {
+                requested: true,
+                state: RemSoundLifecycleState::Starting,
             })
         }
     }
@@ -449,6 +537,38 @@ mod tests {
                 "voiceover.state",
             ]
         );
+    }
+
+    #[test]
+    fn remsound_operations_are_structured_and_parameterless() {
+        let status = call(
+            r#"{"version":1,"request_id":"rs-status","operation":"remsound.status","params":{}}"#,
+            &UnsupportedVoiceOverProvider,
+            Capabilities::for_os("windows"),
+        );
+        assert!(status.ok);
+        let result = status.result.unwrap();
+        assert_eq!(result["state"], "stopped");
+        assert_eq!(result["version"], "RemSound 1.2.3");
+
+        for operation in ["remsound.start", "remsound.stop", "remsound.restart"] {
+            let response = call(
+                &format!(
+                    r#"{{"version":1,"request_id":"rs","operation":"{operation}","params":{{}}}}"#
+                ),
+                &UnsupportedVoiceOverProvider,
+                Capabilities::for_os("windows"),
+            );
+            assert!(response.ok, "{operation}");
+            assert_eq!(response.result.unwrap()["requested"], true);
+        }
+
+        let rejected = call(
+            r#"{"version":1,"request_id":"rs-bad","operation":"remsound.start","params":{"program":"cmd.exe"}}"#,
+            &UnsupportedVoiceOverProvider,
+            Capabilities::for_os("windows"),
+        );
+        assert_eq!(rejected.error.unwrap().code, "invalid_parameters");
     }
 
     #[test]
