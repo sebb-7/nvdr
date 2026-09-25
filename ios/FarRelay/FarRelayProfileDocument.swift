@@ -26,6 +26,30 @@ enum FarRelayProfileFileName {
     }
 }
 
+enum FarRelayProfileFileImport {
+    static func canOpen(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        return url.pathExtension.compare(
+            FarRelayProfileFileName.fileExtension,
+            options: [.caseInsensitive]
+        ) == .orderedSame
+    }
+
+    static func decode(_ url: URL) throws -> FarRelayControllerProfileManifest {
+        guard canOpen(url) else {
+            throw FarRelayProfileFileError.invalidProfile(
+                "FarRelay can only import .fr controller profile files."
+            )
+        }
+
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
+        return try FarRelayProfileCodec.decode(Data(contentsOf: url))
+    }
+}
+
 struct FarRelayProfileDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.farRelayControllerProfile] }
     static var writableContentTypes: [UTType] { [.farRelayControllerProfile] }

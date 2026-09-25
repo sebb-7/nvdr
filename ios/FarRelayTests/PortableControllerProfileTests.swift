@@ -100,6 +100,42 @@ final class PortableControllerProfileTests: XCTestCase {
         XCTAssertEqual(FarRelayProfileFileName.fileExtension, "fr")
     }
 
+    func testOpenInFarRelayRecognizesFRCaseInsensitively() {
+        XCTAssertTrue(
+            FarRelayProfileFileImport.canOpen(
+                URL(fileURLWithPath: "/tmp/NVDA-Web-Navigation.fr")
+            )
+        )
+        XCTAssertTrue(
+            FarRelayProfileFileImport.canOpen(
+                URL(fileURLWithPath: "/tmp/NVDA-Web-Navigation.FR")
+            )
+        )
+        XCTAssertFalse(
+            FarRelayProfileFileImport.canOpen(
+                URL(fileURLWithPath: "/tmp/NVDA-Web-Navigation.json")
+            )
+        )
+        XCTAssertFalse(
+            FarRelayProfileFileImport.canOpen(
+                URL(string: "https://example.com/profile.fr")!
+            )
+        )
+    }
+
+    func testOpenInFarRelayUsesValidatedPortableCodec() throws {
+        let manifest = FarRelayControllerProfileManifest(profile: makeProfile())
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(FarRelayProfileFileName.fileExtension)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try FarRelayProfileCodec.encode(manifest).write(to: url, options: .atomic)
+        let decoded = try FarRelayProfileFileImport.decode(url)
+
+        XCTAssertEqual(decoded, manifest)
+    }
+
     private func makeProfile() -> ControllerProfile {
         var profile = ControllerProfile.blank(name: "NVDA Web Navigation")
         profile.setAction(

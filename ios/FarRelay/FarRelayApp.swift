@@ -32,6 +32,8 @@ struct FarRelayApp: App {
     @State private var controllerMappings: ControllerMappingSettings
     @State private var controllerAdapter: DualSenseControllerAdapter
     @State private var audioReceiver: AudioReceiverModel
+    @State private var pendingProfileImport: FarRelayControllerProfileManifest?
+    @State private var profileImportErrorMessage: String?
 
     init() {
         let s = AppSettings()
@@ -111,6 +113,43 @@ struct FarRelayApp: App {
                         QuickCommandEntryView(controller: controllerAdapter)
                     }
                 }
+                .onOpenURL { url in
+                    handleIncomingProfileURL(url)
+                }
+                .confirmationDialog(
+                    "Import Controller Profile",
+                    isPresented: Binding(
+                        get: { pendingProfileImport != nil },
+                        set: { presented in
+                            if !presented { pendingProfileImport = nil }
+                        }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button("Import as New Profile") {
+                        importPendingProfile()
+                    }
+                    Button("Cancel", role: .cancel) {
+                        pendingProfileImport = nil
+                    }
+                } message: {
+                    Text(pendingProfileImport?.importSummary ?? "")
+                }
+                .alert(
+                    "Profile Could Not Be Imported",
+                    isPresented: Binding(
+                        get: { profileImportErrorMessage != nil },
+                        set: { presented in
+                            if !presented { profileImportErrorMessage = nil }
+                        }
+                    )
+                ) {
+                    Button("OK", role: .cancel) {
+                        profileImportErrorMessage = nil
+                    }
+                } message: {
+                    Text(profileImportErrorMessage ?? "Unknown profile import error.")
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         // FarRelay is an always-on remote-control surface.
@@ -123,6 +162,32 @@ struct FarRelayApp: App {
                         controllerAdapter.stop()
                     }
                 }
+        }
+    }
+
+    private func handleIncomingProfileURL(_ url: URL) {
+        guard FarRelayProfileFileImport.canOpen(url) else { return }
+
+        do {
+            pendingProfileImport = try FarRelayProfileFileImport.decode(url)
+        } catch {
+            profileImportErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func importPendingProfile() {
+        guard let manifest = pendingProfileImport else { return }
+        pendingProfileImport = nil
+
+        do {
+            let importedID = try controllerMappings.importPortableProfile(manifest)
+            let name = controllerMappings.profiles.first(where: { $0.id == importedID })?.name
+                ?? manifest.profile.name
+            AccessibilityNotification.Announcement(
+                "Imported \(name) as a new controller profile. It is not active yet."
+            ).post()
+        } catch {
+            profileImportErrorMessage = error.localizedDescription
         }
     }
 }

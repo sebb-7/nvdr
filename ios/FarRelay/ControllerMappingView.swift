@@ -258,13 +258,7 @@ struct ControllerProfilesView: View {
     ) {
         do {
             guard let url = try result.get().first else { return }
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { url.stopAccessingSecurityScopedResource() }
-            }
-            pendingImport = try FarRelayProfileCodec.decode(
-                Data(contentsOf: url)
-            )
+            pendingImport = try FarRelayProfileFileImport.decode(url)
         } catch {
             importErrorMessage = error.localizedDescription
         }
