@@ -221,7 +221,11 @@ function New-FarRelayVerifiedSshKey {
         if (Test-Path -LiteralPath $publicPath -PathType Leaf) { continue }
 
         $comment = "farrelay-iphone@$env:COMPUTERNAME"
-        & $sshKeygen -q -t ed25519 -N '""' -C $comment -f $privatePath
+        # Windows PowerShell 5.1 drops a literal empty native argument, while
+        # PowerShell 7 preserves it. Use the quoting form required by each
+        # host so ssh-keygen always receives an actually empty passphrase.
+        $emptyPassphrase = if ($PSVersionTable.PSEdition -eq 'Core') { '' } else { '""' }
+        & $sshKeygen -q -t ed25519 -N $emptyPassphrase -C $comment -f $privatePath
         if ($LASTEXITCODE -ne 0) { throw 'Windows OpenSSH could not generate the FarRelay SSH key.' }
 
         $stored = (Get-Content -LiteralPath $publicPath -Raw).Trim()
