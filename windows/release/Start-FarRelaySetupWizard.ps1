@@ -398,6 +398,17 @@ $timer.Add_Tick({
                 $summary.Add('Use Copy Private Key only when you are ready to paste it into FarRelay on the iPhone. Do not send the private key through chat or email.')
                 $description.Text = $summary -join $newLine
                 Show-Page 4
+            } elseif ($status.state -eq 'action_required') {
+                $timer.Stop()
+                $warnings = @($status.data.warnings)
+                $lines = [System.Collections.Generic.List[string]]::new()
+                $lines.Add($status.message)
+                $lines.Add('')
+                foreach ($warning in $warnings) { if ($warning) { $lines.Add("- $warning") } }
+                $lines.Add('')
+                $lines.Add('Complete the action above, then choose Retry.')
+                $description.Text = $lines -join $newLine
+                Show-Page 5
             } elseif ($status.state -eq 'failed') {
                 $timer.Stop()
                 $description.Text = "Setup failed during $($status.step).$newLine$newLine$($status.message)$newLine$newLineNo existing SSH key was overwritten."
