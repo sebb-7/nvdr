@@ -10,7 +10,6 @@ use std::{
 pub enum RemSoundLifecycleState {
     Unsupported,
     #[cfg(any(test, target_os = "windows"))]
-    #[cfg(any(test, target_os = "windows"))]
     NotInstalled,
     #[cfg(any(test, target_os = "windows"))]
     Stopped,
@@ -53,6 +52,7 @@ pub struct RemSoundActionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemSoundError {
     UnsupportedPlatform,
+    #[cfg(any(test, target_os = "windows"))]
     NotInstalled,
     #[cfg(any(test, target_os = "windows"))]
     NotManaged,
