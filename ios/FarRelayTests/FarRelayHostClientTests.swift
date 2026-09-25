@@ -285,7 +285,8 @@ final class FarRelayHostClientTests: XCTestCase {
                 executableSource: "installed"
             )
         )
-        XCTAssertEqual(try await statusTask.value.state, .running)
+        let status = try await statusTask.value
+        XCTAssertEqual(status.state, .running)
 
         for (operation, task) in [
             ("remsound.start", Task { try await client.startRemSound() }),
@@ -319,7 +320,8 @@ final class FarRelayHostClientTests: XCTestCase {
             senderVersion: "RemSound 1.2.3"
         )
         transport.sendSuccess(requestID: sessionRequest.requestID, result: expected)
-        XCTAssertEqual(try await sessionTask.value, expected)
+        let session = try await sessionTask.value
+        XCTAssertEqual(session, expected)
     }
 
     func testVoiceOverHostErrorsPreserveRequestIDCorrelation() async throws {
