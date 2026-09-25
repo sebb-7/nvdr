@@ -293,8 +293,10 @@ impl<R: RemSoundRuntime> RemSoundProvider for ManagedRemSoundProvider<R> {
     }
 }
 
+#[cfg(any(test, not(target_os = "windows")))]
 pub struct UnsupportedRemSoundProvider;
 
+#[cfg(any(test, not(target_os = "windows")))]
 impl RemSoundProvider for UnsupportedRemSoundProvider {
     fn status(&self) -> Result<RemSoundStatus, RemSoundError> {
         Ok(RemSoundStatus {
