@@ -246,7 +246,7 @@ function Show-Page([int]$Page) {
         0 {
             $title.Text = 'FarRelay Setup'
             $description.Text = Get-WelcomeText
-            $modeGroup.Visible = $true
+            $modeGroup.Visible = $false
             $customGroup.Visible = $false
             $backButton.Enabled = $false
             $nextButton.Enabled = $snapshot.Installed -and $snapshot.Activated
@@ -265,12 +265,22 @@ function Show-Page([int]$Page) {
                 '',
                 'RemSound is intentionally not included yet because the current Windows release does not package a RemSound installer.'
             ) -join $newLine
-            $modeGroup.Visible = -not $custom.Checked
-            $customGroup.Visible = $custom.Checked
+            $modeGroup.Visible = $true
+            $customGroup.Visible = $false
             $backButton.Enabled = $true
             $nextButton.Enabled = $true
             $nextButton.Text = '&Next'
             if ($custom.Checked) { $checkOpenSsh.Focus() } else { $recommended.Focus() }
+        }
+        6 {
+            $title.Text = 'Choose custom components'
+            $description.Text = 'Choose the components FarRelay should configure. The verified SSH key requires OpenSSH Server to be available.'
+            $modeGroup.Visible = $false
+            $customGroup.Visible = $true
+            $backButton.Enabled = $true
+            $nextButton.Enabled = $true
+            $nextButton.Text = '&Next'
+            $checkOpenSsh.Focus()
         }
         2 {
             $title.Text = 'Review setup'
@@ -373,7 +383,9 @@ $timer.Add_Tick({
                 $summary = [System.Collections.Generic.List[string]]::new()
                 $summary.Add('Setup completed.')
                 $summary.Add('')
-                $summary.Add('The dedicated SSH key passed a real localhost public-key login test.')
+                if ($status.data.ssh_private_key_path) {
+                    $summary.Add('The dedicated SSH key passed a real localhost public-key login test.')
+                }
                 if ($status.data.tailscale_ip) {
                     $summary.Add("Tailscale address: $($status.data.tailscale_ip)")
                 }
@@ -404,18 +416,13 @@ $timer.Add_Tick({
     }
 })
 
-$custom.Add_CheckedChanged({
-    if ($custom.Checked -and $script:page -eq 1) {
-        $modeGroup.Visible = $false
-        $customGroup.Visible = $true
-        $checkOpenSsh.Focus()
-    }
-})
-
 $nextButton.Add_Click({
     switch ($script:page) {
         0 { Show-Page 1 }
-        1 { Show-Page 2 }
+        1 {
+            if ($custom.Checked) { Show-Page 6 } else { Show-Page 2 }
+        }
+        6 { Show-Page 2 }
         2 {
             Start-SetupWorker
             $timer.Start()
@@ -431,7 +438,10 @@ $nextButton.Add_Click({
 $backButton.Add_Click({
     switch ($script:page) {
         1 { Show-Page 0 }
-        2 { Show-Page 1 }
+        6 { Show-Page 1 }
+        2 {
+            if ((Get-Mode) -eq 'Custom') { Show-Page 6 } else { Show-Page 1 }
+        }
         5 { Show-Page 2 }
     }
 })
