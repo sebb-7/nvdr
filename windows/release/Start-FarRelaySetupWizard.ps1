@@ -3,6 +3,7 @@ param(
     [switch]$Worker,
     [ValidateSet('Recommended','Travel','Custom')][string]$RunSetupMode = 'Recommended',
     [string]$StatusPath,
+    [string]$ExpectedUserName,
     [switch]$SkipOpenSsh,
     [switch]$SkipTailscale,
     [switch]$SkipNvda,
@@ -22,6 +23,7 @@ if ($Worker) {
         $workerParams = @{
             Mode = $RunSetupMode
             StatusPath = $StatusPath
+            ExpectedUserName = $ExpectedUserName
             SkipOpenSsh = $SkipOpenSsh
             SkipTailscale = $SkipTailscale
             SkipNvda = $SkipNvda
@@ -348,7 +350,9 @@ function Start-SetupWorker {
         '-RunSetupMode',
         $mode,
         '-StatusPath',
-        ('"' + $statusFile + '"')
+        ('"' + $statusFile + '"'),
+        '-ExpectedUserName',
+        $env:USERNAME
     )) { $arguments.Add($item) }
 
     if ($mode -eq 'Custom') {
