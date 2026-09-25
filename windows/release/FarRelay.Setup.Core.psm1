@@ -339,6 +339,7 @@ function Invoke-FarRelaySetup {
     param(
         [Parameter(Mandatory)][ValidateSet('Recommended','Travel','Custom')][string]$Mode,
         [Parameter(Mandatory)][string]$StatusPath,
+        [Parameter(Mandatory)][string]$ExpectedUserName,
         [switch]$SkipOpenSsh,
         [switch]$SkipTailscale,
         [switch]$SkipNvda,
@@ -348,6 +349,9 @@ function Invoke-FarRelaySetup {
 
     if (-not (Test-FarRelayIsElevated)) {
         throw 'The setup worker must run with administrator approval.'
+    }
+    if (-not [string]::Equals($env:USERNAME, $ExpectedUserName, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Administrator approval switched from Windows user '$ExpectedUserName' to '$env:USERNAME'. This beta wizard will not configure another account. Sign in with an administrator account or configure this PC manually."
     }
 
     $result = [ordered]@{
