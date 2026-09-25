@@ -1,4 +1,5 @@
 use serde::Serialize;
+#[cfg(any(test, target_os = "windows"))]
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -8,17 +9,25 @@ use std::{
 #[serde(rename_all = "snake_case")]
 pub enum RemSoundLifecycleState {
     Unsupported,
+    #[cfg(any(test, target_os = "windows"))]
+    #[cfg(any(test, target_os = "windows"))]
     NotInstalled,
+    #[cfg(any(test, target_os = "windows"))]
     Stopped,
+    #[cfg(any(test, target_os = "windows"))]
     Running,
+    #[cfg(any(test, target_os = "windows"))]
     Starting,
+    #[cfg(any(test, target_os = "windows"))]
     Stopping,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RemSoundExecutableSource {
+    #[cfg(any(test, target_os = "windows"))]
     Bundled,
+    #[cfg(any(test, target_os = "windows"))]
     Installed,
 }
 
@@ -45,10 +54,15 @@ pub struct RemSoundActionResult {
 pub enum RemSoundError {
     UnsupportedPlatform,
     NotInstalled,
+    #[cfg(any(test, target_os = "windows"))]
     NotManaged,
+    #[cfg(any(test, target_os = "windows"))]
     ProbeFailed,
+    #[cfg(any(test, target_os = "windows"))]
     StartFailed,
+    #[cfg(any(test, target_os = "windows"))]
     StopFailed,
+    #[cfg(any(test, target_os = "windows"))]
     StopTimeout,
 }
 
@@ -56,11 +70,17 @@ impl RemSoundError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnsupportedPlatform => "unsupported_platform",
+            #[cfg(any(test, target_os = "windows"))]
             Self::NotInstalled => "remsound_not_installed",
+            #[cfg(any(test, target_os = "windows"))]
             Self::NotManaged => "remsound_not_managed",
+            #[cfg(any(test, target_os = "windows"))]
             Self::ProbeFailed => "remsound_probe_failed",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StartFailed => "remsound_start_failed",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StopFailed => "remsound_stop_failed",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StopTimeout => "remsound_stop_timeout",
         }
     }
@@ -70,15 +90,21 @@ impl RemSoundError {
             Self::UnsupportedPlatform => {
                 "RemSound process orchestration is supported only on Windows."
             }
+            #[cfg(any(test, target_os = "windows"))]
             Self::NotInstalled => {
                 "RemSound was not found in a FarRelay-managed or standard installed location."
             }
+            #[cfg(any(test, target_os = "windows"))]
             Self::NotManaged => {
                 "RemSound is running, but FarRelay cannot safely identify a managed executable to control."
             }
+            #[cfg(any(test, target_os = "windows"))]
             Self::ProbeFailed => "FarRelay could not inspect the RemSound process state.",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StartFailed => "FarRelay could not start RemSound.",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StopFailed => "FarRelay could not request RemSound to close.",
+            #[cfg(any(test, target_os = "windows"))]
             Self::StopTimeout => "RemSound did not stop within the bounded restart window.",
         }
     }
@@ -91,12 +117,14 @@ pub trait RemSoundProvider {
     fn restart(&self) -> Result<RemSoundActionResult, RemSoundError>;
 }
 
+#[cfg(any(test, target_os = "windows"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedRemSoundExecutable {
     path: PathBuf,
     source: RemSoundExecutableSource,
 }
 
+#[cfg(any(test, target_os = "windows"))]
 trait RemSoundRuntime {
     fn platform_supported(&self) -> bool;
     fn resolve_executable(&self) -> Result<Option<ResolvedRemSoundExecutable>, String>;
@@ -107,16 +135,19 @@ trait RemSoundRuntime {
     fn wait_until_stopped(&self, timeout: Duration) -> Result<bool, String>;
 }
 
+#[cfg(any(test, target_os = "windows"))]
 struct ManagedRemSoundProvider<R> {
     runtime: R,
 }
 
+#[cfg(any(test, target_os = "windows"))]
 impl<R> ManagedRemSoundProvider<R> {
     fn new(runtime: R) -> Self {
         Self { runtime }
     }
 }
 
+#[cfg(any(test, target_os = "windows"))]
 impl<R: RemSoundRuntime> ManagedRemSoundProvider<R> {
     fn resolved_executable(&self) -> Result<Option<ResolvedRemSoundExecutable>, RemSoundError> {
         self.runtime
@@ -142,6 +173,7 @@ impl<R: RemSoundRuntime> ManagedRemSoundProvider<R> {
     }
 }
 
+#[cfg(any(test, target_os = "windows"))]
 impl<R: RemSoundRuntime> RemSoundProvider for ManagedRemSoundProvider<R> {
     fn status(&self) -> Result<RemSoundStatus, RemSoundError> {
         if !self.runtime.platform_supported() {
