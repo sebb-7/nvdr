@@ -393,7 +393,9 @@ function Invoke-FarRelaySetup {
             Set-FarRelayTravelPowerPolicy
         }
 
-        Write-FarRelaySetupStatus -Path $StatusPath -State ready -Step Complete -Message 'FarRelay setup completed and SSH authentication was verified.' -Data $result
+        $finalState = if (@($result.warnings).Count -gt 0) { 'action_required' } else { 'ready' }
+        $finalMessage = if ($finalState -eq 'ready') { 'FarRelay setup completed and all selected checks passed.' } else { 'FarRelay setup completed, but one or more actions still require attention.' }
+        Write-FarRelaySetupStatus -Path $StatusPath -State $finalState -Step Complete -Message $finalMessage -Data $result
         return [pscustomobject]$result
     } catch {
         $result['error'] = $_.Exception.Message
