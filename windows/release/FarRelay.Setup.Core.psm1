@@ -221,7 +221,7 @@ function New-FarRelayVerifiedSshKey {
         if (Test-Path -LiteralPath $publicPath -PathType Leaf) { continue }
 
         $comment = "farrelay-iphone@$env:COMPUTERNAME"
-        & $sshKeygen -q -t ed25519 -N '' -C $comment -f $privatePath
+        & $sshKeygen -q -t ed25519 -N '""' -C $comment -f $privatePath
         if ($LASTEXITCODE -ne 0) { throw 'Windows OpenSSH could not generate the FarRelay SSH key.' }
 
         $stored = (Get-Content -LiteralPath $publicPath -Raw).Trim()
