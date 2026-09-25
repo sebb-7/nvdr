@@ -7,7 +7,7 @@ function Write-FarRelaySetupStatus {
         [Parameter(Mandatory)][string]$State,
         [Parameter(Mandatory)][string]$Step,
         [Parameter(Mandatory)][string]$Message,
-        [hashtable]$Data
+        [System.Collections.IDictionary]$Data
     )
     $directory = Split-Path -Parent $Path
     if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
@@ -48,7 +48,8 @@ function Resolve-FarRelayTailscale {
 }
 
 function Get-FarRelayPublicKeyCore {
-    param([Parameter(Mandatory)][string]$Line)
+    param([AllowEmptyString()][string]$Line)
+    if ([string]::IsNullOrWhiteSpace($Line)) { return '' }
     $parts = @($Line.Trim() -split '\s+')
     if ($parts.Count -lt 2) { return '' }
     return "$($parts[0]) $($parts[1])"
@@ -395,7 +396,7 @@ function Invoke-FarRelaySetup {
         Write-FarRelaySetupStatus -Path $StatusPath -State ready -Step Complete -Message 'FarRelay setup completed and SSH authentication was verified.' -Data $result
         return [pscustomobject]$result
     } catch {
-        $result.error = $_.Exception.Message
+        $result['error'] = $_.Exception.Message
         Write-FarRelaySetupStatus -Path $StatusPath -State failed -Step Failed -Message $_.Exception.Message -Data $result
         throw
     }
