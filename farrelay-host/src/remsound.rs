@@ -592,6 +592,18 @@ mod tests {
     }
 
     #[test]
+    fn status_preserves_bundled_runtime_source() {
+        let mut runtime = FakeRuntime::installed(false);
+        runtime.executable.as_mut().unwrap().source = RemSoundExecutableSource::Bundled;
+        let provider = ManagedRemSoundProvider::new(runtime);
+        let status = provider.status().unwrap();
+        assert_eq!(
+            status.executable_source,
+            Some(RemSoundExecutableSource::Bundled)
+        );
+    }
+
+    #[test]
     fn missing_install_fails_closed_without_launching_arbitrary_process() {
         let runtime = FakeRuntime {
             executable: None,
