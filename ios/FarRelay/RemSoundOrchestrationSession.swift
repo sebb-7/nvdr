@@ -170,6 +170,7 @@ protocol RemSoundReceiverControlling: AnyObject {
     )
     func stop()
     func reconnect()
+    func orchestrationUpdates() async -> AsyncStream<AudioReceiverSnapshot>
 }
 
 extension AudioReceiverModel: RemSoundReceiverControlling {}
@@ -196,10 +197,13 @@ final class RemSoundOrchestrationSession {
     private(set) var descriptor: HostRemSoundSessionDescriptor?
     private(set) var senderStatus: HostRemSoundStatus?
     private(set) var senderState: HostRemSoundLifecycleState?
+    private(set) var automaticRecoveryAttempts = 0
 
     @ObservationIgnored private let host: any RemSoundHostOrchestrating
     @ObservationIgnored private let receiver: any RemSoundReceiverControlling
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryInFlight = false
 
     init(
         receiver: any RemSoundReceiverControlling,
@@ -293,6 +297,13 @@ final class RemSoundOrchestrationSession {
                 targetLatencyMilliseconds: targetLatencyMilliseconds,
                 autoTuneLatencyEnabled: autoTuneLatencyEnabled
             )
+            startRecoveryMonitor(
+                profile: profile,
+                credentials: credentials,
+                targetLatencyMilliseconds: targetLatencyMilliseconds,
+                autoTuneLatencyEnabled: autoTuneLatencyEnabled,
+                generation: requestGeneration
+            )
         } catch {
             guard requestGeneration == generation else { return }
             phase = .failed(error.localizedDescription)
@@ -301,12 +312,17 @@ final class RemSoundOrchestrationSession {
 
     func stopAudio() {
         generation &+= 1
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryInFlight = false
+        automaticRecoveryAttempts = 0
         receiver.stop()
         phase = .stopped
     }
 
     func reconnectAudio() {
         guard activeProfileID != nil else { return }
+        automaticRecoveryAttempts = 0
         receiver.reconnect()
         phase = .reconnecting
     }
@@ -322,6 +338,7 @@ final class RemSoundOrchestrationSession {
             return
         }
 
+        automaticRecoveryAttempts = 0
         phase = .reconnecting
         do {
             let result = try await host.restartSender(profile: profile, credentials: credentials)
@@ -337,6 +354,167 @@ final class RemSoundOrchestrationSession {
             }
         }
     }
+
+    private func startRecoveryMonitor(
+        profile: HostProfile,
+        credentials: HostProfileCredentials,
+        targetLatencyMilliseconds: Int,
+        autoTuneLatencyEnabled: Bool,
+        generation monitorGeneration: Int
+    ) {
+        recoveryTask?.cancel()
+        automaticRecoveryAttempts = 0
+        recoveryInFlight = false
+        let receiver = self.receiver
+        recoveryTask = Task { [weak self, receiver] in
+            let updates = await receiver.orchestrationUpdates()
+            for await snapshot in updates {
+                guard !Task.isCancelled, let self else { return }
+                await self.handleReceiverUpdate(
+                    snapshot,
+                    profile: profile,
+                    credentials: credentials,
+                    targetLatencyMilliseconds: targetLatencyMilliseconds,
+                    autoTuneLatencyEnabled: autoTuneLatencyEnabled,
+                    generation: monitorGeneration
+                )
+            }
+        }
+    }
+
+    private func handleReceiverUpdate(
+        _ snapshot: AudioReceiverSnapshot,
+        profile: HostProfile,
+        credentials: HostProfileCredentials,
+        targetLatencyMilliseconds: Int,
+        autoTuneLatencyEnabled: Bool,
+        generation monitorGeneration: Int
+    ) async {
+        guard monitorGeneration == generation,
+              activeProfileID == profile.id
+        else { return }
+
+        switch snapshot.state {
+        case .idle:
+            return
+        case .connecting, .authenticating, .waitingForAudio:
+            if !recoveryInFlight { phase = .connectingReceiver }
+        case .buffering:
+            if !recoveryInFlight { phase = .buffering }
+        case .playing:
+            automaticRecoveryAttempts = 0
+            if !recoveryInFlight { phase = .playing }
+        case .reconnecting:
+            phase = .reconnecting
+        case .stopped:
+            if phase != .stopped { phase = .stopped }
+        case .failed:
+            await recover(
+                from: snapshot,
+                profile: profile,
+                credentials: credentials,
+                targetLatencyMilliseconds: targetLatencyMilliseconds,
+                autoTuneLatencyEnabled: autoTuneLatencyEnabled,
+                generation: monitorGeneration
+            )
+        }
+    }
+
+    private func recover(
+        from snapshot: AudioReceiverSnapshot,
+        profile: HostProfile,
+        credentials: HostProfileCredentials,
+        targetLatencyMilliseconds: Int,
+        autoTuneLatencyEnabled: Bool,
+        generation monitorGeneration: Int
+    ) async {
+        guard !recoveryInFlight,
+              monitorGeneration == generation
+        else { return }
+
+        if snapshot.statistics.authenticationFailures > 0
+            || snapshot.statistics.formatAuthenticationFailures > 0
+            || snapshot.statistics.encryptedAudioAuthenticationFailures > 0 {
+            phase = .failed(
+                "Remote audio authentication failed. Verify the saved RemSound shared password and try Start Audio again."
+            )
+            return
+        }
+
+        recoveryInFlight = true
+        defer { recoveryInFlight = false }
+        automaticRecoveryAttempts += 1
+
+        switch automaticRecoveryAttempts {
+        case 1:
+            do {
+                let status = try await host.status(profile: profile, credentials: credentials)
+                guard monitorGeneration == generation else { return }
+                senderStatus = status
+                senderState = status.state
+                guard status.installed else {
+                    phase = .failed("RemSound is not installed on this computer.")
+                    return
+                }
+                guard status.manageable else {
+                    phase = .failed("RemSound is running but FarRelay cannot safely manage this installation.")
+                    return
+                }
+                if !status.running {
+                    let result = try await host.restartSender(profile: profile, credentials: credentials)
+                    guard monitorGeneration == generation else { return }
+                    senderState = result.state
+                }
+            } catch {
+                // A host-status query failing is not evidence that healthy
+                // remote control should be torn down. Receiver reconnect is
+                // the least destructive first recovery step.
+            }
+            guard monitorGeneration == generation else { return }
+            phase = .reconnecting
+            receiver.reconnect()
+
+        case 2:
+            do {
+                let result = try await host.restartSender(profile: profile, credentials: credentials)
+                guard monitorGeneration == generation else { return }
+                senderState = result.state
+            } catch {
+                // Still reconnect the receiver. If the sender remains bad, the
+                // next failure escalates to a fresh session request.
+            }
+            guard monitorGeneration == generation else { return }
+            phase = .reconnecting
+            receiver.reconnect()
+
+        case 3:
+            do {
+                phase = .requestingSession
+                let handshake = try await host.handshake(profile: profile, credentials: credentials)
+                guard monitorGeneration == generation else { return }
+                try RemSoundOrchestrationContract.validate(capabilities: handshake.capabilities)
+                try RemSoundOrchestrationContract.validate(descriptor: handshake.descriptor)
+                descriptor = handshake.descriptor
+                senderState = handshake.descriptor.senderState
+                receiver.start(
+                    host: profile.address.trimmingCharacters(in: .whitespacesAndNewlines),
+                    port: handshake.descriptor.audioPort,
+                    password: credentials.remSoundPassword,
+                    targetLatencyMilliseconds: targetLatencyMilliseconds,
+                    autoTuneLatencyEnabled: autoTuneLatencyEnabled
+                )
+                phase = .connectingReceiver
+            } catch {
+                phase = .failed(Self.recoveryFailureMessage)
+            }
+
+        default:
+            phase = .failed(Self.recoveryFailureMessage)
+        }
+    }
+
+    private static let recoveryFailureMessage =
+        "Remote audio could not recover automatically. Open Audio Details and verify RemSound is running, FarRelay iOS is selected as the peer, and the shared password matches."
 
     func refreshSenderStatus(
         profile: HostProfile,

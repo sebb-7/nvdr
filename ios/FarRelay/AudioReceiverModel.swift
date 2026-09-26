@@ -87,6 +87,10 @@ final class AudioReceiverModel {
         Task { await receiver.reconnect() }
     }
 
+    func orchestrationUpdates() async -> AsyncStream<AudioReceiverSnapshot> {
+        await receiver.updates()
+    }
+
     func setMuted(_ muted: Bool) { Task { await receiver.setMuted(muted) } }
     func setVolume(_ volume: Float) { Task { await receiver.setVolume(volume) } }
     func setTargetLatencyMilliseconds(_ milliseconds: Int) {

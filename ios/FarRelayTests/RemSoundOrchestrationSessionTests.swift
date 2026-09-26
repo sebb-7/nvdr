@@ -175,6 +175,80 @@ final class RemSoundOrchestrationSessionTests: XCTestCase {
         XCTAssertEqual(session.state, .stopped)
     }
 
+    func testAutomaticRecoveryEscalatesWithoutRestartEverything() async {
+        let host = FakeRemSoundHostOrchestrator(handshake: .init(
+            capabilities: makeCapabilities(),
+            descriptor: makeDescriptor(senderState: .running)
+        ))
+        let receiver = FakeRemSoundReceiver()
+        let session = RemSoundOrchestrationSession(receiver: receiver, host: host)
+        let profile = makeProfile()
+        let credentials = HostProfileCredentials(password: "ssh", remSoundPassword: "audio")
+
+        await session.start(profile: profile, credentials: credentials)
+        await settleRecoveryMonitor()
+
+        receiver.emitFailure("stream disappeared")
+        await settleRecoveryMonitor()
+        XCTAssertEqual(host.statusCalls, 1)
+        XCTAssertEqual(host.restartSenderCalls, 0)
+        XCTAssertEqual(receiver.reconnectCalls, 1)
+        XCTAssertEqual(session.automaticRecoveryAttempts, 1)
+
+        receiver.emitFailure("stream still missing")
+        await settleRecoveryMonitor()
+        XCTAssertEqual(host.restartSenderCalls, 1)
+        XCTAssertEqual(receiver.reconnectCalls, 2)
+        XCTAssertEqual(session.automaticRecoveryAttempts, 2)
+
+        receiver.emitFailure("session stale")
+        await settleRecoveryMonitor()
+        XCTAssertEqual(host.handshakeCalls, 2)
+        XCTAssertEqual(session.automaticRecoveryAttempts, 3)
+
+        receiver.emitFailure("still broken")
+        await settleRecoveryMonitor()
+        guard case .failed(let message) = session.state else {
+            return XCTFail("Expected bounded recovery to stop after escalation.")
+        }
+        XCTAssertTrue(message.contains("could not recover automatically"))
+        XCTAssertEqual(host.restartSenderCalls, 1)
+    }
+
+    func testAuthenticationFailureNeverLoopsRecovery() async {
+        let host = FakeRemSoundHostOrchestrator(handshake: .init(
+            capabilities: makeCapabilities(),
+            descriptor: makeDescriptor(senderState: .running)
+        ))
+        let receiver = FakeRemSoundReceiver()
+        let session = RemSoundOrchestrationSession(receiver: receiver, host: host)
+        let profile = makeProfile()
+        let credentials = HostProfileCredentials(password: "ssh", remSoundPassword: "wrong")
+
+        await session.start(profile: profile, credentials: credentials)
+        await settleRecoveryMonitor()
+
+        var failed = AudioReceiverSnapshot()
+        failed.state = .failed("authentication failed")
+        failed.statistics.authenticationFailures = 1
+        receiver.emit(failed)
+        await settleRecoveryMonitor()
+
+        guard case .failed(let message) = session.state else {
+            return XCTFail("Expected authentication failure to require user action.")
+        }
+        XCTAssertTrue(message.contains("shared password"))
+        XCTAssertEqual(receiver.reconnectCalls, 0)
+        XCTAssertEqual(host.restartSenderCalls, 0)
+        XCTAssertEqual(session.automaticRecoveryAttempts, 0)
+    }
+
+    private func settleRecoveryMonitor() async {
+        for _ in 0..<12 {
+            await Task.yield()
+        }
+    }
+
     func testCapabilityContractRequiresOrchestrationFeatureAndSessionOperation() {
         XCTAssertNoThrow(try RemSoundOrchestrationContract.validate(capabilities: makeCapabilities()))
 
@@ -256,6 +330,7 @@ private final class FakeRemSoundReceiver: RemSoundReceiverControlling {
     var lastStart: Start?
     var stopCalls = 0
     var reconnectCalls = 0
+    private var updatesContinuation: AsyncStream<AudioReceiverSnapshot>.Continuation?
 
     func start(
         host: String,
@@ -281,6 +356,25 @@ private final class FakeRemSoundReceiver: RemSoundReceiverControlling {
     func reconnect() {
         reconnectCalls += 1
         snapshot.state = .reconnecting
+        updatesContinuation?.yield(snapshot)
+    }
+
+    func orchestrationUpdates() async -> AsyncStream<AudioReceiverSnapshot> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            updatesContinuation = continuation
+            continuation.yield(snapshot)
+        }
+    }
+
+    func emit(_ newSnapshot: AudioReceiverSnapshot) {
+        snapshot = newSnapshot
+        updatesContinuation?.yield(newSnapshot)
+    }
+
+    func emitFailure(_ message: String) {
+        var failed = snapshot
+        failed.state = .failed(message)
+        emit(failed)
     }
 }
 
