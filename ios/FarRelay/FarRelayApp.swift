@@ -32,6 +32,7 @@ struct FarRelayApp: App {
     @State private var controllerMappings: ControllerMappingSettings
     @State private var controllerAdapter: DualSenseControllerAdapter
     @State private var audioReceiver: AudioReceiverModel
+    @State private var remSoundOrchestration: RemSoundOrchestrationSession
     @State private var pendingProfileImport: FarRelayControllerProfileManifest?
     @State private var profileImportErrorMessage: String?
 
@@ -67,7 +68,9 @@ struct FarRelayApp: App {
             diagnostics: inputDiagnostics,
             feedback: interactionFeedback
         ))
-        _audioReceiver = State(initialValue: AudioReceiverModel())
+        let audioReceiver = AudioReceiverModel()
+        _audioReceiver = State(initialValue: audioReceiver)
+        _remSoundOrchestration = State(initialValue: RemSoundOrchestrationSession(receiver: audioReceiver))
     }
 
     var body: some Scene {
@@ -85,6 +88,7 @@ struct FarRelayApp: App {
                 .environment(controllerMappings)
                 .environment(controllerAdapter)
                 .environment(audioReceiver)
+                .environment(remSoundOrchestration)
                 .task {
                     UIApplication.shared.isIdleTimerDisabled = true
                     controllerAdapter.start()

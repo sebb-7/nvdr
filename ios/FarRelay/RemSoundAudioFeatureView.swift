@@ -6,6 +6,7 @@ import SwiftUI
 struct RemSoundAudioFeatureView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(AudioReceiverModel.self) private var audioReceiver
+    @Environment(RemSoundOrchestrationSession.self) private var orchestration
     let profile: HostProfile
     @State private var password = ""
 
@@ -21,6 +22,9 @@ struct RemSoundAudioFeatureView: View {
                     .foregroundStyle(.secondary)
             }
             Section("Audio status") {
+                Text(orchestration.statusLabel)
+                    .accessibilityLabel("Remote audio orchestration status")
+                    .accessibilityValue(orchestration.statusLabel)
                 Text(audioReceiver.compactStatusLabel)
                     .accessibilityLabel("RemSound status")
                     .accessibilityValue(audioReceiver.compactStatusLabel)
@@ -28,22 +32,27 @@ struct RemSoundAudioFeatureView: View {
                     Text(error).foregroundStyle(.secondary)
                 }
                 Button(actionTitle, systemImage: actionSymbol) {
-                    switch audioReceiver.snapshot.state {
-                    case .idle, .stopped, .failed:
-                        audioReceiver.start(
-                            host: host,
-                            port: port,
-                            password: password,
-                            targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
-                            autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
-                        )
-                    case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
-                        audioReceiver.stop()
+                    if shouldStartAudio {
+                        guard let credentials = settings.credentials(for: profile) else { return }
+                        Task {
+                            await orchestration.start(
+                                profile: profile,
+                                credentials: credentials,
+                                targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
+                                autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
+                            )
+                        }
+                    } else {
+                        orchestration.stopAudio()
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 Button("Reconnect audio", systemImage: "arrow.clockwise") {
-                    audioReceiver.reconnect()
+                    if orchestration.activeProfileID == profile.id {
+                        orchestration.reconnectAudio()
+                    } else {
+                        audioReceiver.reconnect()
+                    }
                 }
                 .disabled(!canReconnect)
             }
@@ -112,6 +121,15 @@ struct RemSoundAudioFeatureView: View {
                 Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
                     AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
                 }
+                Button("Start receiver only (debug)", systemImage: "wrench.and.screwdriver") {
+                    audioReceiver.start(
+                        host: host,
+                        port: port,
+                        password: password,
+                        targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
+                        autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
+                    )
+                }
                 Text("Diagnostics exclude passwords, derived keys, fingerprints, packet plaintext, and audio content. A completed UDP discovery send confirms only that iOS accepted the datagram locally; Windows heartbeat pings are the stronger proof that the PC can reach this device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -141,17 +159,23 @@ struct RemSoundAudioFeatureView: View {
         }
     }
 
-    private var actionTitle: String {
+    private var shouldStartAudio: Bool {
+        if orchestration.activeProfileID == profile.id {
+            switch orchestration.state {
+            case .idle, .stopped, .failed, .unavailable:
+                return true
+            case .requestingSession, .startingSender, .connectingReceiver, .buffering, .playing, .reconnecting, .degraded:
+                return false
+            }
+        }
         switch audioReceiver.snapshot.state {
-        case .idle, .stopped, .failed: "Start audio"
-        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "Stop audio"
+        case .idle, .stopped, .failed:
+            return true
+        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
+            return false
         }
     }
 
-    private var actionSymbol: String {
-        switch audioReceiver.snapshot.state {
-        case .idle, .stopped, .failed: "play.fill"
-        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "stop.fill"
-        }
-    }
+    private var actionTitle: String { shouldStartAudio ? "Start audio" : "Stop audio" }
+    private var actionSymbol: String { shouldStartAudio ? "play.fill" : "stop.fill" }
 }
