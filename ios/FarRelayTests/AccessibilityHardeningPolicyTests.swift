@@ -160,6 +160,43 @@ final class AccessibilityHardeningPolicyTests: XCTestCase {
         )
     }
 
+    func testRemoteAudioAnnouncementsStayConcise() {
+        XCTAssertNil(
+            RemoteAudioAnnouncementPolicy.announcement(
+                from: .idle,
+                to: .connecting
+            )
+        )
+        XCTAssertEqual(
+            RemoteAudioAnnouncementPolicy.announcement(
+                from: .waitingForAudio,
+                to: .buffering
+            ),
+            "Remote audio buffering"
+        )
+        XCTAssertEqual(
+            RemoteAudioAnnouncementPolicy.announcement(
+                from: .buffering,
+                to: .playing
+            ),
+            "Remote audio playing"
+        )
+        XCTAssertEqual(
+            RemoteAudioAnnouncementPolicy.announcement(
+                from: .playing,
+                to: .reconnecting
+            ),
+            "Remote audio reconnecting"
+        )
+        XCTAssertEqual(
+            RemoteAudioAnnouncementPolicy.announcement(
+                from: .reconnecting,
+                to: .failed("network")
+            ),
+            "Remote audio unavailable"
+        )
+    }
+
     func testForwardingAnnouncementIsExplicitToggleCopy() {
         XCTAssertEqual(
             NVDAForwardingAnnouncementPolicy.announcement(forEnabled: true),

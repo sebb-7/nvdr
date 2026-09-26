@@ -8,6 +8,7 @@ struct NVDARemoteFeatureView: View {
     @Environment(RemoteIntentRouter.self) private var router
     @Environment(DualSenseControllerAdapter.self) private var controllerAdapter
     @Environment(AudioReceiverModel.self) private var audioReceiver
+    @Environment(RemSoundOrchestrationSession.self) private var remSoundOrchestration
     @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
     let profile: HostProfile
@@ -55,65 +56,38 @@ struct NVDARemoteFeatureView: View {
                             isRemSoundExpanded.toggle()
                         } label: {
                             HStack {
-                                Text("RemSound — \(remSoundStatusLabel)")
+                                Text("Remote Audio — \(remoteAudioStatusLabel)")
                                 Spacer()
                                 Image(systemName: isRemSoundExpanded ? "chevron.down" : "chevron.right")
                                     .accessibilityHidden(true)
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("RemSound. \(remSoundStatusLabel)")
+                        .accessibilityLabel("Remote Audio. \(remoteAudioStatusLabel)")
                         .accessibilityValue(isRemSoundExpanded ? "Expanded" : "Collapsed")
                         .accessibilityHint(
                             isRemSoundExpanded
-                                ? "Double-tap to collapse RemSound controls."
-                                : "Double-tap to expand RemSound controls."
+                                ? "Double-tap to collapse remote audio controls."
+                                : "Double-tap to expand remote audio controls."
                         )
 
                         if isRemSoundExpanded {
-                            Button(remSoundActionTitle, systemImage: remSoundActionSymbol) {
-                                switch audioReceiver.snapshot.state {
-                                case .idle, .stopped, .failed:
-                                    audioReceiver.start(
-                                        host: remSoundCapability.senderHost,
-                                        port: remSoundCapability.senderPort,
-                                        password: settings.credentials(for: profile)?.remSoundPassword ?? "",
-                                        targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
-                                        autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
-                                    )
-                                case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
-                                    audioReceiver.stop()
+                            Button(remoteAudioActionTitle, systemImage: remoteAudioActionSymbol) {
+                                if shouldStartRemoteAudio {
+                                    startRemoteAudio()
+                                } else {
+                                    remSoundOrchestration.stopAudio()
                                 }
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Button("Reconnect RemSound", systemImage: "arrow.clockwise") {
-                                audioReceiver.reconnect()
+                            Button("Restart Audio", systemImage: "arrow.clockwise") {
+                                restartRemoteAudio()
                             }
-                            .disabled(!canReconnectRemSound)
+                            .disabled(!canRestartRemoteAudio)
 
-                            Toggle("Mute RemSound audio", isOn: Binding(
-                                get: { audioReceiver.snapshot.muted },
-                                set: { audioReceiver.setMuted($0) }
-                            ))
-
-                            Slider(
-                                value: Binding(
-                                    get: { Double(audioReceiver.snapshot.volume) },
-                                    set: { audioReceiver.setVolume(Float($0)) }
-                                ),
-                                in: 0...1
-                            ) {
-                                Text("RemSound playback volume")
-                            }
-                            .accessibilityValue("\(Int(audioReceiver.snapshot.volume * 100)) percent")
-
-                            NavigationLink("RemSound details and diagnostics") {
+                            NavigationLink("Audio Details") {
                                 RemSoundAudioFeatureView(profile: profile)
-                            }
-
-                            Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
-                                AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
                             }
                         }
                     }
@@ -210,6 +184,9 @@ struct NVDARemoteFeatureView: View {
             }
             handleStatusChange(from: old, to: new)
         }
+        .onChange(of: audioReceiver.snapshot.state) { old, new in
+            handleRemoteAudioStateChange(from: old, to: new)
+        }
         .onChange(of: scenePhase) { _, phase in
             if NVDARemoteSceneLifecyclePolicy.shouldSuspendInput(for: phase) {
                 controllerAdapter.suspendInputForInactiveContext()
@@ -282,40 +259,78 @@ struct NVDARemoteFeatureView: View {
         }
     }
 
-    private var remSoundCapability: RemSoundReceiverCapability {
-        profile.remSoundReceiver?.normalized() ?? RemSoundReceiverCapability(senderHost: profile.address)
-    }
-
-    private var remSoundStatusLabel: String {
-        let state = audioReceiver.snapshot.state
-        if let peer = audioReceiver.snapshot.peer,
-           peer != "\(remSoundCapability.senderHost):\(remSoundCapability.senderPort)",
-           state != .idle,
-           state != .stopped {
-            return "Another peer active"
+    private var remoteAudioStatusLabel: String {
+        // Read the receiver directly so SwiftUI invalidates this presentation
+        // as packet/playback state changes, even though orchestration keeps the
+        // receiver behind a protocol boundary for deterministic tests.
+        let receiverState = audioReceiver.snapshot.state
+        guard remSoundOrchestration.activeProfileID == profile.id else {
+            return switch receiverState {
+            case .idle, .stopped, .failed: "Idle"
+            case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting:
+                "Another computer active"
+            }
         }
-        return audioReceiver.compactStatusLabel
+        return remSoundOrchestration.statusLabel
     }
 
-    private var remSoundActionTitle: String {
-        switch audioReceiver.snapshot.state {
-        case .idle, .stopped, .failed: "Start RemSound"
-        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "Stop RemSound"
-        }
-    }
-
-    private var remSoundActionSymbol: String {
-        switch audioReceiver.snapshot.state {
-        case .idle, .stopped, .failed: "play.fill"
-        case .connecting, .authenticating, .waitingForAudio, .buffering, .playing, .reconnecting: "stop.fill"
+    private var shouldStartRemoteAudio: Bool {
+        guard remSoundOrchestration.activeProfileID == profile.id else { return true }
+        return switch remSoundOrchestration.state {
+        case .idle, .unavailable, .failed, .stopped: true
+        case .requestingSession, .startingSender, .connectingReceiver, .buffering, .playing, .reconnecting, .degraded:
+            false
         }
     }
 
-    private var canReconnectRemSound: Bool {
-        switch audioReceiver.snapshot.state {
-        case .idle, .stopped: false
-        default: true
+    private var remoteAudioActionTitle: String {
+        shouldStartRemoteAudio ? "Start Audio" : "Stop Audio"
+    }
+
+    private var remoteAudioActionSymbol: String {
+        shouldStartRemoteAudio ? "play.fill" : "stop.fill"
+    }
+
+    private var canRestartRemoteAudio: Bool {
+        guard remSoundOrchestration.activeProfileID == profile.id else { return false }
+        return switch remSoundOrchestration.state {
+        case .idle, .requestingSession, .unavailable, .stopped: false
+        case .startingSender, .connectingReceiver, .buffering, .playing, .reconnecting, .degraded, .failed:
+            true
         }
+    }
+
+    private func startRemoteAudio() {
+        guard let credentials = settings.credentials(for: profile) else { return }
+        Task {
+            await remSoundOrchestration.start(
+                profile: profile,
+                credentials: credentials,
+                targetLatencyMilliseconds: settings.remSoundTargetLatencyMilliseconds,
+                autoTuneLatencyEnabled: settings.remSoundAutoTuneLatencyEnabled
+            )
+        }
+    }
+
+    private func restartRemoteAudio() {
+        guard let credentials = settings.credentials(for: profile) else { return }
+        Task {
+            await remSoundOrchestration.restartAudio(
+                profile: profile,
+                credentials: credentials
+            )
+        }
+    }
+
+    private func handleRemoteAudioStateChange(
+        from old: AudioReceiverState,
+        to new: AudioReceiverState
+    ) {
+        guard isVoiceOverEnabled,
+              remSoundOrchestration.activeProfileID == profile.id,
+              let announcement = RemoteAudioAnnouncementPolicy.announcement(from: old, to: new)
+        else { return }
+        AccessibilityNotification.Announcement(announcement).post()
     }
 
     private func handleStatusChange(from old: BridgeClient.Status, to new: BridgeClient.Status) {
@@ -408,6 +423,32 @@ enum NVDARemoteConnectionAction: Equatable {
         case .connect: "Connect"
         case .cancel: "Cancel connection"
         case .disconnect: "Disconnect"
+        }
+    }
+}
+
+
+enum RemoteAudioAnnouncementPolicy {
+    static func announcement(
+        from old: AudioReceiverState,
+        to new: AudioReceiverState
+    ) -> String? {
+        guard old != new else { return nil }
+        return switch new {
+        case .idle, .connecting, .authenticating:
+            nil
+        case .waitingForAudio:
+            "Remote audio connected, waiting for sound"
+        case .buffering:
+            "Remote audio buffering"
+        case .playing:
+            "Remote audio playing"
+        case .reconnecting:
+            "Remote audio reconnecting"
+        case .stopped:
+            "Remote audio stopped"
+        case .failed:
+            "Remote audio unavailable"
         }
     }
 }

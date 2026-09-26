@@ -135,6 +135,27 @@ final class RemSoundOrchestrationSessionTests: XCTestCase {
         XCTAssertEqual(receiver.snapshot.state, .playing)
     }
 
+    func testRestartAudioRestartsSenderAndReconnectsReceiverWithoutStoppingControlPlane() async {
+        let host = FakeRemSoundHostOrchestrator(handshake: .init(
+            capabilities: makeCapabilities(),
+            descriptor: makeDescriptor(senderState: .running)
+        ))
+        let receiver = FakeRemSoundReceiver()
+        let session = RemSoundOrchestrationSession(receiver: receiver, host: host)
+        let profile = makeProfile()
+        let credentials = HostProfileCredentials(password: "ssh", remSoundPassword: "audio")
+
+        await session.start(profile: profile, credentials: credentials)
+        receiver.snapshot.state = .playing
+
+        await session.restartAudio(profile: profile, credentials: credentials)
+
+        XCTAssertEqual(host.restartSenderCalls, 1)
+        XCTAssertEqual(receiver.reconnectCalls, 1)
+        XCTAssertEqual(receiver.stopCalls, 0)
+        XCTAssertEqual(session.state, .reconnecting)
+    }
+
     func testStopAudioStopsOnlyReceiverAndLeavesSenderUntouched() async {
         let host = FakeRemSoundHostOrchestrator(handshake: .init(
             capabilities: makeCapabilities(),

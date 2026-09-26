@@ -311,6 +311,33 @@ final class RemSoundOrchestrationSession {
         phase = .reconnecting
     }
 
+    func restartAudio(
+        profile: HostProfile,
+        credentials: HostProfileCredentials
+    ) async {
+        generation &+= 1
+        let requestGeneration = generation
+        guard activeProfileID == profile.id else {
+            phase = .failed("Start remote audio before restarting it.")
+            return
+        }
+
+        phase = .reconnecting
+        do {
+            let result = try await host.restartSender(profile: profile, credentials: credentials)
+            guard requestGeneration == generation else { return }
+            senderState = result.state
+            receiver.reconnect()
+        } catch {
+            guard requestGeneration == generation else { return }
+            if case .playing = receiver.snapshot.state {
+                phase = .degraded("Audio restart failed while playback continues: \(error.localizedDescription)")
+            } else {
+                phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     func refreshSenderStatus(
         profile: HostProfile,
         credentials: HostProfileCredentials
