@@ -6,6 +6,28 @@ struct RemSoundHostHandshake: Equatable, Sendable {
     let descriptor: HostRemSoundSessionDescriptor
 }
 
+struct RemSoundOrchestrationEvent: Identifiable, Equatable, Sendable {
+    enum Kind: String, Sendable {
+        case sessionRequested
+        case senderReady
+        case receiverStarted
+        case bufferingStarted
+        case playbackStarted
+        case streamInterrupted
+        case receiverReconnectAttempted
+        case senderRestarted
+        case sessionRefreshed
+        case playbackRecovered
+        case stopped
+        case failed
+    }
+
+    let id: UUID
+    let occurredAt: Date
+    let kind: Kind
+    let detail: String
+}
+
 enum RemSoundOrchestrationError: LocalizedError, Equatable, Sendable {
     case unsupportedProfile
     case hostCapabilityUnavailable
@@ -198,12 +220,14 @@ final class RemSoundOrchestrationSession {
     private(set) var senderStatus: HostRemSoundStatus?
     private(set) var senderState: HostRemSoundLifecycleState?
     private(set) var automaticRecoveryAttempts = 0
+    private(set) var events: [RemSoundOrchestrationEvent] = []
 
     @ObservationIgnored private let host: any RemSoundHostOrchestrating
     @ObservationIgnored private let receiver: any RemSoundReceiverControlling
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     @ObservationIgnored private var recoveryInFlight = false
+    @ObservationIgnored private var lastObservedReceiverState: AudioReceiverState?
 
     init(
         receiver: any RemSoundReceiverControlling,
@@ -270,11 +294,15 @@ final class RemSoundOrchestrationSession {
             return
         }
 
+        if activeProfileID != profile.id {
+            events.removeAll()
+        }
         activeProfileID = profile.id
         descriptor = nil
         senderStatus = nil
         senderState = nil
         phase = .requestingSession
+        record(.sessionRequested, "Requested remote audio for \(profile.displayName).")
 
         do {
             let handshake = try await host.handshake(profile: profile, credentials: credentials)
@@ -288,6 +316,13 @@ final class RemSoundOrchestrationSession {
 
             descriptor = handshake.descriptor
             senderState = handshake.descriptor.senderState
+            let senderDetail = handshake.descriptor.senderState == .running
+                ? "Sender already running"
+                : "Sender launch requested"
+            record(
+                .senderReady,
+                "\(senderDetail); version \(handshake.descriptor.senderVersion ?? "unknown")."
+            )
             phase = handshake.descriptor.senderState == .starting ? .startingSender : .connectingReceiver
 
             receiver.start(
@@ -296,6 +331,10 @@ final class RemSoundOrchestrationSession {
                 password: credentials.remSoundPassword,
                 targetLatencyMilliseconds: targetLatencyMilliseconds,
                 autoTuneLatencyEnabled: autoTuneLatencyEnabled
+            )
+            record(
+                .receiverStarted,
+                "Receiver started on UDP \(handshake.descriptor.audioPort); codecs \(handshake.descriptor.codecs.joined(separator: ", "))."
             )
             startRecoveryMonitor(
                 profile: profile,
@@ -318,6 +357,7 @@ final class RemSoundOrchestrationSession {
         automaticRecoveryAttempts = 0
         receiver.stop()
         phase = .stopped
+        record(.stopped, "Remote audio stopped locally.")
     }
 
     func reconnectAudio() {
@@ -325,6 +365,7 @@ final class RemSoundOrchestrationSession {
         automaticRecoveryAttempts = 0
         receiver.reconnect()
         phase = .reconnecting
+        record(.receiverReconnectAttempted, "Manual receiver reconnect requested.")
     }
 
     func restartAudio(
@@ -344,6 +385,7 @@ final class RemSoundOrchestrationSession {
             let result = try await host.restartSender(profile: profile, credentials: credentials)
             guard requestGeneration == generation else { return }
             senderState = result.state
+            record(.senderRestarted, "Manual sender restart requested.")
             receiver.reconnect()
         } catch {
             guard requestGeneration == generation else { return }
@@ -351,6 +393,7 @@ final class RemSoundOrchestrationSession {
                 phase = .degraded("Audio restart failed while playback continues: \(error.localizedDescription)")
             } else {
                 phase = .failed(error.localizedDescription)
+                record(.failed, "Manual audio restart failed.")
             }
         }
     }
@@ -394,14 +437,27 @@ final class RemSoundOrchestrationSession {
               activeProfileID == profile.id
         else { return }
 
+        let previousState = lastObservedReceiverState
+        lastObservedReceiverState = snapshot.state
+
         switch snapshot.state {
         case .idle:
             return
         case .connecting, .authenticating, .waitingForAudio:
             if !recoveryInFlight { phase = .connectingReceiver }
         case .buffering:
+            if previousState != snapshot.state {
+                record(.bufferingStarted, "Receiver buffering started.")
+            }
             if !recoveryInFlight { phase = .buffering }
         case .playing:
+            let recovered = automaticRecoveryAttempts > 0
+            if previousState != snapshot.state {
+                record(
+                    recovered ? .playbackRecovered : .playbackStarted,
+                    recovered ? "Playback recovered after automatic recovery." : "Playback started."
+                )
+            }
             automaticRecoveryAttempts = 0
             if !recoveryInFlight { phase = .playing }
         case .reconnecting:
@@ -409,6 +465,9 @@ final class RemSoundOrchestrationSession {
         case .stopped:
             if phase != .stopped { phase = .stopped }
         case .failed:
+            if previousState != snapshot.state {
+                record(.streamInterrupted, "Receiver reported an audio interruption.")
+            }
             await recover(
                 from: snapshot,
                 profile: profile,
@@ -438,6 +497,7 @@ final class RemSoundOrchestrationSession {
             phase = .failed(
                 "Remote audio authentication failed. Verify the saved RemSound shared password and try Start Audio again."
             )
+            record(.failed, "Automatic recovery stopped because authentication failed.")
             return
         }
 
@@ -464,6 +524,7 @@ final class RemSoundOrchestrationSession {
                     let result = try await host.restartSender(profile: profile, credentials: credentials)
                     guard monitorGeneration == generation else { return }
                     senderState = result.state
+                    record(.senderRestarted, "Sender restart requested after sender health check.")
                 }
             } catch {
                 // A host-status query failing is not evidence that healthy
@@ -472,6 +533,7 @@ final class RemSoundOrchestrationSession {
             }
             guard monitorGeneration == generation else { return }
             phase = .reconnecting
+            record(.receiverReconnectAttempted, "Automatic receiver reconnect attempt 1.")
             receiver.reconnect()
 
         case 2:
@@ -479,12 +541,14 @@ final class RemSoundOrchestrationSession {
                 let result = try await host.restartSender(profile: profile, credentials: credentials)
                 guard monitorGeneration == generation else { return }
                 senderState = result.state
+                record(.senderRestarted, "Automatic sender restart attempt 2.")
             } catch {
                 // Still reconnect the receiver. If the sender remains bad, the
                 // next failure escalates to a fresh session request.
             }
             guard monitorGeneration == generation else { return }
             phase = .reconnecting
+            record(.receiverReconnectAttempted, "Automatic receiver reconnect attempt 2.")
             receiver.reconnect()
 
         case 3:
@@ -496,6 +560,7 @@ final class RemSoundOrchestrationSession {
                 try RemSoundOrchestrationContract.validate(descriptor: handshake.descriptor)
                 descriptor = handshake.descriptor
                 senderState = handshake.descriptor.senderState
+                record(.sessionRefreshed, "Requested a fresh non-secret RemSound session descriptor.")
                 receiver.start(
                     host: profile.address.trimmingCharacters(in: .whitespacesAndNewlines),
                     port: handshake.descriptor.audioPort,
@@ -506,10 +571,48 @@ final class RemSoundOrchestrationSession {
                 phase = .connectingReceiver
             } catch {
                 phase = .failed(Self.recoveryFailureMessage)
+                record(.failed, "Fresh session recovery failed.")
             }
 
         default:
             phase = .failed(Self.recoveryFailureMessage)
+            record(.failed, "Automatic recovery reached its bounded attempt limit.")
+        }
+    }
+
+    func diagnosticReport(profile: HostProfile) -> String {
+        var lines = [
+            "FarRelay RemSound orchestration report",
+            "Computer: \(profile.displayName)",
+            "State: \(statusLabel)",
+            "Sender state: \(senderState?.rawValue ?? "unknown")",
+            "Sender version: \(descriptor?.senderVersion ?? senderStatus?.version ?? "unknown")",
+            "Transport: \(descriptor?.transport ?? "unknown")",
+            "Audio UDP port: \(descriptor.map { String($0.audioPort) } ?? "unknown")",
+            "Discovery UDP port: \(descriptor.map { String($0.discoveryPort) } ?? "unknown")",
+            "Automatic recovery attempts: \(automaticRecoveryAttempts)",
+            "Orchestration events:"
+        ]
+        if events.isEmpty {
+            lines.append("- none")
+        } else {
+            lines.append(contentsOf: events.suffix(50).map {
+                "- \($0.occurredAt.ISO8601Format()) | \($0.kind.rawValue) | \($0.detail)"
+            })
+        }
+        lines.append("Sensitive data: RemSound passwords, authentication keys, audio contents, and typed user content are not recorded.")
+        return lines.joined(separator: "\n")
+    }
+
+    private func record(_ kind: RemSoundOrchestrationEvent.Kind, _ detail: String) {
+        events.append(.init(
+            id: UUID(),
+            occurredAt: .now,
+            kind: kind,
+            detail: detail
+        ))
+        if events.count > 100 {
+            events.removeFirst(events.count - 100)
         }
     }
 

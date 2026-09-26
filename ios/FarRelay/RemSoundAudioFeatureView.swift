@@ -105,6 +105,13 @@ struct RemSoundAudioFeatureView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            Section("Orchestration diagnostics") {
+                Text("State: \(orchestration.statusLabel)")
+                Text("Automatic recovery attempts: \(orchestration.automaticRecoveryAttempts)")
+                if let event = orchestration.events.last {
+                    Text("Last event: \(event.kind.rawValue). \(event.detail)")
+                }
+            }
             Section("Audio diagnostics") {
                 Text("Discovery: \(audioReceiver.discoveryDiagnostics.isActive ? "active" : "inactive"), attempts \(audioReceiver.discoveryDiagnostics.announcementsAttempted), local completions \(audioReceiver.discoveryDiagnostics.announcementsCompleted), received \(audioReceiver.discoveryDiagnostics.announcementsReceived), malformed \(audioReceiver.discoveryDiagnostics.malformedAnnouncements), failures \(audioReceiver.discoveryDiagnostics.announcementFailures)")
                 Text("Heartbeat: pings received \(audioReceiver.snapshot.statistics.heartbeatPingsReceived), pongs sent \(audioReceiver.snapshot.statistics.heartbeatPongsSent), pings sent \(audioReceiver.snapshot.statistics.heartbeatPingsSent), pongs received \(audioReceiver.snapshot.statistics.heartbeatPongsReceived), round trip \(audioReceiver.snapshot.statistics.heartbeatRoundTripMilliseconds.map(String.init) ?? "pending") ms")
@@ -119,7 +126,10 @@ struct RemSoundAudioFeatureView: View {
                     Text("Format: \(sampleRate) Hz, \(channels) channels, \(audioReceiver.snapshot.codec == .opus ? "Opus" : "PCM")")
                 }
                 Button("Copy RemSound diagnostic report", systemImage: "doc.on.doc") {
-                    AppClipboard.copy(audioReceiver.diagnosticReport(profile: profile))
+                    AppClipboard.copy([
+                        orchestration.diagnosticReport(profile: profile),
+                        audioReceiver.diagnosticReport(profile: profile)
+                    ].joined(separator: "\n\n"))
                 }
                 Button("Start receiver only (debug)", systemImage: "wrench.and.screwdriver") {
                     audioReceiver.start(

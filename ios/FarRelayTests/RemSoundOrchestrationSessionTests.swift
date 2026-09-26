@@ -249,6 +249,42 @@ final class RemSoundOrchestrationSessionTests: XCTestCase {
         }
     }
 
+    func testOrchestrationDiagnosticsRecordLifecycleWithoutSecrets() async {
+        let host = FakeRemSoundHostOrchestrator(handshake: .init(
+            capabilities: makeCapabilities(),
+            descriptor: makeDescriptor(senderState: .running)
+        ))
+        let receiver = FakeRemSoundReceiver()
+        let session = RemSoundOrchestrationSession(receiver: receiver, host: host)
+        let profile = makeProfile()
+        let credentials = HostProfileCredentials(
+            password: "ssh-super-secret",
+            remSoundPassword: "audio-super-secret"
+        )
+
+        await session.start(profile: profile, credentials: credentials)
+        await settleRecoveryMonitor()
+        var buffering = AudioReceiverSnapshot()
+        buffering.state = .buffering
+        receiver.emit(buffering)
+        await settleRecoveryMonitor()
+        var playing = buffering
+        playing.state = .playing
+        receiver.emit(playing)
+        await settleRecoveryMonitor()
+
+        XCTAssertTrue(session.events.contains { $0.kind == .sessionRequested })
+        XCTAssertTrue(session.events.contains { $0.kind == .senderReady })
+        XCTAssertTrue(session.events.contains { $0.kind == .receiverStarted })
+        XCTAssertTrue(session.events.contains { $0.kind == .bufferingStarted })
+        XCTAssertTrue(session.events.contains { $0.kind == .playbackStarted })
+
+        let report = session.diagnosticReport(profile: profile)
+        XCTAssertFalse(report.contains("ssh-super-secret"))
+        XCTAssertFalse(report.contains("audio-super-secret"))
+        XCTAssertTrue(report.contains("Sensitive data:"))
+    }
+
     func testCapabilityContractRequiresOrchestrationFeatureAndSessionOperation() {
         XCTAssertNoThrow(try RemSoundOrchestrationContract.validate(capabilities: makeCapabilities()))
 
