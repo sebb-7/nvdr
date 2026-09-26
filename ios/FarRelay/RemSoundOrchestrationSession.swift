@@ -211,9 +211,9 @@ final class RemSoundOrchestrationSession {
 
     var state: State {
         switch phase {
-        case .unavailable, .idle, .requestingSession, .failed, .stopped:
+        case .unavailable, .idle, .requestingSession, .degraded, .failed, .stopped:
             return phase
-        case .startingSender, .connectingReceiver, .buffering, .playing, .reconnecting, .degraded:
+        case .startingSender, .connectingReceiver, .buffering, .playing, .reconnecting:
             break
         }
 
@@ -319,6 +319,17 @@ final class RemSoundOrchestrationSession {
             let status = try await host.status(profile: profile, credentials: credentials)
             senderStatus = status
             senderState = status.state
+            if case .degraded = phase {
+                phase = switch receiver.snapshot.state {
+                case .idle: .idle
+                case .connecting, .authenticating, .waitingForAudio: .connectingReceiver
+                case .buffering: .buffering
+                case .playing: .playing
+                case .reconnecting: .reconnecting
+                case .stopped: .stopped
+                case .failed(let message): .degraded(message)
+                }
+            }
         } catch {
             if case .playing = receiver.snapshot.state {
                 phase = .degraded("Sender status unavailable while audio continues: \(error.localizedDescription)")
