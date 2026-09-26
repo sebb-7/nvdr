@@ -288,20 +288,35 @@ final class FarRelayHostClientTests: XCTestCase {
         let status = try await statusTask.value
         XCTAssertEqual(status.state, .running)
 
-        for (operation, task) in [
-            ("remsound.start", Task { try await client.startRemSound() }),
-            ("remsound.stop", Task { try await client.stopRemSound() }),
-            ("remsound.restart", Task { try await client.restartRemSound() }),
-        ] {
-            let request = try await nextRequest(from: transport)
-            XCTAssertEqual(request.operation, operation)
-            XCTAssertNil(request.command)
-            transport.sendSuccess(
-                requestID: request.requestID,
-                result: HostRemSoundActionResult(requested: true, state: .starting)
-            )
-            _ = try await task.value
-        }
+        let startTask = Task { try await client.startRemSound() }
+        let startRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(startRequest.operation, "remsound.start")
+        XCTAssertNil(startRequest.command)
+        transport.sendSuccess(
+            requestID: startRequest.requestID,
+            result: HostRemSoundActionResult(requested: true, state: .starting)
+        )
+        _ = try await startTask.value
+
+        let stopTask = Task { try await client.stopRemSound() }
+        let stopRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(stopRequest.operation, "remsound.stop")
+        XCTAssertNil(stopRequest.command)
+        transport.sendSuccess(
+            requestID: stopRequest.requestID,
+            result: HostRemSoundActionResult(requested: true, state: .stopping)
+        )
+        _ = try await stopTask.value
+
+        let restartTask = Task { try await client.restartRemSound() }
+        let restartRequest = try await nextRequest(from: transport)
+        XCTAssertEqual(restartRequest.operation, "remsound.restart")
+        XCTAssertNil(restartRequest.command)
+        transport.sendSuccess(
+            requestID: restartRequest.requestID,
+            result: HostRemSoundActionResult(requested: true, state: .starting)
+        )
+        _ = try await restartTask.value
 
         let sessionTask = Task { try await client.remSoundSession() }
         let sessionRequest = try await nextRequest(from: transport)
