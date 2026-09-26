@@ -121,7 +121,17 @@ try {
         }
 
         $tailscaleIp = (& $tailscalePath ip -4 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and $tailscaleIp -match '^100\.\d{1,3}\.\d{1,3}\.\d{1,3}if ($hostPath) {
+        if ($LASTEXITCODE -eq 0 -and $tailscaleIp -match '^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+            Pass "Tailscale is signed in with IPv4 $($tailscaleIp.Trim())."
+        } else {
+            Fail "Tailscale is installed but no tailnet IPv4 address is available."
+        }
+    }
+} catch {
+    Fail "Could not validate Tailscale readiness. $($_.Exception.Message)"
+}
+
+if ($hostPath) {
     try {
         $request = '{"version":1,"request_id":"travel-readiness","operation":"recovery.nvda.status","params":{}}'
         $raw = $request | & $hostPath
