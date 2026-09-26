@@ -171,6 +171,48 @@ function Test-FarRelay {
     } else {
         Add-Action 'FarRelay Update Check task is missing.'
     }
+
+    try {
+        $statusRequest = '{"version":1,"request_id":"prepare-remsound-status","operation":"remsound.status","params":{}}'
+        $statusRaw = $statusRequest | & $host.Source
+        $statusResponse = ($statusRaw | Select-Object -Last 1 | ConvertFrom-Json)
+        if ($LASTEXITCODE -ne 0 -or -not $statusResponse.ok) {
+            Add-Action 'FarRelay Host could not inspect RemSound.'
+        } elseif (-not $statusResponse.result.installed) {
+            Add-Action 'RemSound is not installed. Install RemSound before relying on remote audio.'
+        } elseif (-not $statusResponse.result.manageable) {
+            Add-Action 'RemSound is installed but FarRelay Host cannot safely manage it.'
+        } else {
+            Add-Result "RemSound: installed; running=$($statusResponse.result.running); manageable=$($statusResponse.result.manageable)"
+        }
+    } catch {
+        Add-Action "RemSound status check failed: $($_.Exception.Message)"
+    }
+
+    try {
+        $sessionRequest = '{"version":1,"request_id":"prepare-remsound-session","operation":"remsound.session","params":{}}'
+        $sessionRaw = $sessionRequest | & $host.Source
+        $sessionResponse = ($sessionRaw | Select-Object -Last 1 | ConvertFrom-Json)
+        if ($LASTEXITCODE -ne 0 -or -not $sessionResponse.ok) {
+            Add-Action 'RemSound session negotiation failed.'
+        } else {
+            $session = $sessionResponse.result
+            $codecs = @($session.codecs)
+            if (
+                $session.transport -eq 'direct_udp' -and
+                [int]$session.sample_rate_hz -eq 48000 -and
+                [int]$session.channels -eq 2 -and
+                ($codecs -contains 'opus' -or $codecs -contains 'pcm') -and
+                $session.sender_state -in @('running', 'starting')
+            ) {
+                Add-Result "RemSound session: direct UDP; audio port=$($session.audio_port); sender=$($session.sender_state)"
+            } else {
+                Add-Action 'RemSound returned an incompatible audio session descriptor.'
+            }
+        }
+    } catch {
+        Add-Action "RemSound session check failed: $($_.Exception.Message)"
+    }
 }
 
 function Get-AcPowerIndex([string]$Subgroup, [string]$Setting) {
@@ -249,6 +291,8 @@ if ($tailscaleIp) {
     $connection.Add("1. In FarRelay, add a Windows computer: address $tailscaleIp, port 22, username $env:USERNAME.")
     $connection.Add('2. Authentication: Private Key. Paste the private key matching the public key authorized for this Windows account; enter its passphrase if used.')
     $connection.Add('3. Under Accessibility, enable Configure NVDA Remote and Enable NVDA Remote. Use nvdaremote.com, port 6837, and the channel key for the NVDA Remote session you want to join. Leave fingerprint blank and Insecure off unless required by your relay.')
+    $connection.Add("4. Configure and enable RemSound audio. Use Windows address $tailscaleIp and the same shared password saved in the Windows RemSound profile.")
+    $connection.Add('5. Before leaving, start Remote Audio from FarRelay iOS and confirm it reaches Playing. FarRelay Host orchestrates RemSound, but audio travels directly from the PC to the iPhone/iPad.')
 } else {
     $connection.Add('Tailscale IPv4: pending sign-in')
     $connection.Add('Next step: sign in to Tailscale on this PC, then rerun FarRelay Prepare for Travel.')
