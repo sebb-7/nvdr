@@ -30,6 +30,14 @@ if ([string]::IsNullOrWhiteSpace($expectedVersion)) {
     throw "Expected FarRelay version is empty."
 }
 
+function Resolve-Tailscale {
+    $command = Get-Command tailscale.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) { return $command.Source }
+    $candidate = 'C:\Program Files\Tailscale\tailscale.exe'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    return $null
+}
+
 function Test-CommandInvariant {
     param(
         [Parameter(Mandatory)] [string]$Name,
@@ -99,9 +107,9 @@ try {
 }
 
 try {
-    $tailscaleCommand = Get-Command tailscale.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $tailscaleCommand) {
-        Fail "Tailscale CLI is not installed or available on PATH."
+    $tailscalePath = Resolve-Tailscale
+    if (-not $tailscalePath) {
+        Fail "Tailscale CLI is not installed."
     } else {
         $tailscaleService = Get-Service -Name Tailscale -ErrorAction SilentlyContinue
         if (-not $tailscaleService) {
@@ -112,7 +120,7 @@ try {
             Pass "Tailscale service is running."
         }
 
-        $tailscaleIp = (& $tailscaleCommand.Source ip -4 2>$null | Select-Object -First 1)
+        $tailscaleIp = (& $tailscalePath ip -4 2>$null | Select-Object -First 1)
         if ($LASTEXITCODE -eq 0 -and $tailscaleIp -match '^100\.\d{1,3}\.\d{1,3}\.\d{1,3}if ($hostPath) {
     try {
         $request = '{"version":1,"request_id":"travel-readiness","operation":"recovery.nvda.status","params":{}}'
