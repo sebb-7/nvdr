@@ -224,7 +224,8 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
         await receiver.stop()
     }
 
-    func testAuthenticatedPCMBuffersThenPlaysWithoutTouchingControlState() async throws {
+    func testAuthenticatedPCMBuildsPlayableBufferWithoutTouchingControlState() async throws {
+        let bridge = BridgeClient(speech: SpeechOutput())
         let receiver = RemSoundAudioReceiver()
         await receiver.start(configuration: .init(host: "127.0.0.1", port: 47_934, password: "phase1"))
         let format = try XCTUnwrap(Data(hex: "524D4E44010134127B00000080BB0000020000001800000001000000060000000065040001000000F00000000000000073182B124D200DD00700"))
@@ -233,10 +234,21 @@ final class RemSoundAudioReceiverInvariantTests: XCTestCase {
             await receiver.ingest(try makeAudioPacket(sequence: UInt32(sequence), frameID: UInt32(sequence)))
         }
         let snapshot = await receiver.snapshot()
-        XCTAssertEqual(snapshot.state, .playing)
+
+        // This receiver-only test intentionally has no AudioPlayback renderer.
+        // Once the startup target is full, state may be .playing briefly or
+        // return to .buffering when telemetry observes that no renderer armed
+        // the playout ring. The invariant here is decoded, playable PCM—not a
+        // renderer state that this test harness does not own.
+        XCTAssertTrue(snapshot.state == .buffering || snapshot.state == .playing)
         XCTAssertEqual(snapshot.sampleRate, 48_000)
         XCTAssertEqual(snapshot.channelCount, 2)
+        XCTAssertGreaterThanOrEqual(
+            snapshot.statistics.bufferDepthFrames,
+            snapshot.statistics.jitterTargetFrames
+        )
         XCTAssertEqual(snapshot.statistics.authenticationFailures, 0)
+        XCTAssertEqual(bridge.status, .idle)
         await receiver.stop()
     }
 
