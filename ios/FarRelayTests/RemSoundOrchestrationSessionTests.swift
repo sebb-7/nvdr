@@ -105,6 +105,36 @@ final class RemSoundOrchestrationSessionTests: XCTestCase {
         XCTAssertEqual(host.stopSenderCalls, 0)
     }
 
+    func testSenderStatusFailureStaysDegradedWhilePlaybackContinuesAndRecovers() async {
+        let host = FakeRemSoundHostOrchestrator(handshake: .init(
+            capabilities: makeCapabilities(),
+            descriptor: makeDescriptor(senderState: .running)
+        ))
+        let receiver = FakeRemSoundReceiver()
+        let session = RemSoundOrchestrationSession(receiver: receiver, host: host)
+        let profile = makeProfile()
+        let credentials = HostProfileCredentials(password: "ssh", remSoundPassword: "audio")
+
+        await session.start(profile: profile, credentials: credentials)
+        receiver.snapshot.state = .playing
+        host.statusError = HostClientError.connectionClosed
+
+        await session.refreshSenderStatus(profile: profile, credentials: credentials)
+
+        guard case .degraded(let message) = session.state else {
+            return XCTFail("Expected host-status degradation while playback remains healthy.")
+        }
+        XCTAssertTrue(message.contains("audio continues"))
+        XCTAssertEqual(receiver.snapshot.state, .playing)
+        XCTAssertEqual(receiver.stopCalls, 0)
+
+        host.statusError = nil
+        await session.refreshSenderStatus(profile: profile, credentials: credentials)
+
+        XCTAssertEqual(session.state, .playing)
+        XCTAssertEqual(receiver.snapshot.state, .playing)
+    }
+
     func testStopAudioStopsOnlyReceiverAndLeavesSenderUntouched() async {
         let host = FakeRemSoundHostOrchestrator(handshake: .init(
             capabilities: makeCapabilities(),
@@ -241,6 +271,7 @@ private final class FakeRemSoundHostOrchestrator: RemSoundHostOrchestrating {
     var startSenderCalls = 0
     var stopSenderCalls = 0
     var restartSenderCalls = 0
+    var statusError: Error?
 
     init(handshake: RemSoundHostHandshake) {
         handshakeValue = handshake
@@ -259,6 +290,7 @@ private final class FakeRemSoundHostOrchestrator: RemSoundHostOrchestrating {
         credentials: HostProfileCredentials
     ) async throws -> HostRemSoundStatus {
         statusCalls += 1
+        if let statusError { throw statusError }
         return HostRemSoundStatus(
             platformSupported: true,
             installed: true,
